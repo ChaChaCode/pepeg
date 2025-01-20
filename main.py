@@ -1,3 +1,4 @@
+from typing import List, Dict, Any
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
@@ -6,7 +7,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from supabase import create_client, Client
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -49,7 +50,7 @@ async def edit_or_send_message(chat_id: int, text: str, message_id: int = None, 
 async def save_giveaway(user_id: int, name: str, description: str, end_time: str, winner_count: int,
                         media_type: str = None, media_file_id: str = None):
     moscow_tz = pytz.timezone('Europe/Moscow')
-    end_time_dt = moscow_tz.localize(datetime.strptime(end_time, "%d.%m.%Y %H:%M"))
+    end_time_dt = moscow_tz.localize(datetime.strptime(end_time, "%d.%m.%Y %H:%M") + timedelta(hours=3))
 
     giveaway_data = {
         'user_id': user_id,
@@ -109,7 +110,7 @@ async def end_giveaway(giveaway_id: str):
     participants = response.data
 
     # Select winners
-    winners = await select_random_winners(participants, giveaway['winner_count'])
+    winners = await select_random_winners(participants, min(len(participants), giveaway['winner_count']))
 
     # Update giveaway status
     supabase.table('giveaways').update({'is_active': False}).eq('id', giveaway_id).execute()
@@ -167,9 +168,12 @@ async def notify_winners_and_publish_results(giveaway, winners):
 Поздравляем победителей!
     """
 
+    if len(winners) < giveaway['winner_count']:
+        result_message += f"\n\nВнимание: Количество участников ({len(winners)}) было меньше, чем количество призовых мест ({giveaway['winner_count']}). Не все призовые места были распределены."
+
     for community in communities:
         try:
-            await bot.send_message(chat_id=f"@{community['community_id']}", text=result_message)
+            await bot.send_message(chat_id=int(community['community_id']), text=result_message)  # Changed to int
         except Exception as e:
             logging.error(f"Error publishing results in community @{community['community_id']}: {e}")
 
@@ -410,7 +414,7 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
         giveaway_info = f"""
 Название: {giveaway['name']}
 Описание: {giveaway['description']}
-Дата завершения: {datetime.fromisoformat(giveaway['end_time']).strftime('%d.%m.%Y %H:%M')}
+Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 Победителей: {giveaway['winner_count']}
         """
 
@@ -418,13 +422,17 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
 
         if giveaway['media_type'] and giveaway['media_file_id']:
             if giveaway['media_type'] == 'photo':
-                await bot.send_photo(chat_id=callback_query.from_user.id, photo=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+                await bot.send_photo(chat_id=callback_query.from_user.id, photo=giveaway['media_file_id'],
+                                     caption=giveaway_info, reply_markup=keyboard.as_markup())
             elif giveaway['media_type'] == 'gif':
-                await bot.send_animation(chat_id=callback_query.from_user.id, animation=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+                await bot.send_animation(chat_id=callback_query.from_user.id, animation=giveaway['media_file_id'],
+                                         caption=giveaway_info, reply_markup=keyboard.as_markup())
             elif giveaway['media_type'] == 'video':
-                await bot.send_video(chat_id=callback_query.from_user.id, video=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+                await bot.send_video(chat_id=callback_query.from_user.id, video=giveaway['media_file_id'],
+                                     caption=giveaway_info, reply_markup=keyboard.as_markup())
         else:
-            await send_message_with_image(bot, callback_query.from_user.id, giveaway_info, keyboard.as_markup(), message_id=callback_query.message.message_id)
+            await send_message_with_image(bot, callback_query.from_user.id, giveaway_info, keyboard.as_markup(),
+                                          message_id=callback_query.message.message_id)
     except Exception as e:
         logging.error(f"Error in process_view_created_giveaway: {str(e)}")
         await bot.answer_callback_query(
@@ -522,6 +530,68 @@ async def process_new_end_time(message: types.Message, state: FSMContext):
         await state.clear()
 
 
+async def get_giveaway_creator(giveaway_id: str) -> int:
+    response = supabase.table('giveaways').select('user_id').eq('id', giveaway_id).single().execute()
+    if response.data:
+        return response.data['user_id']
+    return None
+
+
+async def get_bound_communities(user_id: int) -> List[Dict[str, Any]]:
+    response = supabase.table('bound_communities').select('*').eq('user_id', user_id).execute()
+    return response.data if response.data else []
+
+
+async def bind_community_to_giveaway(giveaway_id: str, channel_id: str, community_username: str):
+    # Check if the community is already bound to the giveaway
+    response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).eq('community_id',
+                                                                                                    channel_id).execute()
+
+    if not response.data:
+        response = supabase.table('giveaway_communities').insert({
+            'giveaway_id': giveaway_id,
+            'community_id': channel_id,
+            'community_username': community_username
+        }).execute()
+
+        if not response.data:
+            logging.error(f"Error binding community to giveaway: {response}")
+            raise Exception('Failed to bind community to giveaway')
+
+        # Record the bound community only if it's not already recorded
+        user_id = await get_giveaway_creator(giveaway_id)
+        if user_id:
+            await record_bound_community(user_id, community_username, channel_id)
+    else:
+        logging.info(f"Community {community_username} is already bound to giveaway {giveaway_id}")
+
+
+async def record_bound_community(user_id: int, community_username: str, community_id: str):
+    try:
+        # Check if the community is already recorded for this user
+        response = supabase.table('bound_communities').select('*').eq('user_id', user_id).eq('community_id',
+                                                                                             community_id).execute()
+
+        if not response.data:
+            response = supabase.table('bound_communities').insert({
+                'user_id': user_id,
+                'community_username': community_username,
+                'community_id': community_id
+            }).execute()
+            if response.data:
+                logging.info(f"Bound community recorded: {response.data}")
+                return True
+            else:
+                logging.error(f"Unexpected response format: {response}")
+                return False
+        else:
+            logging.info(f"Community {community_username} is already recorded for user {user_id}")
+            return True
+    except Exception as e:
+        logging.error(f"Error recording bound community: {str(e)}")
+        return False
+
+
 @dp.callback_query(lambda c: c.data.startswith('bind_communities:'))
 async def process_bind_communities(callback_query: types.CallbackQuery, state: FSMContext):
     giveaway_id = callback_query.data.split(':')[1]
@@ -530,29 +600,60 @@ async def process_bind_communities(callback_query: types.CallbackQuery, state: F
     await bot.answer_callback_query(callback_query.id)
     data = await state.get_data()
 
-    # Создаем кнопку "Назад"
-    back_button = types.InlineKeyboardButton(text="Назад", callback_data="created_giveaways")
+    # Fetch bound communities for the user
+    bound_communities = await get_bound_communities(callback_query.from_user.id)
 
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[  # Указываем поле inline_keyboard
-        [back_button],  # добавляем кнопку назад
-    ], row_width=1)  # Указываем количество кнопок в строке
+    keyboard = InlineKeyboardBuilder()
 
-    last_message_id = data.get('last_message_id')
+    # Add buttons for bound communities
+    for community in bound_communities:
+        keyboard.button(text=f"@{community['community_username']}",
+                        callback_data=f"select_community:{giveaway_id}:{community['community_id']}:{community['community_username']}")
 
-    if last_message_id:
-        # Редактируем последнее сообщение
-        await send_message_with_image(bot, callback_query.from_user.id,
-                                      "Чтобы привязать паблик, вы должны добавить этого бота @PepeGift_Bot в администраторы вашего паблика. После этого скиньте имя паблика пример: @publik",
-                                      reply_markup=keyboard, message_id=last_message_id)
+    # Add buttons for other actions
+    keyboard.button(text="Привязать новый паблик", callback_data=f"bind_new_community:{giveaway_id}")
+    keyboard.button(text="Назад", callback_data="created_giveaways")
+    keyboard.adjust(1)
+
+    await send_message_with_image(
+        bot,
+        callback_query.from_user.id,
+        "Выберите паблик для привязки или добавьте новый:",
+        reply_markup=keyboard.as_markup(),
+        message_id=data.get('last_message_id')
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith('select_community:'))
+async def process_select_community(callback_query: types.CallbackQuery):
+    _, giveaway_id, community_id, community_username = callback_query.data.split(':')
+
+    # Check if the community is already bound to the giveaway
+    response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).eq('community_id',
+                                                                                                    community_id).execute()
+
+    if not response.data:
+        # If not bound, then bind the community to the giveaway
+        await bind_community_to_giveaway(giveaway_id, community_id, community_username)
+        await bot.answer_callback_query(callback_query.id, text="Паблик успешно привязан к розыгрышу!")
     else:
-        # Если нет last_message_id, отправляем новое сообщение
-        new_message = await bot.send_message(
-            chat_id=callback_query.from_user.id,
-            text="Чтобы привязать паблик, вы должны добавить этого бота @PepeGift_Bot в администраторы вашего паблика. После этого скиньте имя паблика пример: @publik",
-            reply_markup=keyboard
-        )
-        # Сохраняем ID нового сообщения для последующего редактирования
-        await state.update_data(last_message_id=new_message.message_id)
+        await bot.answer_callback_query(callback_query.id, text="Этот паблик уже привязан к розыгрышу.")
+
+    await process_view_created_giveaway(callback_query)
+
+
+@dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
+async def process_bind_new_community(callback_query: types.CallbackQuery, state: FSMContext):
+    giveaway_id = callback_query.data.split(':')[1]
+    await state.update_data(giveaway_id=giveaway_id)
+    await state.set_state(GiveawayStates.waiting_for_community_name)
+    await bot.answer_callback_query(callback_query.id)
+    await send_message_with_image(
+        bot,
+        callback_query.from_user.id,
+        "Чтобы привязать паблик, вы должны добавить этого бота @PepeGift_Bot в администраторы вашего паблика. После этого скиньте имя паблика пример: @publik",
+        message_id=callback_query.message.message_id
+    )
 
 
 @dp.message(GiveawayStates.waiting_for_community_name)
@@ -571,7 +672,8 @@ async def process_community_name(message: types.Message, state: FSMContext):
         bot_member = await bot.get_chat_member(chat.id, bot.id)
 
         if bot_member.status == 'administrator':  # Проверяем, является ли бот администратором
-            await bind_community_to_giveaway(giveaway_id, channel_username)
+            # Сохраняем ID канала/группы и username
+            await bind_community_to_giveaway(giveaway_id, str(chat.id), channel_username)
             await send_message_with_image(bot, message.chat.id,
                                           f"Паблик \"{message.text}\" успешно привязан к розыгрышу!")
         else:
@@ -582,30 +684,18 @@ async def process_community_name(message: types.Message, state: FSMContext):
         await send_message_with_image(bot, message.chat.id,
                                       "Не удалось найти паблик с таким именем. Пожалуйста, проверьте правильность ссылки и попробуйте снова.")
     except Exception as e:
-        # Ловим любые другие ошибки
         await send_message_with_image(bot, message.chat.id,
                                       f"Произошла ошибка при проверке статуса бота. Пожалуйста, убедитесь, что вы указали правильное имя паблика и попробуйте снова.\nОшибка: {str(e)}")
 
     await state.clear()  # Очищаем состояние
 
 
-async def bind_community_to_giveaway(giveaway_id: str, channel_username: str):
-    response = supabase.table('giveaway_communities').insert({
-        'giveaway_id': giveaway_id,
-        'community_id': channel_username
-    }).execute()
-
-    if not response.data:
-        logging.error(f"Error binding community to giveaway: {response}")
-        raise Exception('Failed to bind community to giveaway')
-
-
 @dp.callback_query(lambda c: c.data.startswith('activate_giveaway:'))
 async def process_activate_giveaway(callback_query: types.CallbackQuery):
     giveaway_id = callback_query.data.split(':')[1]
     try:
-        response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id',
-                                                                                    giveaway_id).execute()
+        response = supabase.table('giveaway_communities').select('community_id', 'community_username').eq('giveaway_id',
+                                                                                                          giveaway_id).execute()
         communities = response.data
 
         if not communities:
@@ -615,8 +705,8 @@ async def process_activate_giveaway(callback_query: types.CallbackQuery):
 
         keyboard = InlineKeyboardBuilder()
         for community in communities:
-            keyboard.button(text=community['community_id'],
-                            callback_data=f"toggle_community:{giveaway_id}:{community['community_id']}")
+            keyboard.button(text=community['community_username'],
+                            callback_data=f"toggle_community:{giveaway_id}:{community['community_id']}:{community['community_username']}")
         keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_communities:{giveaway_id}")
         keyboard.button(text="Назад", callback_data="created_giveaways")  # Кнопка "Назад"
         keyboard.adjust(1)
@@ -632,7 +722,7 @@ async def process_activate_giveaway(callback_query: types.CallbackQuery):
 
 @dp.callback_query(lambda c: c.data.startswith('toggle_community:'))
 async def process_toggle_community(callback_query: types.CallbackQuery):
-    _, giveaway_id, community_id = callback_query.data.split(':')
+    _, giveaway_id, community_id, community_username = callback_query.data.split(':')
 
     # Инициализация временного хранилища для пользователя
     user_id = callback_query.from_user.id
@@ -640,14 +730,15 @@ async def process_toggle_community(callback_query: types.CallbackQuery):
         user_selected_communities[user_id] = {'giveaway_id': giveaway_id, 'communities': set()}
 
     # Добавление или удаление сообщества
-    if community_id in user_selected_communities[user_id]['communities']:
-        user_selected_communities[user_id]['communities'].remove(community_id)
+    community_data = (community_id, community_username)
+    if community_data in user_selected_communities[user_id]['communities']:
+        user_selected_communities[user_id]['communities'].remove(community_data)
     else:
-        user_selected_communities[user_id]['communities'].add(community_id)
+        user_selected_communities[user_id]['communities'].add(community_data)
 
     # Обновляем текст кнопки
-    selected_communities = callback_query.message.reply_markup.inline.keyboard or []
-    for row in selected_communities:
+    keyboard = callback_query.message.reply_markup
+    for row in keyboard.inline_keyboard:
         for button in row:
             if button.callback_data == callback_query.data:
                 if '✅' in button.text:
@@ -660,9 +751,11 @@ async def process_toggle_community(callback_query: types.CallbackQuery):
         break
 
     await bot.answer_callback_query(callback_query.id)
-    await bot.edit_message_reply_markup(chat_id=callback_query.from_user.id,
-                                        message_id=callback_query.message.message_id,
-                                        reply_markup=InlineKeyboardMarkup(inline_keyboard=selected_communities))
+    await bot.edit_message_reply_markup(
+        chat_id=callback_query.message.chat.id,
+        message_id=callback_query.message.message_id,
+        reply_markup=keyboard
+    )
 
 
 @dp.callback_query(lambda c: c.data.startswith('confirm_communities:'))
@@ -684,8 +777,9 @@ async def process_confirm_communities(callback_query: types.CallbackQuery):
     keyboard.adjust(1)
 
     await bot.answer_callback_query(callback_query.id)
+    community_usernames = [community[1] for community in selected_communities]
     await send_message_with_image(bot, callback_query.from_user.id,
-                                  f"Розыгрыш будет опубликован в следующих сообществах: {', '.join(selected_communities)}",
+                                  f"Розыгрыш будет опубликован в следующих сообществах: {', '.join(community_usernames)}",
                                   keyboard.as_markup(), message_id=callback_query.message.message_id)
 
 
@@ -717,7 +811,7 @@ async def process_publish_giveaway(callback_query: types.CallbackQuery):
 {giveaway['description']}
 
 Количество победителей: {giveaway['winner_count']}
-Дата завершения: {datetime.fromisoformat(giveaway['end_time']).strftime('%d.%m.%Y %H:%M')} по МСК
+Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 
 Нажмите кнопку ниже, чтобы принять участие!
         """
@@ -730,25 +824,25 @@ async def process_publish_giveaway(callback_query: types.CallbackQuery):
         error_messages = []
 
         # Публикация в выбранные сообщества
-        for community_id in selected_communities:
+        for community_id, community_username in selected_communities:
             try:
                 if giveaway['media_type'] and giveaway['media_file_id']:
                     if giveaway['media_type'] == 'photo':
-                        await bot.send_photo(chat_id=f"@{community_id}", photo=giveaway['media_file_id'],
+                        await bot.send_photo(chat_id=int(community_id), photo=giveaway['media_file_id'],
                                              caption=post_text, reply_markup=keyboard.as_markup())
                     elif giveaway['media_type'] == 'gif':
-                        await bot.send_animation(chat_id=f"@{community_id}", animation=giveaway['media_file_id'],
+                        await bot.send_animation(chat_id=int(community_id), animation=giveaway['media_file_id'],
                                                  caption=post_text, reply_markup=keyboard.as_markup())
                     elif giveaway['media_type'] == 'video':
-                        await bot.send_video(chat_id=f"@{community_id}", video=giveaway['media_file_id'],
+                        await bot.send_video(chat_id=int(community_id), video=giveaway['media_file_id'],
                                              caption=post_text, reply_markup=keyboard.as_markup())
                 else:
-                    await bot.send_message(chat_id=f"@{community_id}", text=post_text,
+                    await bot.send_message(chat_id=int(community_id), text=post_text,
                                            reply_markup=keyboard.as_markup())
                 success_count += 1
             except Exception as e:
                 error_count += 1
-                error_messages.append(f"Ошибка публикации в @{community_id}: {str(e)}")
+                error_messages.append(f"Ошибка публикации в @{community_username}: {str(e)}")
 
         # Обработка результатов публикации
         if success_count > 0:
@@ -781,7 +875,8 @@ async def process_publish_giveaway(callback_query: types.CallbackQuery):
 async def process_active_giveaways(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     try:
-        response = supabase.table('giveaways').select('*').eq('is_active', True).eq('user_id', user_id).order('end_time').execute()
+        response = supabase.table('giveaways').select('*').eq('is_active', True).eq('user_id', user_id).order(
+            'end_time').execute()
         giveaways = response.data
 
         if not giveaways:
@@ -795,7 +890,9 @@ async def process_active_giveaways(callback_query: types.CallbackQuery):
         keyboard.adjust(1)
 
         await bot.answer_callback_query(callback_query.id)
-        await send_message_with_image(bot, chat_id=callback_query.from_user.id, message_id=callback_query.message.message_id, text="Выберите активный розыгрыш:", reply_markup=keyboard.as_markup())
+        await send_message_with_image(bot, chat_id=callback_query.from_user.id,
+                                      message_id=callback_query.message.message_id, text="Выберите активный розыгрыш:",
+                                      reply_markup=keyboard.as_markup())
     except Exception as e:
         logging.error(f"Error in process_active_giveaways: {str(e)}")
         await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении активных розыгрышей.")
@@ -822,7 +919,7 @@ async def process_view_active_giveaway(callback_query: types.CallbackQuery):
 
 Название: {giveaway['name']}
 Описание: {giveaway['description']}
-Дата завершения: {datetime.fromisoformat(giveaway['end_time']).strftime('%d.%m.%Y %H:%M')}
+Дата {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 Количество победителей: {giveaway['winner_count']}
 Участвуют: {participants_count}
     """
@@ -836,13 +933,17 @@ async def process_view_active_giveaway(callback_query: types.CallbackQuery):
 
     if giveaway['media_type'] and giveaway['media_file_id']:
         if giveaway['media_type'] == 'photo':
-            await bot.send_photo(chat_id=callback_query.from_user.id, photo=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+            await bot.send_photo(chat_id=callback_query.from_user.id, photo=giveaway['media_file_id'],
+                                 caption=giveaway_info, reply_markup=keyboard.as_markup())
         elif giveaway['media_type'] == 'gif':
-            await bot.send_animation(chat_id=callback_query.from_user.id, animation=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+            await bot.send_animation(chat_id=callback_query.from_user.id, animation=giveaway['media_file_id'],
+                                     caption=giveaway_info, reply_markup=keyboard.as_markup())
         elif giveaway['media_type'] == 'video':
-            await bot.send_video(chat_id=callback_query.from_user.id, video=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+            await bot.send_video(chat_id=callback_query.from_user.id, video=giveaway['media_file_id'],
+                                 caption=giveaway_info, reply_markup=keyboard.as_markup())
     else:
-        await send_message_with_image(bot, chat_id=callback_query.from_user.id, text=giveaway_info, reply_markup=keyboard.as_markup(), message_id=callback_query.message.message_id)
+        await send_message_with_image(bot, chat_id=callback_query.from_user.id, text=giveaway_info,
+                                      reply_markup=keyboard.as_markup(), message_id=callback_query.message.message_id)
 
 
 @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
@@ -900,7 +1001,7 @@ async def process_giveaway_details(callback_query: types.CallbackQuery):
         # Детали розыгрыша
         text = (f"Название: {giveaway['name']}\n"
                 f"Описание: {giveaway['description']}\n"
-                f"Дата завершения: {datetime.fromisoformat(giveaway['end_time']).strftime('%d.%m.%Y %H:%M')}")
+                f"Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК")
 
         # Клавиатура с кнопкой назад
         keyboard = InlineKeyboardMarkup(
@@ -945,17 +1046,59 @@ async def process_back_to_main_menu(callback_query: types.CallbackQuery, state: 
                                   message_id=callback_query.message.message_id)
 
 
+async def check_and_update_usernames():
+    try:
+        response = supabase.table('bound_communities').select('*').execute()
+        communities = response.data
+
+        for community in communities:
+            try:
+                chat = await bot.get_chat(int(community['community_id']))
+                current_username = chat.username
+
+                if current_username != community['community_username']:
+                    logging.info(
+                        f"Username changed for community {community['community_id']}: {community['community_username']} -> {current_username}")
+
+                    # Update bound_communities table
+                    supabase.table('bound_communities').update({
+                        'community_username': current_username
+                    }).eq('community_id', community['community_id']).execute()
+
+                    # Update giveaway_communities table
+                    supabase.table('giveaway_communities').update({
+                        'community_username': current_username
+                    }).eq('community_id', community['community_id']).execute()
+
+                    logging.info(f"Updated username for community {community['community_id']} in both tables")
+            except Exception as e:
+                logging.error(f"Error checking community {community['community_id']}: {str(e)}")
+
+    except Exception as e:
+        logging.error(f"Error in check_and_update_usernames: {str(e)}")
+
+
+async def periodic_username_check():
+    while True:
+        await check_and_update_usernames()
+        await asyncio.sleep(3600)  # Check every hour
+
+
 # Главная функция запуска бота
 async def main():
     # Запускаем проверку завершившихся розыгрышей
     check_task = asyncio.create_task(check_ended_giveaways())
 
+    # Запускаем периодическую проверку имен пользователей
+    username_check_task = asyncio.create_task(periodic_username_check())
+
     try:
         # Запускаем бота
         await dp.start_polling(bot)
     finally:
-        # Отменяем задачу при остановке бота
+        # Отменяем задачи при остановке бота
         check_task.cancel()
+        username_check_task.cancel()
 
 
 if __name__ == '__main__':
