@@ -19,7 +19,7 @@ import aiogram.exceptions
 logging.basicConfig(level=logging.INFO)
 
 # Initialize bot and dispatcher
-BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
+BOT_TOKEN = '7908502974:AAHypTBbfW-c9JR94HNYFLL9ZcN-2LaJFoU'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -394,12 +394,14 @@ async def show_all_active_giveaways(callback_query: types.CallbackQuery):
     try:
         response = supabase.table('giveaways').select('*').eq('is_active', True).order('end_time').execute()
         giveaways = response.data
-
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="Назад", callback_data="back_to_main_menu")
         if not giveaways:
             await send_message_with_image(
                 bot,
                 callback_query.message.chat.id,
                 "В данный момент нет активных розыгрышей.",
+                reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id
             )
             return
@@ -411,7 +413,7 @@ async def show_all_active_giveaways(callback_query: types.CallbackQuery):
             participation_response = supabase.table('participations').select('*').eq('giveaway_id', giveaway['id']).eq('user_id', user_id).execute()
             is_participating = len(participation_response.data) > 0
 
-            button_text = f"{'✅ ' if is_participating else ''}{giveaway['name']}"
+            button_text = f"{giveaway['name']}{'✅ ' if is_participating else ''}"
             keyboard.button(text=button_text, callback_data=f"view_giveaway:{giveaway['id']}")
         keyboard.button(text="Назад", callback_data="back_to_main_menu")
         keyboard.adjust(1)
@@ -756,20 +758,26 @@ async def process_created_giveaways(callback_query: types.CallbackQuery):
 async def process_add_or_change_media(callback_query: types.CallbackQuery, state: FSMContext):
     giveaway_id = callback_query.data.split(':')[1]
     await state.update_data(giveaway_id=giveaway_id)
-    await state.set_state(GiveawayStates.waiting_for_media_edit)  # Используем новое состояние
-    keyboard = InlineKeyboardBuilder()
-    keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
-
-    message = await send_message_with_image(
-        bot,
-        callback_query.from_user.id,
-        "Пожалуйста, отправьте фото, GIF или видео.",
-        message_id=callback_query.message.message_id,
-        reply_markup=keyboard.as_markup(),
-    )
-
-    if message:
-        await state.update_data(message_to_delete=message.message_id)
+    await state.set_state(GiveawayStates.waiting_for_media_edit)
+    try:
+        message = await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            "Пожалуйста, отправьте фото, GIF или видео.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]
+            ]),
+            message_id=callback_query.message.message_id
+        )
+        if message and hasattr(message, 'message_id'):
+            await state.update_data(message_to_delete=message.message_id)
+        else:
+            logging.warning("send_message_with_image did not return a valid message object")
+    except Exception as e:
+        logging.error(f"Error in process_add_or_change_media: {str(e)}")
+        await bot.answer_callback_query(callback_query.id, text="Произошла ошибка. Пожалуйста, попробуйте еще раз.")
+    finally:
+        await bot.answer_callback_query(callback_query.id)
 
 @dp.message(GiveawayStates.waiting_for_media_edit)
 async def process_media_edit(message: types.Message, state: FSMContext):
@@ -801,7 +809,6 @@ async def process_media_edit(message: types.Message, state: FSMContext):
     }).eq('id', giveaway_id).execute()
 
     # Delete the message that asked for media upload
-    data = await state.get_data()
     message_to_delete = data.get('message_to_delete')
     if message_to_delete:
         await bot.delete_message(chat_id=message.chat.id, message_id=message_to_delete)
@@ -857,30 +864,25 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
             else:
                 raise
 
-            # Check if giveaway has media
+        # Check if giveaway has media
         if giveaway['media_type'] and giveaway['media_file_id']:
             try:
-                if giveaway['media_type'] == 'photo':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.message.chat.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaPhoto(media=giveaway['media_file_id'], caption=giveaway_info),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif giveaway['media_type'] == 'gif':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.message.chat.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaAnimation(media=giveaway['media_file_id'], caption=giveaway_info),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif giveaway['media_type'] == 'video':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.message.chat.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaVideo(media=giveaway['media_file_id'], caption=giveaway_info),
-                        reply_markup=keyboard.as_markup()
-                    )
+                media_type = giveaway['media_type']
+                if media_type == 'photo':
+                    media = types.InputMediaPhoto(media=giveaway['media_file_id'], caption=giveaway_info)
+                elif media_type == 'gif':
+                    media = types.InputMediaAnimation(media=giveaway['media_file_id'], caption=giveaway_info)
+                elif media_type == 'video':
+                    media = types.InputMediaVideo(media=giveaway['media_file_id'], caption=giveaway_info)
+                else:
+                    raise ValueError(f"Unsupported media type: {media_type}")
+
+                await bot.edit_message_media(
+                    chat_id=callback_query.message.chat.id,
+                    message_id=callback_query.message.message_id,
+                    media=media,
+                    reply_markup=keyboard.as_markup()
+                )
             except aiogram.exceptions.TelegramBadRequest as e:
                 if "message to edit not found" in str(e):
                     logging.warning(f"Message to edit not found: {e}")
@@ -891,13 +893,16 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
         else:
             # If no media, use the default image
             try:
-                await send_message_with_image(
+                result = await send_message_with_image(
                     bot,
                     callback_query.from_user.id,
                     giveaway_info,
                     reply_markup=keyboard.as_markup(),
                     message_id=callback_query.message.message_id
                 )
+                if result is None:
+                    logging.warning("Failed to send or edit message with image")
+                    await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
             except aiogram.exceptions.TelegramBadRequest as e:
                 if "message to edit not found" in str(e):
                     logging.warning(f"Message to edit not found: {e}")
@@ -920,15 +925,15 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
             text="Произошла ошибка при получении информации о розыгрыше. Пожалуйста, попробуйте еще раз."
         )
 
-
-
-async def send_new_giveaway_message(chat_id: int, giveaway: dict, giveaway_info: str, keyboard: InlineKeyboardBuilder):
-    if giveaway['media_type'] == 'photo':
-        await bot.send_photo(chat_id=chat_id, photo=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
-    elif giveaway['media_type'] == 'gif':
-        await bot.send_animation(chat_id=chat_id, animation=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
-    elif giveaway['media_type'] == 'video':
-        await bot.send_video(chat_id=chat_id, video=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
+    if giveaway['media_type'] and giveaway['media_file_id']:
+        media_type = giveaway['media_type']
+        if media_type == 'photo':
+            await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+        elif media_type == 'gif':
+            await bot.send_animation(chat_id, giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+        elif media_type == 'video':
+            await bot.send_video(chat_id, giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
     else:
         await send_message_with_image(bot, chat_id, giveaway_info, reply_markup=keyboard.as_markup())
 
@@ -1176,9 +1181,9 @@ async def process_bind_communities(callback_query: types.CallbackQuery, state: F
         community_id = community['community_id']
         community_username = community['community_username']
         is_bound = community_id in giveaway_community_ids
-        checkmark = '✅ ' if is_bound else ''
+        checkmark = ' ✅' if is_bound else ''
         keyboard.button(
-            text=f"{checkmark}@{community_username}",
+            text=f"@{community_username}{checkmark}",
             callback_data=f"select_community:{giveaway_id}:{community_id}:{community_username}"
         )
 
