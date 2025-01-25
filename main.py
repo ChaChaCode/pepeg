@@ -130,9 +130,6 @@ async def end_giveaway(giveaway_id: str):
     # Notify winners and publish results
     await notify_winners_and_publish_results(giveaway, winners)
 
-    # Clear participants
-    supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
-
 
 async def select_random_winners(participants, winner_count):
     import random
@@ -153,7 +150,6 @@ async def select_random_winners(participants, winner_count):
             })
     return winner_details
 
-
 async def notify_winners_and_publish_results(giveaway, winners):
     response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway['id']).execute()
     if not response.data:
@@ -165,8 +161,8 @@ async def notify_winners_and_publish_results(giveaway, winners):
     result_message = f"""
 🎉 Розыгрыш завершен! 🎉
 
-Название: {giveaway['name']}
-Описание: {giveaway['description']}
+{giveaway['name']}
+
 Победители: {winners_list}
 
 Поздравляем победителей!
@@ -175,9 +171,40 @@ async def notify_winners_and_publish_results(giveaway, winners):
     if len(winners) < giveaway['winner_count']:
         result_message += f"\n\nВнимание: Количество участников ({len(winners)}) было меньше, чем количество призовых мест ({giveaway['winner_count']}). Не все призовые места были распределены."
 
+    # Create the inline keyboard with the "Результаты" button
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="Результаты", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}")
+
     for community in communities:
         try:
-            await bot.send_message(chat_id=int(community['community_id']), text=result_message)  # Changed to int
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                if giveaway['media_type'] == 'photo':
+                    await bot.send_photo(
+                        chat_id=int(community['community_id']),
+                        photo=giveaway['media_file_id'],
+                        caption=result_message,
+                        reply_markup=keyboard.as_markup()
+                    )
+                elif giveaway['media_type'] == 'gif':
+                    await bot.send_animation(
+                        chat_id=int(community['community_id']),
+                        animation=giveaway['media_file_id'],
+                        caption=result_message,
+                        reply_markup=keyboard.as_markup()
+                    )
+                elif giveaway['media_type'] == 'video':
+                    await bot.send_video(
+                        chat_id=int(community['community_id']),
+                        video=giveaway['media_file_id'],
+                        caption=result_message,
+                        reply_markup=keyboard.as_markup()
+                    )
+            else:
+                await bot.send_message(
+                    chat_id=int(community['community_id']),
+                    text=result_message,
+                    reply_markup=keyboard.as_markup()
+                )
         except Exception as e:
             logging.error(f"Error publishing results in community @{community['community_id']}: {e}")
 
@@ -1537,7 +1564,17 @@ async def process_publish_giveaway(callback_query: types.CallbackQuery):
 
         # Обработка результатов публикации
         if success_count > 0:
-            supabase.table('giveaways').update({'is_active': True}).eq('id', giveaway_id).execute()
+            try:
+                # Clear previous winners first
+                supabase.table('giveaway_winners').delete().eq('giveaway_id', giveaway_id).execute()
+                # Then clear participants
+                supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
+                # Finally activate the giveaway
+                supabase.table('giveaways').update({'is_active': True}).eq('id', giveaway_id).execute()
+            except Exception as e:
+                logging.error(f"Error clearing previous data: {str(e)}")
+                raise
+
             await bot.answer_callback_query(callback_query.id, text="Розыгрыш опубликован и активирован!")
 
             keyboard = InlineKeyboardBuilder()
@@ -1931,3 +1968,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
