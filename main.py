@@ -108,10 +108,7 @@ async def end_giveaway(giveaway_id: str):
 
     # Fetch participants
     response = supabase.table('participations').select('user_id').eq('giveaway_id', giveaway_id).execute()
-    if not response.data:
-        logging.error(f"Error fetching participants: No participants found")
-        return
-    participants = response.data
+    participants = response.data if response.data else []
 
     # Select winners
     winners = await select_random_winners(participants, min(len(participants), giveaway['winner_count']))
@@ -119,36 +116,17 @@ async def end_giveaway(giveaway_id: str):
     # Update giveaway status
     supabase.table('giveaways').update({'is_active': False}).eq('id', giveaway_id).execute()
 
-    # Save winners
-    for winner in winners:
-        supabase.table('giveaway_winners').insert({
-            'giveaway_id': giveaway_id,
-            'user_id': winner['user_id'],
-            'username': winner['username']
-        }).execute()
+    # Save winners (if any)
+    if winners:
+        for winner in winners:
+            supabase.table('giveaway_winners').insert({
+                'giveaway_id': giveaway_id,
+                'user_id': winner['user_id'],
+                'username': winner['username']
+            }).execute()
 
     # Notify winners and publish results
     await notify_winners_and_publish_results(giveaway, winners)
-
-
-async def select_random_winners(participants, winner_count):
-    import random
-    winners = random.sample(participants, min(winner_count, len(participants)))
-    winner_details = []
-    for winner in winners:
-        try:
-            user = await bot.get_chat_member(winner['user_id'], winner['user_id'])
-            winner_details.append({
-                'user_id': winner['user_id'],
-                'username': user.user.username or f"user{winner['user_id']}"
-            })
-        except Exception as e:
-            logging.error(f"Error fetching user details: {e}")
-            winner_details.append({
-                'user_id': winner['user_id'],
-                'username': f"user{winner['user_id']}"
-            })
-    return winner_details
 
 async def notify_winners_and_publish_results(giveaway, winners):
     response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway['id']).execute()
@@ -157,8 +135,9 @@ async def notify_winners_and_publish_results(giveaway, winners):
         return
     communities = response.data
 
-    winners_list = ', '.join([f"@{w['username']}" for w in winners])
-    result_message = f"""
+    if winners:
+        winners_list = ', '.join([f"@{w['username']}" for w in winners])
+        result_message = f"""
 🎉 Розыгрыш завершен! 🎉
 
 {giveaway['name']}
@@ -166,9 +145,17 @@ async def notify_winners_and_publish_results(giveaway, winners):
 Победители: {winners_list}
 
 Поздравляем победителей!
-    """
+        """
+    else:
+        result_message = f"""
+🎉 Розыгрыш завершен! 🎉
 
-    if len(winners) < giveaway['winner_count']:
+{giveaway['name']}
+
+К сожалению, в этом розыгрыше не было участников.
+        """
+
+    if winners and len(winners) < giveaway['winner_count']:
         result_message += f"\n\nВнимание: Количество участников ({len(winners)}) было меньше, чем количество призовых мест ({giveaway['winner_count']}). Не все призовые места были распределены."
 
     # Create the inline keyboard with the "Результаты" button
@@ -214,6 +201,27 @@ async def notify_winners_and_publish_results(giveaway, winners):
                                    text=f"Поздравляем! Вы выиграли в розыгрыше \"{giveaway['name']}\"!")
         except Exception as e:
             logging.error(f"Error notifying winner {winner['user_id']}: {e}")
+
+print("Functions updated successfully!")
+
+async def select_random_winners(participants, winner_count):
+    import random
+    winners = random.sample(participants, min(winner_count, len(participants)))
+    winner_details = []
+    for winner in winners:
+        try:
+            user = await bot.get_chat_member(winner['user_id'], winner['user_id'])
+            winner_details.append({
+                'user_id': winner['user_id'],
+                'username': user.user.username or f"user{winner['user_id']}"
+            })
+        except Exception as e:
+            logging.error(f"Error fetching user details: {e}")
+            winner_details.append({
+                'user_id': winner['user_id'],
+                'username': f"user{winner['user_id']}"
+            })
+    return winner_details
 
 
 # Command handlers
@@ -671,7 +679,6 @@ async def process_media_upload(message: types.Message, state: FSMContext):
             await state.update_data(last_message_id=new_message.message_id)
 
         await state.set_state(GiveawayStates.waiting_for_end_time)
-
 
 
 async def process_end_time_request(chat_id: int, state: FSMContext, message_id: int = None):
