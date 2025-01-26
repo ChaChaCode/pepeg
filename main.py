@@ -110,8 +110,11 @@ async def end_giveaway(giveaway_id: str):
     response = supabase.table('participations').select('user_id').eq('giveaway_id', giveaway_id).execute()
     participants = response.data if response.data else []
 
-    # Select winners
-    winners = await select_random_winners(participants, min(len(participants), giveaway['winner_count']))
+    # Recheck participants
+    valid_participants = await recheck_participants(giveaway_id, participants)
+
+    # Select winners from valid participants
+    winners = await select_random_winners(valid_participants, min(len(valid_participants), giveaway['winner_count']))
 
     # Update giveaway status
     supabase.table('giveaways').update({'is_active': False}).eq('id', giveaway_id).execute()
@@ -127,6 +130,37 @@ async def end_giveaway(giveaway_id: str):
 
     # Notify winners and publish results
     await notify_winners_and_publish_results(giveaway, winners)
+
+
+async def recheck_participants(giveaway_id: str, participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    valid_participants = []
+    giveaway_communities = await get_giveaway_communities(giveaway_id)
+
+    for participant in participants:
+        user_id = participant['user_id']
+        is_valid = True
+
+        for community in giveaway_communities:
+            try:
+                member = await bot.get_chat_member(chat_id=community['community_id'], user_id=user_id)
+                if member.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR,
+                                         ChatMemberStatus.CREATOR]:
+                    is_valid = False
+                    break
+            except Exception as e:
+                logging.error(
+                    f"Error checking membership for user {user_id} in community {community['community_id']}: {str(e)}")
+                is_valid = False
+                break
+
+        if is_valid:
+            valid_participants.append(participant)
+        else:
+            # Remove invalid participant
+            supabase.table('participations').delete().eq('giveaway_id', giveaway_id).eq('user_id', user_id).execute()
+
+    return valid_participants
+
 
 async def notify_winners_and_publish_results(giveaway, winners):
     response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway['id']).execute()
@@ -202,7 +236,9 @@ async def notify_winners_and_publish_results(giveaway, winners):
         except Exception as e:
             logging.error(f"Error notifying winner {winner['user_id']}: {e}")
 
+
 print("Functions updated successfully!")
+
 
 async def select_random_winners(participants, winner_count):
     import random
@@ -222,6 +258,12 @@ async def select_random_winners(participants, winner_count):
                 'username': f"user{winner['user_id']}"
             })
     return winner_details
+
+
+async def get_giveaway_communities(giveaway_id: str):
+    response = supabase.table('giveaway_communities').select('community_id, community_username').eq('giveaway_id',
+                                                                                                    giveaway_id).execute()
+    return response.data
 
 
 # Command handlers
@@ -316,7 +358,8 @@ async def cmd_refund(message: types.Message):
             if response.data:
                 logging.info(f"Payment status updated to refunded for user {user_id}")
                 del paid_users[user_id]
-                await message.reply("Возврат средств выполнен успешно. Статус оплаты и подписки обновлен в базе данных.")
+                await message.reply(
+                    "Возврат средств выполнен успешно. Статус оплаты и подписки обновлен в базе данных.")
             else:
                 logging.error(f"Failed to update payment status for user {user_id}")
                 await message.reply("Возврат средств выполнен, но не удалось обновить статус в базе данных.")
@@ -400,7 +443,8 @@ async def process_buy_subscription(callback_query: types.CallbackQuery):
     )
 
 
-@dp.message(lambda message: message.successful_payment is not None and message.successful_payment.invoice_payload == "subscription_purchase")
+@dp.message(
+    lambda message: message.successful_payment is not None and message.successful_payment.invoice_payload == "subscription_purchase")
 async def process_successful_subscription(message: types.Message):
     if message.from_user:
         user_id = message.from_user.id
@@ -445,7 +489,8 @@ async def show_all_active_giveaways(callback_query: types.CallbackQuery):
         user_id = callback_query.from_user.id
         for giveaway in giveaways:
             # Check if the user is participating in this giveaway
-            participation_response = supabase.table('participations').select('*').eq('giveaway_id', giveaway['id']).eq('user_id', user_id).execute()
+            participation_response = supabase.table('participations').select('*').eq('giveaway_id', giveaway['id']).eq(
+                'user_id', user_id).execute()
             is_participating = len(participation_response.data) > 0
 
             button_text = f"{giveaway['name']}{'✅ ' if is_participating else ''}"
@@ -490,7 +535,8 @@ async def process_view_giveaway(callback_query: types.CallbackQuery):
 
         # Check if the user is participating in this giveaway
         user_id = callback_query.from_user.id
-        participation_response = supabase.table('participations').select('*').eq('giveaway_id', giveaway_id).eq('user_id', user_id).execute()
+        participation_response = supabase.table('participations').select('*').eq('giveaway_id', giveaway_id).eq(
+            'user_id', user_id).execute()
         is_participating = len(participation_response.data) > 0
 
         keyboard = InlineKeyboardBuilder()
@@ -620,6 +666,7 @@ async def process_media_choice(callback_query: types.CallbackQuery, state: FSMCo
                                       message_id=callback_query.message.message_id)
     else:
         await process_end_time_request(callback_query.from_user.id, state, callback_query.message.message_id)
+
 
 @dp.message(GiveawayStates.waiting_for_media_upload)
 async def process_media_upload(message: types.Message, state: FSMContext):
@@ -788,6 +835,7 @@ async def process_created_giveaways(callback_query: types.CallbackQuery):
         logging.error(f"Error in process_created_giveaways: {str(e)}")
         await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении розыгрышей.")
 
+
 @dp.callback_query(lambda c: c.data.startswith('add_media:') or c.data.startswith('change_media:'))
 async def process_add_or_change_media(callback_query: types.CallbackQuery, state: FSMContext):
     giveaway_id = callback_query.data.split(':')[1]
@@ -812,6 +860,7 @@ async def process_add_or_change_media(callback_query: types.CallbackQuery, state
         await bot.answer_callback_query(callback_query.id, text="Произошла ошибка. Пожалуйста, попробуйте еще раз.")
     finally:
         await bot.answer_callback_query(callback_query.id)
+
 
 @dp.message(GiveawayStates.waiting_for_media_edit)
 async def process_media_edit(message: types.Message, state: FSMContext):
@@ -859,6 +908,7 @@ async def process_media_edit(message: types.Message, state: FSMContext):
         message=message,
         data=f"view_created_giveaway:{giveaway_id}"
     ))
+
 
 @dp.callback_query(lambda c: c.data.startswith('view_created_giveaway:'))
 async def process_view_created_giveaway(callback_query: types.CallbackQuery):
@@ -959,18 +1009,21 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
             text="Произошла ошибка при получении информации о розыгрыше. Пожалуйста, попробуйте еще раз."
         )
 
+
 async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
     if giveaway['media_type'] and giveaway['media_file_id']:
         media_type = giveaway['media_type']
         if media_type == 'photo':
-            await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+            await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info,
+                                 reply_markup=keyboard.as_markup())
         elif media_type == 'gif':
-            await bot.send_animation(chat_id, giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+            await bot.send_animation(chat_id, giveaway['media_file_id'], caption=giveaway_info,
+                                     reply_markup=keyboard.as_markup())
         elif media_type == 'video':
-            await bot.send_video(chat_id, giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup())
+            await bot.send_video(chat_id, giveaway['media_file_id'], caption=giveaway_info,
+                                 reply_markup=keyboard.as_markup())
     else:
         await send_message_with_image(bot, chat_id, giveaway_info, reply_markup=keyboard.as_markup())
-
 
 @dp.callback_query(lambda c: c.data.startswith('manage_media:'))
 async def process_manage_media(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1476,12 +1529,6 @@ async def bind_community(giveaway_id: str, community_id: str, community_username
 async def unbind_community(giveaway_id: str, community_id: str):
     supabase.table('giveaway_communities').delete().eq('giveaway_id', giveaway_id).eq('community_id',
                                                                                       community_id).execute()
-
-
-async def get_giveaway_communities(giveaway_id: str):
-    response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).execute()
-    return response.data
-
 
 @dp.callback_query(lambda c: c.data.startswith('confirm_communities:'))
 async def process_confirm_communities(callback_query: types.CallbackQuery):
