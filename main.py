@@ -1576,10 +1576,15 @@ async def process_publish_giveaway(callback_query: types.CallbackQuery):
                 supabase.table('giveaway_winners').delete().eq('giveaway_id', giveaway_id).execute()
                 # Then clear participants
                 supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
-                # Finally activate the giveaway
-                supabase.table('giveaways').update({'is_active': True}).eq('id', giveaway_id).execute()
+                # Finally activate the giveaway and set the created_at time
+                moscow_tz = pytz.timezone('Europe/Moscow')
+                current_time = datetime.now(moscow_tz)
+                supabase.table('giveaways').update({
+                    'is_active': True,
+                    'created_at': current_time.isoformat()
+                }).eq('id', giveaway_id).execute()
             except Exception as e:
-                logging.error(f"Error clearing previous data: {str(e)}")
+                logging.error(f"Error clearing previous data or activating giveaway: {str(e)}")
                 raise
 
             await bot.answer_callback_query(callback_query.id, text="Розыгрыш опубликован и активирован!")
