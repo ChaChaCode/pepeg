@@ -54,13 +54,14 @@ async def edit_or_send_message(chat_id: int, text: str, message_id: int = None, 
 async def save_giveaway(user_id: int, name: str, description: str, end_time: str, winner_count: int,
                         media_type: str = None, media_file_id: str = None):
     moscow_tz = pytz.timezone('Europe/Moscow')
-    end_time_dt = moscow_tz.localize(datetime.strptime(end_time, "%d.%m.%Y %H:%M") + timedelta(hours=3))
+    end_time_dt = datetime.strptime(end_time, "%d.%m.%Y %H:%M")
+    end_time_tz = moscow_tz.localize(end_time_dt)
 
     giveaway_data = {
         'user_id': user_id,
         'name': name,
         'description': description,
-        'end_time': end_time_dt.isoformat(),
+        'end_time': end_time_tz.isoformat(),
         'winner_count': winner_count,
         'is_active': False,
         'media_type': media_type,
@@ -714,14 +715,14 @@ async def process_media_upload(message: types.Message, state: FSMContext):
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "Медиафайл успешно добавлен к розыгрышу. Укажите время завершения розыгрыша в формате 'ДД.ММ.ГГГГ ЧЧ:ММ'",
+                f"Укажите дату завершения розыгрыша (текущая дата и время: {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')})",
                 message_id=previous_message_id
             )
         else:
             new_message = await send_message_with_image(
                 bot,
                 message.chat.id,
-                "Медиафайл успешно добавлен к розыгрышу. Укажите время завершения розыгрыша в формате 'ДД.ММ.ГГГГ ЧЧ:ММ'"
+                f"Медиафайл успешно добавлен к розыгрышу. Укажите дату завершения розыгрыша (текущая дата и время: {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')})",
             )
             await state.update_data(last_message_id=new_message.message_id)
 
@@ -732,18 +733,22 @@ async def process_end_time_request(chat_id: int, state: FSMContext, message_id: 
     await state.set_state(GiveawayStates.waiting_for_end_time)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
-    await send_message_with_image(bot, chat_id, "Укажите время завершения розыгрыша в формате 'ДД.ММ.ГГГГ ЧЧ:ММ'",
-                                  reply_markup=keyboard, message_id=message_id)
+    await send_message_with_image(
+        bot,
+        chat_id,
+        f"Укажите дату завершения розыгрыша (текущая дата и время: {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')})",
+        reply_markup=keyboard, message_id=message_id)
 
 
 @dp.message(GiveawayStates.waiting_for_end_time)
 async def process_end_time(message: types.Message, state: FSMContext):
     try:
-        datetime.strptime(message.text, "%d.%m.%Y %H:%M")
+        new_end_time = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
         await state.update_data(end_time=message.text)
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         await state.set_state(GiveawayStates.waiting_for_winner_count)
         data = await state.get_data()
+
         await send_message_with_image(
             bot,
             message.chat.id,
@@ -751,11 +756,15 @@ async def process_end_time(message: types.Message, state: FSMContext):
             message_id=data.get('last_message_id')
         )
     except ValueError:
-        await send_message_with_image(
-            bot,
-            message.chat.id,
-            "Неверный формат даты. Пожалуйста, попробуйте еще раз.",
-            message_id=message.message_id
+        data = await state.get_data()
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="Назад", callback_data=f"create_giveaway")
+
+        await bot.edit_message_text(
+            f"Вы ввели неправильный формат даты.\nУкажите дату завершения розыгрыша (текущая дата и время: {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')})",
+            chat_id=message.chat.id,
+            message_id=data.get('last_message_id'),
+            reply_markup=keyboard.as_markup()
         )
 
 
@@ -936,8 +945,8 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
         giveaway_info = f"""
 Название: {giveaway['name']}
 Описание: {giveaway['description']}
-Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
-Победителей: {giveaway['winner_count']}
+Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+Количество победителей: {giveaway['winner_count']}
         """
 
         try:
@@ -1114,25 +1123,27 @@ async def process_confirm_delete_giveaway(callback_query: types.CallbackQuery):
         response = supabase.table('giveaways').delete().eq('id', giveaway_id).execute()
 
         if response.data:
-            await send_message_with_image(
-                bot,
-                callback_query.fromuser.id,
-                "Розыгрыш успешно удален.",
-                message_id=callback_query.message.message_id
-            )
-        else:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="В главное меню", callback_data="back_to_main_menu")
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
-                "Произошла ошибка при удалении розыгрыша.",
+                "Розыгрыш успешно удален.",
+                reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id
             )
+        else:
+            raise Exception("No data returned from giveaway deletion")
+
     except Exception as e:
         logging.error(f"Error deleting giveaway: {str(e)}")
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="В главное меню", callback_data="back_to_main_menu")
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
             "Произошла ошибка при удалении розыгрыша.",
+            reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
 
@@ -1156,7 +1167,7 @@ async def process_change_end_date(callback_query: types.CallbackQuery, state: FS
     await send_message_with_image(
         bot,
         callback_query.message.chat.id,
-        "Укажите новую дату завершения розыгрыша в формате 'ДД.ММ.ГГГГ ЧЧ:ММ'",
+        f"Укажите новую дату завершения розыгрыша (текущая дата и время: {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')})",
         reply_markup=keyboard.as_markup(),
         message_id=callback_query.message.message_id
     )
@@ -1210,7 +1221,7 @@ async def process_new_end_time(message: types.Message, state: FSMContext):
 
         # Use edit_message_text instead of send_message_with_image
         await bot.edit_message_text(
-            "Вы ввели неправильный формат даты.\nУкажите новую дату завершения розыгрыша в формате 'ДД.ММ.ГГГГ ЧЧ:ММ'",
+            f"Вы ввели неправильный формат даты.\nУкажите новую дату завершения розыгрыша (текущая дата и время: {datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')})",
             chat_id=message.chat.id,
             message_id=instruction_message_id,
             reply_markup=keyboard.as_markup()
@@ -1583,7 +1594,7 @@ async def process_publish_giveaway(callback_query: types.CallbackQuery):
 {giveaway['description']}
 
 Количество победителей: {giveaway['winner_count']}
-Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 
 Нажмите кнопку ниже, чтобы принять участие!
         """
@@ -1711,7 +1722,7 @@ async def process_view_active_giveaway(callback_query: types.CallbackQuery):
 
 Название: {giveaway['name']}
 Описание: {giveaway['description']}
-Дата {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 Количество победителей: {giveaway['winner_count']}
 Участвуют: {participants_count}
     """
@@ -1839,7 +1850,7 @@ async def process_giveaway_details(callback_query: types.CallbackQuery):
         # Детали розыгрыша
         giveaway_info = (f"Название: {giveaway['name']}\n"
                          f"Описание: {giveaway['description']}\n"
-                         f"Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК")
+                         f"Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}")
 
         # Клавиатура с кнопкой назад
         keyboard = InlineKeyboardBuilder()
