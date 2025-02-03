@@ -14,9 +14,10 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image
 from aiogram.enums import ChatMemberStatus
 import aiogram.exceptions
+import json
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+# logging.basicConfig(level=logging.INFO)
 
 # Initialize bot and dispatcher
 BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
@@ -44,6 +45,8 @@ class GiveawayStates(StatesGroup):
     waiting_for_community_name = State()
     waiting_for_new_end_time = State()
     waiting_for_media_edit = State()
+    waiting_for_congrats_message = State()
+    waiting_for_common_congrats_message = State()
 
 
 # Helper functions
@@ -71,7 +74,23 @@ async def save_giveaway(user_id: int, name: str, description: str, end_time: str
     try:
         response = supabase.table('giveaways').insert(giveaway_data).execute()
         if response.data:
+            giveaway_id = response.data[0]['id']
             logging.info(f"Giveaway saved successfully: {response.data}")
+
+            # Create default congratulatory message for all winners
+            default_congrats_message = f"Поздравляем! Вы выиграли в розыгрыше \"{name}\"!"
+
+            # Save the default congratulatory message for all places
+            for place in range(1, winner_count + 1):
+                try:
+                    supabase.table('congratulations').insert({
+                        'giveaway_id': giveaway_id,
+                        'place': place,
+                        'message': default_congrats_message
+                    }).execute()
+                except Exception as e:
+                    logging.error(f"Error saving default congratulatory message for place {place}: {str(e)}")
+
             return True
         else:
             logging.error(f"Unexpected response format: {response}")
@@ -79,6 +98,8 @@ async def save_giveaway(user_id: int, name: str, description: str, end_time: str
     except Exception as e:
         logging.error(f"Error saving giveaway: {str(e)}")
         return False
+
+
 
 
 async def check_ended_giveaways():
@@ -90,9 +111,12 @@ async def check_ended_giveaways():
                 for giveaway in response.data:
                     end_time = datetime.fromisoformat(giveaway['end_time'])
                     if end_time <= now:
-                        await end_giveaway(giveaway['id'])
+                        try:
+                            await end_giveaway(giveaway['id'])
+                        except Exception as e:
+                            logging.error(f"Error ending giveaway {giveaway['id']}: {str(e)}")
             else:
-                logging.error(f"Unexpected response format: {response}")
+                logging.info("No active giveaways found")
         except Exception as e:
             logging.error(f"Error fetching active giveaways: {str(e)}")
 
@@ -122,11 +146,12 @@ async def end_giveaway(giveaway_id: str):
 
     # Save winners (if any)
     if winners:
-        for winner in winners:
+        for index, winner in enumerate(winners, start=1):
             supabase.table('giveaway_winners').insert({
                 'giveaway_id': giveaway_id,
                 'user_id': winner['user_id'],
-                'username': winner['username']
+                'username': winner['username'],
+                'place': index
             }).execute()
 
     # Notify winners and publish results
@@ -230,10 +255,21 @@ async def notify_winners_and_publish_results(giveaway, winners):
         except Exception as e:
             logging.error(f"Error publishing results in community @{community['community_id']}: {e}")
 
-    for winner in winners:
+    # Fetch congratulatory messages for each place
+    congrats_response = supabase.table('congratulations').select('place', 'message').eq('giveaway_id',
+                                                                                        giveaway['id']).execute()
+    congrats_messages = {item['place']: item['message'] for item in congrats_response.data}
+
+    for index, winner in enumerate(winners, start=1):
         try:
-            await bot.send_message(chat_id=winner['user_id'],
-                                   text=f"Поздравляем! Вы выиграли в розыгрыше \"{giveaway['name']}\"!")
+            # Get the congratulatory message for this place, or use a default if not found
+            congrats_message = congrats_messages.get(index,
+                                                     f"Поздравляем! Вы выиграли в розыгрыше \"{giveaway['name']}\"!")
+
+            await bot.send_message(
+                chat_id=winner['user_id'],
+                text=congrats_message
+            )
         except Exception as e:
             logging.error(f"Error notifying winner {winner['user_id']}: {e}")
 
@@ -379,7 +415,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     keyboard.button(text="Созданные розыгрыши", callback_data="created_giveaways")
     keyboard.button(text="Активные розыгрыши", callback_data="active_giveaways")
     keyboard.button(text="Мои участия", callback_data="my_participations")
-    keyboard.button(text="Смотреть все розыгрыши", callback_data="view_all_giveaways")
+    # keyboard.button(text="Смотреть все розыгрыши", callback_data="view_all_giveaways")
     keyboard.adjust(1)  # One button per row
 
     sent_message = await send_message_with_image(bot, message.chat.id, "Выберите действие:", keyboard.as_markup())
@@ -709,8 +745,7 @@ async def process_media_upload(message: types.Message, state: FSMContext):
             message=message,
             data=f"view_created_giveaway:{giveaway_id}"
         ))
-    else:
-        # New giveaway
+    else:        # New giveaway
         if previous_message_id:
             await send_message_with_image(
                 bot,
@@ -939,6 +974,7 @@ async def process_view_created_giveaway(callback_query: types.CallbackQuery):
         keyboard.button(text="Добавить медиа файл" if not giveaway['media_type'] else "Медиа файл",
                         callback_data=f"manage_media:{giveaway_id}")
         keyboard.button(text="Удалить розыгрыш", callback_data=f"delete_giveaway:{giveaway_id}")
+        keyboard.button(text="Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
         keyboard.button(text="Назад к списку", callback_data="created_giveaways")
         keyboard.adjust(1)
 
@@ -1033,6 +1069,7 @@ async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
                                  reply_markup=keyboard.as_markup())
     else:
         await send_message_with_image(bot, chat_id, giveaway_info, reply_markup=keyboard.as_markup())
+
 
 @dp.callback_query(lambda c: c.data.startswith('manage_media:'))
 async def process_manage_media(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1378,7 +1415,7 @@ async def handle_successful_binding(message: types.Message, state: FSMContext, g
         await record_bound_community(message.from_user.id, channel_username, str(channel_id))
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Назад", callback_data=f"bind_communities:{giveaway_id}")
+        keyboard.button(text="Назад", callback_data=f"bindcommunities:{giveaway_id}")
         keyboard.adjust(1)
 
         await send_message_with_image(
@@ -1540,6 +1577,7 @@ async def bind_community(giveaway_id: str, community_id: str, community_username
 async def unbind_community(giveaway_id: str, community_id: str):
     supabase.table('giveaway_communities').delete().eq('giveaway_id', giveaway_id).eq('community_id',
                                                                                       community_id).execute()
+
 
 @dp.callback_query(lambda c: c.data.startswith('confirm_communities:'))
 async def process_confirm_communities(callback_query: types.CallbackQuery):
@@ -1792,7 +1830,6 @@ async def process_view_active_giveaway(callback_query: types.CallbackQuery):
                 raise
 
 
-
 @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
 async def process_force_end_giveaway(callback_query: types.CallbackQuery):
     giveaway_id = callback_query.data.split(':')[1]
@@ -1834,6 +1871,7 @@ async def process_my_participations(callback_query: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Error in process_my_participations: {str(e)}")
         await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении ваших участий.")
+
 
 # Обработчик кнопки с названием розыгрыша
 @dp.callback_query(lambda c: c.data.startswith('giveaway_'))
@@ -1937,9 +1975,8 @@ async def process_back_to_main_menu(callback_query: types.CallbackQuery, state: 
     keyboard.button(text="Созданные розыгрыши", callback_data="created_giveaways")
     keyboard.button(text="Активные розыгрыши", callback_data="active_giveaways")
     keyboard.button(text="Мои участия", callback_data="my_participations")
-    keyboard.button(text="Смотреть все розыгрыши", callback_data="view_all_giveaways") #New button
+    # keyboard.button(text="Смотреть все розыгрыши", callback_data="view_all_giveaways") #New button    keyboard.adjust(1)
     keyboard.adjust(1)
-
     await send_message_with_image(bot, callback_query.from_user.id, "Выберите действие:", keyboard.as_markup(),
                                   message_id=callback_query.message.message_id)
 
@@ -1952,7 +1989,7 @@ async def process_back_to_main_menu(callback_query: types.CallbackQuery, state: 
     keyboard.button(text="Созданные розыгрыши", callback_data="created_giveaways")
     keyboard.button(text="Активные розыгрыши", callback_data="active_giveaways")
     keyboard.button(text="Мои участия", callback_data="my_participations")
-    keyboard.button(text="Смотреть все розыгрыши", callback_data="view_all_giveaways") #New button
+    # keyboard.button(text="Смотреть все розыгрыши", callback_data="view_all_giveaways") #New button
     keyboard.adjust(1)
     await send_message_with_image(bot, callback_query.from_user.id, "Выберите действие:", keyboard.as_markup(),
                                   message_id=callback_query.message.message_id)
@@ -1995,6 +2032,7 @@ async def periodic_username_check():
         await check_and_update_usernames()
         await asyncio.sleep(1800)  # Check every hour
 
+
 async def record_bound_community(user_id: int, community_username: str, community_id: str):
     try:
         # Check if community is already recorded for the user
@@ -2018,6 +2056,243 @@ async def record_bound_community(user_id: int, community_username: str, communit
     except Exception as e:
         logging.error(f"Error recording bound community: {str(e)}")
         return False
+
+@dp.callback_query(lambda c: c.data.startswith('message_winners:'))
+async def process_message_winners(callback_query: types.CallbackQuery):
+    giveaway_id = callback_query.data.split(':')[1]
+
+    # Fetch giveaway details
+    giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
+    giveaway = giveaway_response.data
+
+    if not giveaway:
+        await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
+        return
+
+    winner_count = giveaway['winner_count']
+
+    # Create keyboard
+    keyboard = InlineKeyboardBuilder()
+    for place in range(1, winner_count + 1):
+        keyboard.button(text=f"Место {place}", callback_data=f"congrats_message:{giveaway_id}:{place}")
+    keyboard.button(text="Общее поздравление", callback_data=f"common_congrats:{giveaway_id}")
+    keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+    keyboard.adjust(1)
+
+    message_text = "Выберите место для редактирования поздравления или общее поздравление для всех победителей."
+
+    await send_message_with_image(
+        bot,
+        callback_query.from_user.id,
+        message_text,
+        reply_markup=keyboard.as_markup(),
+        message_id=callback_query.message.message_id
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith('common_congrats:'))
+async def process_common_congrats(callback_query: types.CallbackQuery, state: FSMContext):
+    giveaway_id = callback_query.data.split(':')[1]
+
+    try:
+        # Fetch existing common congratulation message if any
+        response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).eq('place', 0).single().execute()
+        existing_message = response.data['message'] if response.data else None
+    except Exception as e:
+        logging.error(f"Error fetching common congratulation: {str(e)}")
+        existing_message = None
+
+    await state.update_data(giveaway_id=giveaway_id)
+    await state.set_state(GiveawayStates.waiting_for_common_congrats_message)
+
+    message_text = "Напишите общее поздравление для всех победителей."
+    if existing_message:
+        message_text += f"\n\nТекущее поздравление:\n{existing_message}"
+
+    # Create keyboard with "Back" button
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
+
+    await send_message_with_image(
+        bot,
+        callback_query.from_user.id,
+        message_text,
+        reply_markup=keyboard.as_markup(),
+        message_id=callback_query.message.message_id
+    )
+
+
+@dp.callback_query(lambda c: c.data.startswith('congrats_message:'))
+async def process_congrats_message(callback_query: types.CallbackQuery, state: FSMContext):
+    giveaway_id, place = callback_query.data.split(':')[1:]
+
+    existing_message = None
+    try:
+        # Fetch existing congratulation message if any
+        response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).eq('place', place).single().execute()
+
+        if response.data:
+            existing_message = response.data.get('message', '')
+    except Exception as e:
+        error_message = str(e)
+        logging.error(f"Error fetching congratulation for place {place}: {error_message}")
+
+        # Check if the error message is actually the congratulation message
+        if "message" in error_message:
+            try:
+                error_dict = json.loads(error_message.replace("'", '"'))
+                existing_message = error_dict.get('message', '')
+            except json.JSONDecodeError:
+                pass
+
+    await state.update_data(giveaway_id=giveaway_id, place=place)
+    await state.set_state(GiveawayStates.waiting_for_congrats_message)
+
+    message_text = f"Напишите своё поздравление для победителя, занявшего {place} место."
+    if existing_message:
+        message_text += f"\n\nТекущее поздравление:\n{existing_message}"
+
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
+
+    sent_message = await send_message_with_image(
+        bot,
+        callback_query.from_user.id,
+        message_text,
+        reply_markup=keyboard.as_markup(),
+        message_id=callback_query.message.message_id
+    )
+
+    # Сохраняем ID отправленного сообщения в состоянии
+    await state.update_data(original_message_id=sent_message.message_id)
+
+@dp.message(GiveawayStates.waiting_for_congrats_message)
+async def save_congrats_message(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    giveaway_id = data['giveaway_id']
+    place = data['place']
+    original_message_id = data.get('original_message_id')
+
+    try:
+        # Сначала попробуем удалить существующее поздравление для этого места
+        supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).eq('place', place).execute()
+
+        # Затем вставим новое поздравление
+        supabase.table('congratulations').insert({
+            'giveaway_id': giveaway_id,
+            'place': place,
+            'message': message.text
+        }).execute()
+
+        await state.clear()
+
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
+        keyboard.adjust(1)
+
+        # Добавляем небольшую задержку перед редактированием сообщения
+        await asyncio.sleep(1)
+
+        # Send a new message with the updated congratulation
+        new_message = await bot.send_message(
+            message.chat.id,
+            f"Поздравление для {place} места обновлено:\n\n{message.text}",
+            reply_markup=keyboard.as_markup()
+        )
+
+        # Удаляем сообщение пользователя с новым поздравлением
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+
+        # Delete the original instruction message
+        if original_message_id:
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=original_message_id)
+            except Exception as e:
+                logging.error(f"Error deleting original message: {str(e)}")
+
+    except Exception as e:
+        logging.error(f"Error saving congratulation message: {str(e)}")
+        await message.reply("Произошла ошибка при сохранении поздравления. Пожалуйста, попробуйте еще раз.")
+
+@dp.callback_query(lambda c: c.data.startswith('common_congrats:'))
+async def process_common_congrats(callback_query: types.CallbackQuery, state: FSMContext):
+    giveaway_id = callback_query.data.split(':')[1]
+
+    # Fetch existing common congratulation message if any
+    response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).eq('place', 0).single().execute()
+    existing_message = response.data['message'] if response.data else None
+
+    await state.update_data(giveaway_id=giveaway_id)
+    await state.set_state(GiveawayStates.waiting_for_common_congrats_message)
+
+    message_text = "Напишите общее поздравление для всех победителей."
+    if existing_message:
+        message_text += f"\n\nТекущее сообщение:\n{existing_message}"
+
+    await bot.edit_message_text(
+        message_text,
+        chat_id=callback_query.from_user.id,
+        message_id=callback_query.message.message_id
+    )
+
+@dp.message(GiveawayStates.waiting_for_common_congrats_message)
+async def save_common_congrats_message(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    giveaway_id = data['giveaway_id']
+
+    try:
+        # Получаем информацию о розыгрыше для определения количества мест
+        giveaway_response = supabase.table('giveaways').select('winner_count').eq('id', giveaway_id).single().execute()
+        winner_count = giveaway_response.data['winner_count']
+
+        # Удаляем все существующие поздравления для этого розыгрыша
+        supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).execute()
+
+        # Создаем список новых поздравлений для всех мест
+        congratulations = []
+        for place in range(1, winner_count + 1):
+            congratulations.append({
+                'giveaway_id': giveaway_id,
+                'place': place,
+                'message': message.text
+            })
+
+        # Вставляем все новые поздравления
+        supabase.table('congratulations').insert(congratulations).execute()
+
+        await state.clear()
+
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="Назад", callback_data=f"message_winners:{giveaway_id}")
+        keyboard.adjust(1)
+
+        success_message = (
+            "Общее поздравление сохранено и применено ко всем местам в розыгрыше.\n"
+            f"Обновлено поздравлений: {winner_count} мест."
+        )
+
+        await send_message_with_image(
+            bot,
+            message.chat.id,
+            success_message,
+            reply_markup=keyboard.as_markup()
+        )
+
+    except Exception as e:
+        logging.error(f"Error saving common congratulation message: {str(e)}")
+        await message.reply("Произошла ошибка при сохранении поздравлений. Пожалуйста, попробуйте еще раз.")
+
+
+@dp.message(GiveawayStates.waiting_for_congrats_message)
+async def process_congrats_message_text(message: types.Message, state: FSMContext):
+    await save_congrats_message(message, state)
+
+
+@dp.message(GiveawayStates.waiting_for_common_congrats_message)
+async def process_common_congrats_message_text(message: types.Message, state: FSMContext):
+    await save_common_congrats_message(message, state)
+
+
 
 # Главная функция запуска бота
 async def main():
