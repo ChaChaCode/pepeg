@@ -14,7 +14,6 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image
 from aiogram.enums import ChatMemberStatus
 import aiogram.exceptions
-import json
 
 # Configure logging
 # logging.basicConfig(level=logging.INFO)
@@ -1156,6 +1155,9 @@ async def process_confirm_delete_giveaway(callback_query: types.CallbackQuery):
         # Delete related records from participations table
         supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
 
+        # Delete related records from congratulations table
+        supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).execute()
+
         # Delete the giveaway from giveaways table
         response = supabase.table('giveaways').delete().eq('id', giveaway_id).execute()
 
@@ -2099,7 +2101,6 @@ async def process_common_congrats(callback_query: types.CallbackQuery, state: FS
         response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).eq('place', 0).single().execute()
         existing_message = response.data['message'] if response.data else None
     except Exception as e:
-        logging.error(f"Error fetching common congratulation: {str(e)}")
         existing_message = None
 
     await state.update_data(giveaway_id=giveaway_id)
@@ -2122,28 +2123,49 @@ async def process_common_congrats(callback_query: types.CallbackQuery, state: FS
     )
 
 
+import json
+from postgrest.exceptions import APIError
+
+
+def extract_message(obj):
+    if isinstance(obj, str):
+        # Удаляем лишние символы из начала и конца строки
+        return obj.strip().removeprefix("{'message': '").removesuffix("'}")
+    if isinstance(obj, dict):
+        if 'message' in obj and isinstance(obj['message'], str):
+            return obj['message']
+        for value in obj.values():
+            result = extract_message(value)
+            if result:
+                return result
+    return None
+
 @dp.callback_query(lambda c: c.data.startswith('congrats_message:'))
 async def process_congrats_message(callback_query: types.CallbackQuery, state: FSMContext):
     giveaway_id, place = callback_query.data.split(':')[1:]
 
     existing_message = None
     try:
-        # Fetch existing congratulation message if any
+        # Получаем существующее поздравление, если оно есть
         response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).eq('place', place).single().execute()
 
-        if response.data:
-            existing_message = response.data.get('message', '')
-    except Exception as e:
-        error_message = str(e)
-        logging.error(f"Error fetching congratulation for place {place}: {error_message}")
+        # Логируем ответ для отладки
+        logging.info(f"Supabase response: {json.dumps(response, default=str)}")
 
-        # Check if the error message is actually the congratulation message
-        if "message" in error_message:
-            try:
-                error_dict = json.loads(error_message.replace("'", '"'))
-                existing_message = error_dict.get('message', '')
-            except json.JSONDecodeError:
-                pass
+        # Извлекаем текст сообщения
+        existing_message = extract_message(response.data)
+
+        # Логируем извлечённое сообщение
+        logging.info(f"Extracted message: {existing_message}")
+
+    except APIError as e:
+        # Обработка ошибок API
+        existing_message = extract_message(e.args[0] if e.args else e)
+        logging.info(f"Extracted message from APIError: {existing_message}")
+    except Exception as e:
+        error_dict = getattr(e, '__dict__', {})
+        existing_message = extract_message(error_dict)
+        logging.error(f"Error fetching congratulation for place {place}: {existing_message}")
 
     await state.update_data(giveaway_id=giveaway_id, place=place)
     await state.set_state(GiveawayStates.waiting_for_congrats_message)
@@ -2151,20 +2173,42 @@ async def process_congrats_message(callback_query: types.CallbackQuery, state: F
     message_text = f"Напишите своё поздравление для победителя, занявшего {place} место."
     if existing_message:
         message_text += f"\n\nТекущее поздравление:\n{existing_message}"
+    else:
+        message_text += "\n\nТекущее поздравление отсутствует."
 
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
 
-    sent_message = await send_message_with_image(
-        bot,
-        callback_query.from_user.id,
-        message_text,
-        reply_markup=keyboard.as_markup(),
-        message_id=callback_query.message.message_id
-    )
+    try:
+        sent_message = await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id
+        )
 
-    # Сохраняем ID отправленного сообщения в состоянии
-    await state.update_data(original_message_id=sent_message.message_id)
+        if sent_message:
+            await state.update_data(original_message_id=sent_message.message_id)
+        else:
+            logging.error("Failed to send message with image")
+    except Exception as e:
+        logging.error(f"Error in send_message_with_image: {str(e)}")
+        # Резервный вариант отправки простого сообщения
+        try:
+            sent_message = await bot.send_message(
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup()
+            )
+            await state.update_data(original_message_id=sent_message.message_id)
+        except Exception as e:
+            logging.error(f"Error sending fallback message: {str(e)}")
+
+    # Убираем индикатор загрузки с кнопки
+    await callback_query.answer()
+
+
 
 @dp.message(GiveawayStates.waiting_for_congrats_message)
 async def save_congrats_message(message: types.Message, state: FSMContext):
