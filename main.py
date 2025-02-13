@@ -16,7 +16,7 @@ from my_participations import register_my_participations_handlers
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-BOT_TOKEN = '7908502974:AAHypTBbfW-c9JR94HNYFLL9ZcN-2LaJFoU'
+BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
