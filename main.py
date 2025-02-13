@@ -151,7 +151,7 @@ async def process_back_to_main_menu(callback_query: types.CallbackQuery):
         [types.InlineKeyboardButton(text="Активные розыгрыши", callback_data="active_giveaways")],
         [types.InlineKeyboardButton(text="Мои участия", callback_data="my_participations")],
     ])
-    await send_message_with_image(bot, callback_query.from_user.id, "Выберите действие:", 
+    await send_message_with_image(bot, callback_query.from_user.id, "Выберите действие:",
                                   reply_markup=keyboard, message_id=callback_query.message.message_id)
 
 
