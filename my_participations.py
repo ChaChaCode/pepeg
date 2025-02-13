@@ -15,12 +15,15 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             response = supabase.table('participations').select('*, giveaways(*)').eq('user_id', user_id).execute()
             participations = response.data
 
-            if not participations:
+            # Filter out participations where giveaway's user_id is 1
+            filtered_participations = [p for p in participations if p['giveaways']['user_id'] != 1]
+
+            if not filtered_participations:
                 await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном розыгрыше.")
                 return
 
             keyboard = InlineKeyboardBuilder()
-            for participation in participations:
+            for participation in filtered_participations:
                 giveaway = participation['giveaways']
                 keyboard.button(text=giveaway['name'], callback_data=f"giveaway_{giveaway['id']}")
             keyboard.button(text="Назад", callback_data="back_to_main_menu")
