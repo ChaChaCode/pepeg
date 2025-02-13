@@ -134,4 +134,3 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await send_message_with_image(bot, chat_id, g_info, reply_markup=keyboard.as_markup())
 
     return send_new_giveaway_message
-    
