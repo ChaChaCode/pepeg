@@ -444,10 +444,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
-    Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
 
-    Текущая дата и время: <code>{current_time}</code>
-    """
+Текущая дата и время: <code>{current_time}</code>
+"""
 
         await send_message_with_image(
             bot,
