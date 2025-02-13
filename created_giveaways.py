@@ -1049,14 +1049,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             participant_count = await get_participant_count(giveaway_id, supabase)
 
             post_text = f"""
-    {giveaway['name']}
+{giveaway['name']}
 
-    {giveaway['description']}
+{giveaway['description']}
 
-    Количество победителей: {giveaway['winner_count']}
-    Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+Количество победителей: {giveaway['winner_count']}
+Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 
-    Нажмите кнопку ниже, чтобы принять участие!
+Нажмите кнопку ниже, чтобы принять участие!
             """
 
             keyboard = InlineKeyboardBuilder()
