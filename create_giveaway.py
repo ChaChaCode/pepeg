@@ -3,11 +3,16 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from supabase import Client
+from supabase import create_client, Client
 from datetime import datetime
 import pytz
 from utils import send_message_with_image
+import logging
 
+# Supabase configuration
+supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
+supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
+supabase: Client = create_client(supabase_url, supabase_key)
 
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
@@ -17,8 +22,7 @@ class GiveawayStates(StatesGroup):
     waiting_for_end_time = State()
     waiting_for_winner_count = State()
 
-
-async def save_giveaway(supabase: Client, user_id: int, name: str, description: str, end_time: str, winner_count: int,
+async def save_giveaway(supabase, user_id: int, name: str, description: str, end_time: str, winner_count: int,
                         media_type: str = None, media_file_id: str = None):
     moscow_tz = pytz.timezone('Europe/Moscow')
     end_time_dt = datetime.strptime(end_time, "%d.%m.%Y %H:%M")
@@ -39,13 +43,29 @@ async def save_giveaway(supabase: Client, user_id: int, name: str, description: 
         response = supabase.table('giveaways').insert(giveaway_data).execute()
         if response.data:
             giveaway_id = response.data[0]['id']
+            logging.info(f"Giveaway saved successfully: {response.data}")
+
+            # Create default congratulatory message for all winners
+            default_congrats_message = f"Поздравляем! Вы выиграли в розыгрыше \"{name}\"!"
+
+            # Save the default congratulatory message for all places
+            for place in range(1, winner_count + 1):
+                try:
+                    supabase.table('congratulations').insert({
+                        'giveaway_id': giveaway_id,
+                        'place': place,
+                        'message': default_congrats_message
+                    }).execute()
+                except Exception as e:
+                    logging.error(f"Error saving default congratulatory message for place {place}: {str(e)}")
+
             return True, giveaway_id
         else:
+            logging.error(f"Unexpected response format: {response}")
             return False, None
     except Exception as e:
-        print(f"Error saving giveaway: {str(e)}")
+        logging.error(f"Error saving giveaway: {str(e)}")
         return False, None
-
 
 def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
     @dp.callback_query(lambda c: c.data == 'create_giveaway')
@@ -194,9 +214,10 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
 
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             html_message = f"""
-Вы ввели неправильный формат даты. Сообщение удалено.
-Укажите дату завершения розыгрыша (текущая дата и время: <code>{current_time}</code>)
-"""
+    Вы ввели неправильный формат даты. Сообщение удалено.
+    Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+    (текущая дата и время: <code>{current_time}</code>)
+    """
 
             await bot.edit_message_text(
                 html_message,
@@ -230,18 +251,18 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                     "Розыгрыш успешно создан и сохранен!",
                     message_id=data.get('last_message_id')
                 )
-                # Переход к созданным розыгрышам
                 keyboard = InlineKeyboardBuilder()
-                keyboard.button(text="К созданным розыгрышам", callback_data="created_giveaways")
+                keyboard.button(text="К созданному розыгрышу", callback_data=f"view_created_giveaway:{giveaway_id}")
                 keyboard.button(text="В главное меню", callback_data="back_to_main_menu")
                 keyboard.adjust(1)
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    "Что вы хотите сделать дальше?",
+                    "Розыгрыш успешно создан.\nЧто вы хотите сделать дальше?",
                     reply_markup=keyboard.as_markup(),
                     message_id=data.get('last_message_id')
                 )
+                await state.clear()
             else:
                 await send_message_with_image(
                     bot,
@@ -251,11 +272,13 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 )
         except ValueError:
             data = await state.get_data()
-            await send_message_with_image(
-                bot,
-                message.chat.id,
-                "Пожалуйста, введите целое число.",
-                message_id=data.get('last_message_id')
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="В меню", callback_data="back_to_main_menu")
+            await bot.edit_message_text(
+                "Пожалуйста, введите целое число для количества победителей.",
+                chat_id=message.chat.id,
+                message_id=data.get('last_message_id'),
+                reply_markup=keyboard.as_markup()
             )
-        finally:
-            await state.clear()
+
+
