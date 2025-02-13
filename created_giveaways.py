@@ -13,6 +13,7 @@ from aiogram.enums import ChatMemberStatus
 import aiogram.exceptions
 import json
 from postgrest import APIResponse
+import asyncio
 
 # Bot configuration and initialization
 BOT_TOKEN = '7908502974:AAHypTBbfW-c9JR94HNYFLL9ZcN-2LaJFoU'
@@ -1025,8 +1026,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_publish_giveaway(callback_query: types.CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
+        participant_counter_tasks = []
 
-        # Проверяем временные данные пользователя
+        # Check user's temporary data
         user_data = user_selected_communities.get(user_id)
         if not user_data or 'communities' not in user_data:
             await bot.answer_callback_query(callback_query.id, text="Ошибка: нет выбранных сообществ для публикации.")
@@ -1035,7 +1037,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         selected_communities = user_data['communities']
 
         try:
-            # Получение информации о розыгрыше
+            # Fetch giveaway information
             giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
             giveaway = giveaway_response.data
 
@@ -1043,90 +1045,206 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
                 return
 
+            # Get current participant count
+            participant_count = await get_participant_count(giveaway_id, supabase)
+
             post_text = f"""
-{giveaway['name']}
+    {giveaway['name']}
 
-{giveaway['description']}
+    {giveaway['description']}
 
-Количество победителей: {giveaway['winner_count']}
-Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+    Количество победителей: {giveaway['winner_count']}
+    Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 
-Нажмите кнопку ниже, чтобы принять участие!
+    Нажмите кнопку ниже, чтобы принять участие!
             """
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Участвовать", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}")
+            keyboard.button(
+                text=f"Участвовать ({participant_count})",
+                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+            )
             keyboard.adjust(1)
+
             success_count = 0
             error_count = 0
             error_messages = []
+            published_messages = []
 
-            # Публикация в выбранные сообщества
+            # Publish to selected communities
             for community_id, community_username in selected_communities:
                 try:
+                    sent_message = None
+
+                    # Send message based on media type
                     if giveaway['media_type'] and giveaway['media_file_id']:
                         if giveaway['media_type'] == 'photo':
-                            await bot.send_photo(chat_id=int(community_id), photo=giveaway['media_file_id'],
-                                                 caption=post_text, reply_markup=keyboard.as_markup())
+                            sent_message = await bot.send_photo(
+                                chat_id=int(community_id),
+                                photo=giveaway['media_file_id'],
+                                caption=post_text,
+                                reply_markup=keyboard.as_markup()
+                            )
                         elif giveaway['media_type'] == 'gif':
-                            await bot.send_animation(chat_id=int(community_id), animation=giveaway['media_file_id'],
-                                                     caption=post_text, reply_markup=keyboard.as_markup())
+                            sent_message = await bot.send_animation(
+                                chat_id=int(community_id),
+                                animation=giveaway['media_file_id'],
+                                caption=post_text,
+                                reply_markup=keyboard.as_markup()
+                            )
                         elif giveaway['media_type'] == 'video':
-                            await bot.send_video(chat_id=int(community_id), video=giveaway['media_file_id'],
-                                                 caption=post_text, reply_markup=keyboard.as_markup())
+                            sent_message = await bot.send_video(
+                                chat_id=int(community_id),
+                                video=giveaway['media_file_id'],
+                                caption=post_text,
+                                reply_markup=keyboard.as_markup()
+                            )
                     else:
-                        await bot.send_message(chat_id=int(community_id), text=post_text,
-                                               reply_markup=keyboard.as_markup())
-                    success_count += 1
+                        sent_message = await bot.send_message(
+                            chat_id=int(community_id),
+                            text=post_text,
+                            reply_markup=keyboard.as_markup()
+                        )
+
+                    if sent_message:
+                        # Save message information
+                        published_messages.append({
+                            'chat_id': sent_message.chat.id,
+                            'message_id': sent_message.message_id
+                        })
+
+                        # Save information for participant counter tasks
+                        participant_counter_tasks.append({
+                            'chat_id': sent_message.chat.id,
+                            'message_id': sent_message.message_id
+                        })
+
+                        success_count += 1
                 except Exception as e:
                     error_count += 1
                     error_messages.append(f"Ошибка публикации в @{community_username}: {str(e)}")
+                    logging.error(f"Error publishing to community @{community_username}: {str(e)}")
 
-            # Обработка результатов публикации
+            # Handle publication results
             if success_count > 0:
                 try:
-                    # Clear previous winners first
+                    # Clear previous winners and participants
                     supabase.table('giveaway_winners').delete().eq('giveaway_id', giveaway_id).execute()
-                    # Then clear participants
                     supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
-                    # Finally activate the giveaway and set the created_at time
+
+                    # Activate giveaway and set creation time
                     moscow_tz = pytz.timezone('Europe/Moscow')
                     current_time = datetime.now(moscow_tz)
+
+                    # Update the giveaway with the new information
                     supabase.table('giveaways').update({
                         'is_active': True,
-                        'created_at': current_time.isoformat()
+                        'created_at': current_time.isoformat(),
+                        'published_messages': json.dumps(published_messages),
+                        'participant_counter_tasks': json.dumps(participant_counter_tasks)
                     }).eq('id', giveaway_id).execute()
+
+                    # Start the participant counter tasks
+                    counter_tasks = []
+                    for task_info in participant_counter_tasks:
+                        task = asyncio.create_task(
+                            start_participant_counter(
+                                bot,
+                                task_info['chat_id'],
+                                task_info['message_id'],
+                                giveaway_id,
+                                supabase
+                            )
+                        )
+                        counter_tasks.append(task)
+
+
+                    await bot.answer_callback_query(callback_query.id, text="Розыгрыш опубликован и активирован!")
+
+                    keyboard = InlineKeyboardBuilder()
+                    keyboard.button(text="Назад", callback_data="back_to_main_menu")
+
+                    result_message = (
+                        f"✅ Розыгрыш успешно опубликован в {success_count} сообществах.\n"
+                        f"📊 Начальное количество участников: {participant_count}\n"
+                        "🔄 Счетчик участников будет обновляться каждые 10 секунд."
+                    )
+
+                    if error_count > 0:
+                        result_message += f"\n\n❌ Ошибки публикации ({error_count}):\n" + "\n".join(error_messages)
+
+                    await send_message_with_image(
+                        bot,
+                        callback_query.from_user.id,
+                        result_message,
+                        reply_markup=keyboard.as_markup(),
+                        message_id=callback_query.message.message_id
+                    )
+
                 except Exception as e:
-                    logging.error(f"Error clearing previous data or activating giveaway: {str(e)}")
-                    raise
-
-                await bot.answer_callback_query(callback_query.id, text="Розыгрыш опубликован и активирован!")
-
-                keyboard = InlineKeyboardBuilder()
-                keyboard.button(text="Назад", callback_data="back_to_main_menu")
-
-                await send_message_with_image(
-                    bot,
-                    callback_query.from_user.id,
-                    f"Розыгрыш успешно опубликован в {success_count} сообществах." +
-                    (f"\n\nПодробности ошибок:\n{chr(10).join(error_messages)}" if error_count > 0 else ""),
-                    reply_markup=keyboard.as_markup(),
-                    message_id=callback_query.message.message_id
-                )
+                    logging.error(f"Error finalizing giveaway activation: {str(e)}")
+                    await bot.answer_callback_query(
+                        callback_query.id,
+                        text="Произошла ошибка при активации розыгрыша."
+                    )
             else:
                 await bot.answer_callback_query(callback_query.id, text="Не удалось опубликовать розыгрыш.")
+
+                error_keyboard = InlineKeyboardBuilder()
+                error_keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+
                 await send_message_with_image(
                     bot,
                     callback_query.from_user.id,
-                    f"Не удалось опубликовать розыгрыш. Ошибок: {error_count}.\n\nПодробности ошибок:\n{chr(10).join(error_messages)}",
+                    f"❌ Не удалось опубликовать розыгрыш.\nОшибок: {error_count}\n\nПодробности:\n" +
+                    "\n".join(error_messages),
+                    reply_markup=error_keyboard.as_markup(),
                     message_id=callback_query.message.message_id
                 )
+
         except Exception as e:
             logging.error(f"Error in process_publish_giveaway: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при публикации розыгрыша.")
+            await bot.answer_callback_query(
+                callback_query.id,
+                text="Произошла ошибка при публикации розыгрыша."
+            )
         finally:
-            # Удаляем временные данные
+            # Clear user's temporary data
             user_selected_communities.pop(user_id, None)
+
+    async def get_participant_count(giveaway_id: str, supabase: Client) -> int:
+        """Get the current number of participants for a giveaway"""
+        try:
+            response = supabase.table('participations').select('id').eq('giveaway_id', giveaway_id).execute()
+            return len(response.data) if response.data else 0
+        except Exception as e:
+            logging.error(f"Error getting participant count: {str(e)}")
+            return 0
+
+    async def update_participant_button(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, supabase: Client):
+        """Update the button text with current participant count"""
+        try:
+            count = await get_participant_count(giveaway_id, supabase)
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(
+                text=f"Участвовать ({count})",
+                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+            )
+            keyboard.adjust(1)
+
+            await bot.edit_message_reply_markup(
+                chat_id=chat_id,
+                message_id=message_id,
+                reply_markup=keyboard.as_markup()
+            )
+        except Exception as e:
+            logging.error(f"Error updating participant button: {str(e)}")
+
+    async def start_participant_counter(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, supabase: Client):
+        """Start periodic updates of participant count"""
+        while True:
+            await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
+            await asyncio.sleep(10)  # Update every 10 seconds
 
     @dp.callback_query(lambda c: c.data.startswith('message_winners:'))
     async def process_message_winners(callback_query: types.CallbackQuery):
