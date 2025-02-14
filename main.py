@@ -12,12 +12,13 @@ from create_giveaway import register_create_giveaway_handlers
 from created_giveaways import register_created_giveaways_handlers
 from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
+from new_public import register_new_public
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
+BOT_TOKEN = '7908502974:AAHypTBbfW-c9JR94HNYFLL9ZcN-2LaJFoU'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -36,6 +37,7 @@ register_create_giveaway_handlers(dp, bot, supabase)
 register_created_giveaways_handlers(dp, bot, supabase)
 register_my_participations_handlers(dp, bot, supabase)
 register_congratulations_messages(dp, bot, supabase)
+register_new_public(dp, bot, supabase)
 
 # Обработчики команд
 @dp.message(Command("pay"))
