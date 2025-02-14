@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Union
+from typing import List, Dict, Any
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -12,7 +12,6 @@ from utils import send_message_with_image
 from aiogram.enums import ChatMemberStatus
 import aiogram.exceptions
 import json
-from postgrest import APIResponse
 import asyncio
 
 # Bot configuration and initialization
@@ -680,35 +679,35 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         response = supabase.table('bound_communities').select('*').eq('user_id', user_id).execute()
         return response.data if response.data else []
 
-    async def bind_community_to_giveaway(giveaway_id: str, community_id: str, community_username: str):
-        try:
-            response = supabase.table('giveaway_communities').insert({
-                'giveaway_id': giveaway_id,
-                'community_id': community_id,
-                'community_username': community_username
-            }).execute()
-            if response.data:
-                logging.info(f"Bound community recorded: {response.data}")
-                return True
-            else:
-                logging.error(f"Unexpected response format: {response}")
-                return False
-        except Exception as e:
-            logging.error(f"Error recording bound community: {str(e)}")
-            return False
+    async def bind_community_to_giveaway(giveaway_id, community_id, community_username):
+        data = {
+            "giveaway_id": giveaway_id,
+            "community_id": community_id,
+            "community_username": community_username
+        }
+        supabase.table("giveaway_communities").insert(data).execute()
 
+    async def unbind_community_from_giveaway(giveaway_id, community_id):
+        supabase.table("giveaway_communities").delete().eq("giveaway_id", giveaway_id).eq("community_id",
+                                                                                          community_id).execute()
     @dp.callback_query(lambda c: c.data.startswith('bind_communities:'))
     async def process_bind_communities(callback_query: types.CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        user_id = callback_query.from_user.id
         await state.update_data(giveaway_id=giveaway_id)
         await bot.answer_callback_query(callback_query.id)
 
         # Fetch bound communities for the user
-        bound_communities = await get_bound_communities(callback_query.from_user.id)
+        bound_communities = await get_bound_communities(user_id)
 
         # Fetch communities already bound to this giveaway
         giveaway_communities = await get_giveaway_communities(giveaway_id)
-        giveaway_community_ids = set(comm['community_id'] for comm in giveaway_communities)
+
+        # Initialize the user's selected communities
+        user_selected_communities[user_id] = {
+            'giveaway_id': giveaway_id,
+            'communities': set((comm['community_id'], comm['community_username']) for comm in giveaway_communities)
+        }
 
         keyboard = InlineKeyboardBuilder()
 
@@ -716,14 +715,17 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         for community in bound_communities:
             community_id = community['community_id']
             community_username = community['community_username']
-            is_bound = community_id in giveaway_community_ids
-            checkmark = ' ✅' if is_bound else ''
+            is_selected = (community_id, community_username) in user_selected_communities[user_id]['communities']
+            text = f"@{community_username}"
+            if is_selected:
+                text += ' ✅'
             keyboard.button(
-                text=f"@{community_username}{checkmark}",
-                callback_data=f"select_community:{giveaway_id}:{community_id}:{community_username}"
+                text=text,
+                callback_data=f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
             )
 
         # Add buttons for other actions
+        keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_community_selection:{giveaway_id}")
         keyboard.button(text="Привязать новый паблик", callback_data=f"bind_new_community:{giveaway_id}")
         keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
         keyboard.adjust(1)
@@ -731,14 +733,75 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            "Выберите паблик для привязки или отвязки, или добавьте новый:",
+            "Выберите паблики для привязки, затем нажмите 'Подтвердить выбор':",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
 
-    async def get_giveaway_communities(giveaway_id: str):
-        response = supabase.table('giveaway_communities').select('community_id, community_username').eq('giveaway_id',
-                                                                                                        giveaway_id).execute()
+        # Log the initial state of selected communities
+        logging.info(
+            f"Initial selected communities for user {user_id}: {user_selected_communities[user_id]['communities']}")
+
+    @dp.callback_query(lambda c: c.data.startswith('toggle_community:'))
+    async def process_toggle_community(callback_query: types.CallbackQuery):
+        _, giveaway_id, community_id, community_username = callback_query.data.split(':')
+        user_id = callback_query.from_user.id
+
+        # Ensure user_selected_communities is initialized
+        if user_id not in user_selected_communities or user_selected_communities[user_id]['giveaway_id'] != giveaway_id:
+            user_selected_communities[user_id] = {
+                'giveaway_id': giveaway_id,
+                'communities': set()
+            }
+
+        # Find the button that was clicked
+        current_text = None
+        new_keyboard = []
+        for row in callback_query.message.reply_markup.inline_keyboard:
+            new_row = []
+            for button in row:
+                if button.callback_data == callback_query.data:
+                    current_text = button.text
+                    # Toggle the selection
+                    if '✅' in current_text:
+                        new_text = f"@{community_username}"
+                        user_selected_communities[user_id]['communities'].discard((community_id, community_username))
+                        logging.info(f"Removing community {community_username} from selection")
+                    else:
+                        new_text = f"@{community_username} ✅"
+                        user_selected_communities[user_id]['communities'].add((community_id, community_username))
+                        logging.info(f"Adding community {community_username} to selection")
+                    new_row.append(InlineKeyboardButton(text=new_text, callback_data=button.callback_data))
+                else:
+                    new_row.append(button)
+            new_keyboard.append(new_row)
+
+        if current_text is None:
+            logging.error(f"Button not found for callback data: {callback_query.data}")
+            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка. Пожалуйста, попробуйте еще раз.")
+            return
+
+        await bot.answer_callback_query(callback_query.id)
+
+        try:
+            await bot.edit_message_reply_markup(
+                chat_id=callback_query.message.chat.id,
+                message_id=callback_query.message.message_id,
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=new_keyboard)
+            )
+            logging.info(f"Keyboard updated. Button state changed for community {community_username}")
+        except aiogram.exceptions.TelegramBadRequest as e:
+            if "message is not modified" not in str(e):
+                logging.error(f"Error updating keyboard: {e}")
+            else:
+                logging.info("Message not modified, but state has changed")
+
+        # Log the state after toggling
+        logging.info(
+            f"After toggle - Selected communities for user {user_id}: {user_selected_communities[user_id]['communities']}")
+
+    async def get_giveaway_communities(giveaway_id):
+        response = supabase.table("giveaway_communities").select("*").eq("giveaway_id", giveaway_id).execute()
         return response.data
 
     @dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
@@ -893,6 +956,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     @dp.callback_query(lambda c: c.data.startswith('activate_giveaway:'))
     async def process_activate_giveaway(callback_query: types.CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
+        user_id = callback_query.from_user.id
         try:
             response = supabase.table('giveaway_communities').select('community_id', 'community_username').eq(
                 'giveaway_id',
@@ -906,9 +970,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             keyboard = InlineKeyboardBuilder()
             for community in communities:
-                keyboard.button(text=community['community_username'],
-                                callback_data=f"toggle_community:{giveaway_id}:{community['community_id']}:{community['community_username']}")
-            keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_communities:{giveaway_id}")
+                keyboard.button(
+                    text=f"@{community['community_username']}",
+                    callback_data=f"toggle_activate_community:{giveaway_id}:{community['community_id']}:{community['community_username']}"
+                )
+            keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_activate_selection:{giveaway_id}")
             keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
             keyboard.adjust(1)
 
@@ -924,42 +990,185 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             logging.error(f"Error in process_activate_giveaway: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении списка сообществ.")
 
-    @dp.callback_query(lambda c: c.data.startswith('toggle_community:'))
-    async def process_toggle_community(callback_query: types.CallbackQuery):
+    @dp.callback_query(lambda c: c.data.startswith('toggle_activate_community:'))
+    async def process_toggle_activate_community(callback_query: types.CallbackQuery):
         _, giveaway_id, community_id, community_username = callback_query.data.split(':')
 
-        # Инициализация временного хранилища для пользователя
-        user_id = callback_query.from_user.id
-        if user_selected_communities.get(user_id) is None:
-            user_selected_communities[user_id] = {'giveaway_id': giveaway_id, 'communities': set()}
-
-        # Добавление или удаление сообщества
-        community_data = (community_id, community_username)
-        if community_data in user_selected_communities[user_id]['communities']:
-            user_selected_communities[user_id]['communities'].remove(community_data)
-        else:
-            user_selected_communities[user_id]['communities'].add(community_data)
-
-        # Обновляем текст кнопки
-        keyboard = callback_query.message.reply_markup
-        for row in keyboard.inline_keyboard:
+        # Находим кнопку, на которую нажали
+        new_keyboard = []
+        for row in callback_query.message.reply_markup.inline_keyboard:
+            new_row = []
             for button in row:
                 if button.callback_data == callback_query.data:
+                    # Переключаем состояние кнопки
                     if '✅' in button.text:
-                        button.text = button.text.replace(' ✅', '')
+                        new_text = f"@{community_username}"
                     else:
-                        button.text += ' ✅'
-                    break
-            else:
-                continue
-            break
+                        new_text = f"@{community_username} ✅"
+                    new_row.append(InlineKeyboardButton(text=new_text, callback_data=button.callback_data))
+                else:
+                    new_row.append(button)
+            new_keyboard.append(new_row)
 
-        await bot.answer_callback_query(callback_query.id)
         await bot.edit_message_reply_markup(
             chat_id=callback_query.message.chat.id,
             message_id=callback_query.message.message_id,
-            reply_markup=keyboard
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=new_keyboard)
         )
+        await bot.answer_callback_query(callback_query.id)
+
+    @dp.callback_query(lambda c: c.data.startswith('confirm_activate_selection:'))
+    async def process_confirm_activate_selection(callback_query: types.CallbackQuery):
+        giveaway_id = callback_query.data.split(':')[1]
+        user_id = callback_query.from_user.id
+
+        # Получаем текущее состояние кнопок
+        selected_communities = []
+        for row in callback_query.message.reply_markup.inline_keyboard:
+            for button in row:
+                if button.callback_data.startswith('toggle_activate_community:'):
+                    _, _, community_id, community_username = button.callback_data.split(':')
+                    if '✅' in button.text:
+                        selected_communities.append((community_id, community_username))
+
+        if not selected_communities:
+            await bot.answer_callback_query(callback_query.id, text="Выберите хотя бы одно сообщество для публикации.")
+            return
+
+        # Сохраняем выбранные сообщества в глобальный словарь
+        user_selected_communities[user_id] = {
+            'giveaway_id': giveaway_id,
+            'communities': selected_communities
+        }
+
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="Активировать розыгрыш", callback_data=f"publish_giveaway:{giveaway_id}")
+        keyboard.button(text="Назад", callback_data=f"activate_giveaway:{giveaway_id}")
+        keyboard.adjust(1)
+
+        await bot.answer_callback_query(callback_query.id)
+        community_usernames = [community[1] for community in selected_communities]
+        await send_message_with_image(bot, callback_query.from_user.id,
+                                      f"Розыгрыш будет опубликован в следующих сообществах: {', '.join(community_usernames)}",
+                                      keyboard.as_markup(), message_id=callback_query.message.message_id)
+
+    @dp.callback_query(lambda c: c.data.startswith('confirm_community_selection:'))
+    async def process_confirm_community_selection(callback_query: types.CallbackQuery):
+        giveaway_id = callback_query.data.split(':')[1]
+        user_id = callback_query.from_user.id
+
+        # Получаем текущие привязанные паблики для этого гивевея
+        current_bound_communities = await get_giveaway_communities(giveaway_id)
+        current_set = set((str(comm['community_id']), comm['community_username']) for comm in current_bound_communities)
+
+        # Получаем текущее состояние кнопок
+        selected_set = set()
+        for row in callback_query.message.reply_markup.inline_keyboard:
+            for button in row:
+                if button.callback_data.startswith('toggle_community:'):
+                    _, _, community_id, community_username = button.callback_data.split(':')
+                    if '✅' in button.text:
+                        selected_set.add((str(community_id), community_username))
+
+        # Находим паблики для добавления и удаления
+        to_add = selected_set - current_set
+        to_remove = current_set - selected_set
+
+        changes_made = False
+
+        # Добавляем новые привязки
+        for community_id, community_username in to_add:
+            await bind_community_to_giveaway(giveaway_id, community_id, community_username)
+            logging.info(f"Added binding for community {community_username} to giveaway {giveaway_id}")
+            changes_made = True
+
+        # Удаляем старые привязки
+        for community_id, community_username in to_remove:
+            await unbind_community_from_giveaway(giveaway_id, community_id)
+            logging.info(f"Removed binding for community {community_username} from giveaway {giveaway_id}")
+            changes_made = True
+
+        # Обновляем сообщение с новым списком привязанных пабликов
+        bound_communities = await get_bound_communities(user_id)
+        giveaway_communities = await get_giveaway_communities(giveaway_id)
+
+        keyboard = InlineKeyboardBuilder()
+
+        for community in bound_communities:
+            community_id = community['community_id']
+            community_username = community['community_username']
+            is_selected = any(str(comm['community_id']) == str(community_id) for comm in giveaway_communities)
+            text = f"@{community_username}"
+            if is_selected:
+                text += ' ✅'
+            keyboard.button(
+                text=text,
+                callback_data=f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
+            )
+
+        keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_community_selection:{giveaway_id}")
+        keyboard.button(text="Привязать новый паблик", callback_data=f"bind_new_community:{giveaway_id}")
+        keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+        keyboard.adjust(1)
+
+        new_markup = keyboard.as_markup()
+
+        try:
+            # Всегда пытаемся обновить клавиатуру
+            await bot.edit_message_reply_markup(
+                chat_id=callback_query.message.chat.id,
+                message_id=callback_query.message.message_id,
+                reply_markup=new_markup
+            )
+
+            if changes_made:
+                await bot.answer_callback_query(callback_query.id, text="Привязки пабликов обновлены!")
+
+                # Создаем новый объект CallbackQuery с данными для просмотра созданного розыгрыша
+                new_callback_query = types.CallbackQuery(
+                    id=callback_query.id,
+                    from_user=callback_query.from_user,
+                    chat_instance=callback_query.chat_instance,
+                    message=callback_query.message,
+                    data=f"view_created_giveaway:{giveaway_id}"
+                )
+
+                # Очищаем выбранные сообщества для этого пользователя, если они были
+                if user_id in user_selected_communities:
+                    del user_selected_communities[user_id]
+
+                # Перенаправляем на просмотр созданного розыгрыша только если были изменения
+                await process_view_created_giveaway(new_callback_query)
+            else:
+                await bot.answer_callback_query(callback_query.id, text="Список пабликов не изменился.")
+        except aiogram.exceptions.TelegramBadRequest as e:
+            if "message is not modified" in str(e):
+                # Если сообщение не изменилось, это не ошибка
+                logging.info("Message not modified, as it's identical to the current one.")
+                if changes_made:
+                    await bot.answer_callback_query(callback_query.id, text="Привязки пабликов обновлены!")
+
+                    # Создаем новый объект CallbackQuery и перенаправляем только если были изменения
+                    new_callback_query = types.CallbackQuery(
+                        id=callback_query.id,
+                        from_user=callback_query.from_user,
+                        chat_instance=callback_query.chat_instance,
+                        message=callback_query.message,
+                        data=f"view_created_giveaway:{giveaway_id}"
+                    )
+
+                    # Очищаем выбранные сообщества для этого пользователя, если они были
+                    if user_id in user_selected_communities:
+                        del user_selected_communities[user_id]
+
+                    await process_view_created_giveaway(new_callback_query)
+                else:
+                    await bot.answer_callback_query(callback_query.id, text="Список пабликов не изменился.")
+            else:
+                # Если возникла другая ошибка, логируем её
+                logging.error(f"Error updating keyboard: {e}")
+                await bot.answer_callback_query(callback_query.id,
+                                                text="Произошла ошибка при обновлении списка пабликов.")
 
     @dp.callback_query(lambda c: c.data.startswith('select_community:'))
     async def process_select_community(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1028,9 +1237,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         user_id = callback_query.from_user.id
         participant_counter_tasks = []
 
-        # Check user's temporary data
+        # Проверяем наличие данных о выбранных сообществах
         user_data = user_selected_communities.get(user_id)
-        if not user_data or 'communities' not in user_data:
+        if not user_data or user_data['giveaway_id'] != giveaway_id or not user_data.get('communities'):
             await bot.answer_callback_query(callback_query.id, text="Ошибка: нет выбранных сообществ для публикации.")
             return
 
@@ -1246,368 +1455,5 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
             await asyncio.sleep(10)  # Update every 10 seconds
 
-    @dp.callback_query(lambda c: c.data.startswith('message_winners:'))
-    async def process_message_winners(callback_query: types.CallbackQuery):
-        giveaway_id = callback_query.data.split(':')[1]
 
-        giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-        giveaway = giveaway_response.data
-
-        if not giveaway:
-            await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
-            return
-
-        winner_count = giveaway['winner_count']
-
-        keyboard = InlineKeyboardBuilder()
-        for place in range(1, winner_count + 1):
-            keyboard.button(text=f"Место {place}", callback_data=f"congrats_message:{giveaway_id}:{place}")
-        keyboard.button(text="Общее поздравление", callback_data=f"common_congrats:{giveaway_id}")
-        keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
-        keyboard.adjust(1)
-
-        message_text = "Выберите место для редактирования поздравления или общее поздравление для всех победителей."
-
-        await send_message_with_image(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
-        )
-
-    @dp.callback_query(lambda c: c.data.startswith('common_congrats:'))
-    async def process_common_congrats(callback_query: types.CallbackQuery, state: FSMContext):
-        giveaway_id = callback_query.data.split(':')[1]
-        logging.info(f"Processing common congratulation for giveaway {giveaway_id}")
-
-        try:
-            response = supabase.table('congratulations').select('message', 'place').eq('giveaway_id',
-                                                                                       giveaway_id).execute()
-            logging.info(f"Fetched congratulations: {json.dumps(response.data, default=str)}")
-
-            if not response.data:
-                message_text = "В настоящее время поздравления не установлены."
-            else:
-                congratulations = {item['place']: item['message'] for item in response.data if
-                                   'message' in item and 'place' in item}
-                logging.info(f"Parsed congratulations: {congratulations}")
-
-                if len(set(congratulations.values())) == 1:
-                    common_message = next(iter(congratulations.values()))
-                    message_text = f"Текущее общее поздравление:\n\n{common_message}"
-                else:
-                    message_text = "В настоящее время общее поздравление не установлено. Поздравления различаются для разных мест."
-
-            logging.info(f"Final message_text: {message_text}")
-
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Изменить общее поздравление", callback_data=f"edit_common_congrats:{giveaway_id}")
-            keyboard.button(text="Назад", callback_data=f"message_winners:{giveaway_id}")
-            keyboard.adjust(1)
-
-            await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id
-            )
-
-        except Exception as e:
-            logging.error(f"Error processing common congratulation: {str(e)}")
-            await callback_query.answer("Произошла ошибка при обработке общего поздравления.")
-
-        await callback_query.answer()
-
-    def extract_message(obj: Union[str, Dict, List, APIResponse]) -> Union[str, None]:
-        if isinstance(obj, APIResponse):
-            return extract_message(obj.data)
-
-        if isinstance(obj, str):
-            try:
-                parsed = json.loads(obj)
-                return extract_message(parsed)
-            except json.JSONDecodeError:
-                return obj.strip()
-
-        if isinstance(obj, dict):
-            if 'data' in obj and isinstance(obj['data'], list):
-                if obj['data'] and 'message' in obj['data'][0]:
-                    return obj['data'][0]['message']
-            if 'message' in obj:
-                return obj['message']
-            for value in obj.values():
-                result = extract_message(value)
-                if result:
-                    return result
-
-        if isinstance(obj, list):
-            if obj and isinstance(obj[0], dict) and 'message' in obj[0]:
-                return obj[0]['message']
-
-        return None
-
-    @dp.callback_query(lambda c: c.data.startswith('congrats_message:'))
-    async def process_congrats_message(callback_query: types.CallbackQuery, state: FSMContext):
-        giveaway_id, place = callback_query.data.split(':')[1:]
-
-        existing_message = None
-        try:
-            response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).eq('place',
-                                                                                                             place).execute()
-            logging.info(f"Supabase response: {json.dumps(response, default=str)}")
-            existing_message = extract_message(response)
-            logging.info(f"Extracted message: {existing_message}")
-        except Exception as e:
-            logging.error(f"Error fetching congratulation for place {place}: {str(e)}")
-
-        await state.update_data(giveaway_id=giveaway_id, place=place)
-        await state.set_state(GiveawayStates.waiting_for_congrats_message)
-
-        message_text = f"Напишите своё поздравление для победителя, занявшего {place} место."
-        if existing_message:
-            message_text += f"\n\nТекущее поздравление:\n{existing_message}"
-        else:
-            message_text += "\n\nТекущее поздравление отсутствует."
-
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
-
-        try:
-            sent_message = await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id
-            )
-
-            if sent_message:
-                await state.update_data(original_message_id=sent_message.message_id)
-            else:
-                logging.error("Failed to send message with image")
-        except Exception as e:
-            logging.error(f"Error in send_message_with_image: {str(e)}")
-            try:
-                sent_message = await bot.send_message(
-                    callback_query.from_user.id,
-                    message_text,
-                    reply_markup=keyboard.as_markup()
-                )
-                await state.update_data(original_message_id=sent_message.message_id)
-            except Exception as e:
-                logging.error(f"Error sending fallback message: {str(e)}")
-
-        await callback_query.answer()
-
-    @dp.message(GiveawayStates.waiting_for_congrats_message)
-    async def save_congrats_message(message: types.Message, state: FSMContext):
-        data = await state.get_data()
-        giveaway_id = data['giveaway_id']
-        place = data['place']
-        original_message_id = data.get('original_message_id')
-
-        try:
-            # Save the new congratulation message
-            supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).eq('place', place).execute()
-            supabase.table('congratulations').insert({
-                'giveaway_id': giveaway_id,
-                'place': place,
-                'message': message.text
-            }).execute()
-
-            await state.clear()
-
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
-            keyboard.adjust(1)
-
-            updated_text = f"Поздравление для {place} места обновлено:\n\n{message.text}"
-
-            if original_message_id:
-                try:
-                    # Try to edit the caption (for messages with images)
-                    await bot.edit_message_caption(
-                        chat_id=message.chat.id,
-                        message_id=original_message_id,
-                        caption=updated_text,
-                        reply_markup=keyboard.as_markup()
-                    )
-                except Exception as edit_error:
-                    logging.error(f"Error editing message: {str(edit_error)}")
-                    # If editing fails, send a new message
-                    await send_message_with_image(
-                        bot,
-                        message.chat.id,
-                        updated_text,
-                        reply_markup=keyboard.as_markup()
-                    )
-            else:
-                # If we don't have the original message ID, send a new message
-                await send_message_with_image(
-                    bot,
-                    message.chat.id,
-                    updated_text,
-                    reply_markup=keyboard.as_markup()
-                )
-
-            # Delete the user's message
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
-        except Exception as e:
-            logging.error(f"Error saving congratulation message: {str(e)}")
-            await message.reply("Произошла ошибка при сохранении поздравления. Пожалуйста, попробуйте еще раз.")
-
-    @dp.callback_query(lambda c: c.data == 'show_common_congrats')
-    async def show_common_congrats(callback_query: types.CallbackQuery, state: FSMContext):
-        data = await state.get_data()
-        giveaway_id = data['giveaway_id']
-
-        try:
-            response = supabase.table('congratulations').select('message', 'place').eq('giveaway_id',
-                                                                                       giveaway_id).execute()
-            logging.info(f"Fetched congratulations: {json.dumps(response.data, default=str)}")
-
-            if not response.data:
-                message_text = "В настоящее время поздравления не установлены."
-            else:
-                congratulations = {item['place']: item['message'] for item in response.data if
-                                   'message' in item and 'place' in item}
-                logging.info(f"Parsed congratulations: {congratulations}")
-
-                if len(set(congratulations.values())) == 1:
-                    common_message = next(iter(congratulations.values()))
-                    message_text = f"Текущее общее поздравление:\n\n{common_message}"
-                else:
-                    message_text = "В настоящее время общее поздравление не установлено. Поздравления различаются для разных мест."
-
-            logging.info(f"Final message_text: {message_text}")
-
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Изменить общее поздравление", callback_data=f"edit_common_congrats:{giveaway_id}")
-            keyboard.button(text="Назад", callback_data=f"message_winners:{giveaway_id}")
-            keyboard.adjust(1)
-
-            await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup()
-            )
-
-        except Exception as e:
-            logging.error(f"Error fetching common congratulation: {str(e)}")
-            await callback_query.answer("Произошла ошибка при получении общего поздравления.")
-
-        await callback_query.answer()
-
-    @dp.callback_query(lambda c: c.data.startswith('edit_common_congrats:'))
-    async def edit_common_congrats(callback_query: types.CallbackQuery, state: FSMContext):
-        giveaway_id = callback_query.data.split(':')[1]
-        logging.info(f"Editing common congratulation for giveaway {giveaway_id}")
-
-        try:
-            response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).execute()
-            existing_messages = [item['message'] for item in response.data if 'message' in item]
-
-            if existing_messages and len(set(existing_messages)) == 1:
-                existing_message = existing_messages[0]
-            else:
-                existing_message = None
-
-            await state.update_data(giveaway_id=giveaway_id)
-            await state.set_state(GiveawayStates.waiting_for_common_congrats_message)
-
-            message_text = "Напишите общее поздравление для всех победителей."
-            if existing_message:
-                message_text += f"\n\nТекущее общее поздравление:\n{existing_message}"
-
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Отмена", callback_data=f"common_congrats:{giveaway_id}")
-
-            sent_message = await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id
-            )
-
-            if sent_message:
-                await state.update_data(original_message_id=sent_message.message_id)
-
-        except Exception as e:
-            logging.error(f"Error preparing to edit common congratulation: {str(e)}")
-            await callback_query.answer("Произошла ошибка при подготовке к редактированию общего поздравления.")
-
-        await callback_query.answer()
-
-    @dp.message(GiveawayStates.waiting_for_common_congrats_message)
-    async def save_common_congrats_message(message: types.Message, state: FSMContext):
-        data = await state.get_data()
-        giveaway_id = data['giveaway_id']
-        original_message_id = data.get('original_message_id')
-
-        try:
-            giveaway_response = supabase.table('giveaways').select('winner_count').eq('id',
-                                                                                      giveaway_id).single().execute()
-            winner_count = giveaway_response.data['winner_count']
-
-            supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).execute()
-
-            congratulations = []
-            for place in range(1, winner_count + 1):
-                congratulations.append({
-                    'giveaway_id': giveaway_id,
-                    'place': place,
-                    'message': message.text
-                })
-
-            supabase.table('congratulations').insert(congratulations).execute()
-
-            await state.clear()
-
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Назад", callback_data=f"message_winners:{giveaway_id}")
-            keyboard.adjust(1)
-
-            success_message = (
-                "Общее поздравление сохранено и применено ко всем местам в розыгрыше.\n"
-                f"Обновлено поздравлений: {winner_count} мест."
-            )
-
-            if original_message_id:
-                try:
-                    # Попытка отредактировать подпись (для сообщений с изображениями)
-                    await bot.edit_message_caption(
-                        chat_id=message.chat.id,
-                        message_id=original_message_id,
-                        caption=success_message,
-                        reply_markup=keyboard.as_markup()
-                    )
-                except Exception as edit_error:
-                    logging.error(f"Error editing message: {str(edit_error)}")
-                    # Если редактирование не удалось, отправляем новое сообщение
-                    await send_message_with_image(
-                        bot,
-                        message.chat.id,
-                        success_message,
-                        reply_markup=keyboard.as_markup()
-                    )
-            else:
-                # Если у нас нет ID оригинального сообщения, отправляем новое сообщение
-                await send_message_with_image(
-                    bot,
-                    message.chat.id,
-                    success_message,
-                    reply_markup=keyboard.as_markup()
-                )
-
-            # Удаляем сообщение пользователя
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
-        except Exception as e:
-            logging.error(f"Error saving common congratulation message: {str(e)}")
-            await message.reply("Произошла ошибка при сохранении поздравлений. Пожалуйста, попробуйте еще раз.")
 
