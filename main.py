@@ -11,6 +11,7 @@ from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
 from created_giveaways import register_created_giveaways_handlers
 from my_participations import register_my_participations_handlers
+from congratulations_messages import register_congratulations_messages
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -34,6 +35,7 @@ register_active_giveaways_handlers(dp, bot, supabase)
 register_create_giveaway_handlers(dp, bot, supabase)
 register_created_giveaways_handlers(dp, bot, supabase)
 register_my_participations_handlers(dp, bot, supabase)
+register_congratulations_messages(dp, bot, supabase)
 
 # Обработчики команд
 @dp.message(Command("pay"))
