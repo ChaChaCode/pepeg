@@ -54,20 +54,26 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
             [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
         ])
 
+        bot_info = await bot.get_me()
+        name_public = f"@{bot_info.username}"
+        html_message = f"""
+Чтобы привязать паблик, добавьте этого бота <code>{name_public}</code> в администраторы вашего паблика или группы.
+Бот автоматически обнаружит новый паблик/группу и привяжет его к розыгрышу.\n
+Пожалуйста, убедитесь, что при добавлении бота как администратора вы предоставили следующие права:\n
+- Публикация сообщений
+- Редактирование сообщений
+- Добавление подписчиков\n
+Также, не находясь в состоянии привязки паблика, вы можете добавить бота в качестве администратора сразу в нескольких пабликах. После этого, перейдя в состояние привязки, вы увидите все паблики, в которых бот уже назначен администратором.\n\n
+Эти права должны быть включены автоматически при добавлении бота. Не изменяйте стандартный набор прав при добавлении.\n
+"""
         await send_message_with_image(
             bot,
             user_id,
-            "Чтобы привязать паблик, добавьте этого бота @PepeGift_Bot в администраторы вашего паблика или группы. "
-            "Бот автоматически обнаружит новый паблик/группу и привяжет его к розыгрышу.\n\n"
-            "Пожалуйста, убедитесь, что при добавлении бота как администратора вы предоставили следующие права:\n"
-            "- Публикация сообщений\n"
-            "- Редактирование сообщений\n"
-            "- Добавление подписчиков\n\n"
-            "Также, не находясь в состоянии привязки паблика, вы можете добавить бота в качестве администратора сразу в нескольких пабликах. После этого, перейдя в состояние привязки, вы увидите все паблики, в которых бот уже назначен администратором.\n\n"
-            "Эти права должны быть включены автоматически при добавлении бота. Не изменяйте стандартный набор прав при добавлении.\n",
+            html_message,
             reply_markup=keyboard,
+            parse_mode='HTML',
             message_id=message_id
-        )
+            )
 
     @dp.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_MEMBER))
     async def bot_added_as_admin(event: ChatMemberUpdated, state: FSMContext):
@@ -237,4 +243,3 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
         response = supabase.table("giveaway_communities").insert(data).execute()
         logging.info(f"Bound community {community_id} to giveaway {giveaway_id}: {response.data}")
 
-    return dp
