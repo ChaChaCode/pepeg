@@ -19,31 +19,26 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
 
     try:
         if message_id:
-            try:
-                # Try to edit the existing message
-                return await bot.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    media=types.InputMediaPhoto(media=image, caption=text, parse_mode=parse_mode),
-                    reply_markup=reply_markup
-                )
-            except aiogram.exceptions.TelegramBadRequest as e:
-                if "message to edit not found" in str(e).lower():
-                    logging.warning(f"Message to edit not found: {e}. Sending a new message.")
-                    # If the message to edit is not found, send a new message
-                    return await bot.send_photo(chat_id=chat_id, photo=image, caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
-                else:
-                    raise
+            # Edit existing message
+            return await bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=types.InputMediaPhoto(media=image, caption=text, parse_mode=parse_mode),
+                reply_markup=reply_markup
+            )
         else:
-            # Send a new message if no message_id is provided
+            # Send new message
             return await bot.send_photo(chat_id=chat_id, photo=image, caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
     except Exception as e:
         logging.error(f"Error in send_message_with_image: {str(e)}")
-        # If sending with image fails, try sending just the text
+        # If sending/editing with image fails, try sending/editing just the text
         try:
-            return await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+            if message_id:
+                return await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+            else:
+                return await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
         except Exception as text_e:
-            logging.error(f"Error sending text message: {str(text_e)}")
+            logging.error(f"Error sending/editing text message: {str(text_e)}")
         return None
 
 async def check_and_end_giveaways(bot: Bot, supabase: Client):
