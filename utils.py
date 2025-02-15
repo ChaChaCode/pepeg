@@ -300,7 +300,7 @@ async def check_usernames(bot: Bot, supabase: Client):
         for community in communities:
             try:
                 chat = await bot.get_chat(community['community_id'])
-                current_username = chat.username
+                current_username = chat.username or chat.title  # Use title if username is None
 
                 if current_username != community.get('community_username'):
                     # Обновляем username в таблице bound_communities
@@ -326,3 +326,4 @@ async def check_usernames(bot: Bot, supabase: Client):
 
     except Exception as e:
         logging.error(f"Ошибка в функции check_usernames: {str(e)}")
+
