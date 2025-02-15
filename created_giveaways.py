@@ -1225,12 +1225,17 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
                     result_message = (
                         f"✅ Розыгрыш успешно опубликован в {success_count} сообществах.\n"
-                        f"📊 Начальное количество участников: {participant_count}\n"
                         "🔄 Счетчик участников будет обновляться каждые 10 секунд."
                     )
 
                     if error_count > 0:
-                        result_message += f"\n\n❌ Ошибки публикации ({error_count}):\n" + "\n".join(error_messages)
+                        result_message += f"\n\n❌ Ошибки публикации ({error_count}):"
+                        for error in error_messages:
+                            if "Telegram server says - Forbidden: bot is not a member of the channel chat" in error:
+                                community = error.split('@')[1].split(':')[0]
+                                result_message += f"\nОшибка публикации в @{community}: В данном паблике бот был удален как администратор или сам паблик удален."
+                            else:
+                                result_message += f"\n{error}"
 
                     await send_message_with_image(
                         bot,
