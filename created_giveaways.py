@@ -406,10 +406,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info,
                                      reply_markup=keyboard.as_markup())
             elif media_type == 'gif':
-                await bot.send_animation(chat_id, giveaway['media_file_id'], caption=giveaway_info,
-                                         reply_markup=keyboard.as_markup())
+                await bot.send_animation(chat_id, animation=giveaway['media_file_id'],
+                                         caption=giveaway_info, reply_markup=keyboard.as_markup())
             elif media_type == 'video':
-                await bot.send_video(chat_id, giveaway['media_file_id'], caption=giveaway_info,
+                await bot.send_video(chat_id, video=giveaway['media_file_id'], caption=giveaway_info,
                                      reply_markup=keyboard.as_markup())
         else:
             await send_message_with_image(bot, chat_id, giveaway_info, reply_markup=keyboard.as_markup())
@@ -629,7 +629,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
 Текущая дата и время: <code>{current_time}</code>
 """
-
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -1179,6 +1178,61 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         })
 
                         success_count += 1
+                    await asyncio.sleep(0.5)  # Add a 5-second delay between publishing to communities
+                except aiogram.exceptions.TelegramRetryAfter as e:
+                    retry_after = e.retry_after
+                    logging.warning(f"Hit rate limit. Retrying after {retry_after} seconds.")
+                    await asyncio.sleep(retry_after)
+                    try:
+                        # Retry sending the message
+                        if giveaway['media_type'] == 'photo':
+                            sent_message = await bot.send_photo(
+                                chat_id=int(community_id),
+                                photo=giveaway['media_file_id'],
+                                caption=post_text,
+                                reply_markup=keyboard.as_markup()
+                            )
+                        elif giveaway['media_type'] == 'gif':
+                            sent_message = await bot.send_animation(
+                                chat_id=int(community_id),
+                                animation=giveaway['media_file_id'],
+                                caption=post_text,
+                                reply_markup=keyboard.as_markup()
+                            )
+                        elif giveaway['media_type'] == 'video':
+                            sent_message = await bot.send_video(
+                                chat_id=int(community_id),
+                                video=giveaway['media_file_id'],
+                                caption=post_text,
+                                reply_markup=keyboard.as_markup()
+                            )
+                        else:
+                            sent_message = await bot.send_message(
+                                chat_id=int(community_id),
+                                text=post_text,
+                                reply_markup=keyboard.as_markup()
+                            )
+
+                        if sent_message:
+                            # Save message information
+                            published_messages.append({
+                                'chat_id': sent_message.chat.id,
+                                'message_id': sent_message.message_id
+                            })
+
+                            # Save information for participant counter tasks
+                            participant_counter_tasks.append({
+                                'chat_id': sent_message.chat.id,
+                                'message_id': sent_message.message_id
+                            })
+
+                            success_count += 1
+                    except Exception as retry_error:
+                        error_count += 1
+                        error_messages.append(
+                            f"Ошибка публикации в @{community_username} после повторной попытки: {str(retry_error)}")
+                        logging.error(
+                            f"Error publishing to community @{community_username} after retry: {str(retry_error)}")
                 except Exception as e:
                     error_count += 1
                     error_messages.append(f"Ошибка публикации в @{community_username}: {str(e)}")
@@ -1225,7 +1279,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
                     result_message = (
                         f"✅ Розыгрыш успешно опубликован в {success_count} сообществах.\n"
-                        "🔄 Счетчик участников будет обновляться каждые 10 секунд."
+                        "🔄 Счетчик участников будет обновляться каждую минуту."
                     )
 
                     if error_count > 0:
@@ -1308,6 +1362,5 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         """Start periodic updates of participant count"""
         while True:
             await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
-            await asyncio.sleep(10)  # Update every 10 seconds
-
+            await asyncio.sleep(60)
 
