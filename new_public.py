@@ -23,15 +23,12 @@ supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
 supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
 supabase: Client = create_client(supabase_url, supabase_key)
 
-
 class GiveawayStates(StatesGroup):
     binding_communities = State()
     binding_partner_communities = State()
 
-
 # Словарь для хранения ожидающих привязки каналов
 pending_channels = {}
-
 
 def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
     @dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
@@ -104,6 +101,16 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
         chat_type = "channel" if chat.type == ChatType.CHANNEL else "group"
         community_name = chat.title
         community_username = chat.username if chat.username else community_name
+
+        if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
+            success = await record_bound_community(user_id, community_username, str(chat.id), chat_type)
+            if success:
+                logging.info(
+                    f"Бот добавлен как администратор в {community_username} (ID: {chat.id}) пользователем {user_id}")
+                await bot.send_message(user_id, f"Успешно привязано сообщество {community_username}")
+            else:
+                await bot.send_message(user_id,
+                                       f"Произошла ошибка при привязке сообщества {community_username}. Пожалуйста, попробуйте еще раз или обратитесь в поддержку.")
 
         logging.info(
             f"Статус бота изменен в {chat_type} {chat.id} пользователем {user_id}. Новый статус: {event.new_chat_member.status}")
@@ -182,19 +189,20 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
     async def handle_successful_binding(channel_id: int, community_username: str, user_id: int, giveaway_id: str,
                                         state: FSMContext, message_id: int, chat_type: str):
         try:
+            # Check if this specific user has already bound this community to this giveaway
             response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).eq(
-                'community_id', str(channel_id)).execute()
+                'community_id', str(channel_id)).eq('user_id', user_id).execute()
 
             if response.data:
                 await send_message_with_image(
                     bot,
                     user_id,
-                    f"{chat_type.capitalize()} \"{community_username}\" уже привязан(а) к этому розыгрышу.",
+                    f"Вы уже привязали {chat_type} \"{community_username}\" к этому розыгрышу.",
                     message_id=message_id
                 )
                 return
 
-            await bind_community_to_giveaway(giveaway_id, str(channel_id), community_username, chat_type)
+            await bind_community_to_giveaway(giveaway_id, str(channel_id), community_username, chat_type, user_id)
             await record_bound_community(user_id, community_username, str(channel_id), chat_type)
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -221,51 +229,56 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
 
     async def record_bound_community(user_id: int, community_username: str, community_id: str, community_type: str):
         try:
-            response = supabase.table('bound_communities').select('*').eq('user_id', user_id).eq('community_id', community_id).execute()
-            if response.data:
-                logging.info(f"Сообщество {community_username} уже записано для пользователя {user_id}")
-                return True
+            # Проверяем, существует ли уже запись для этого пользователя и сообщества
+            response = supabase.table('bound_communities').select('*').eq('community_id', community_id).eq('user_id',
+                                                                                                           user_id).execute()
 
-            response = supabase.table('bound_communities').insert({
-                'user_id': user_id,
-                'community_username': community_username,
-                'community_id': community_id,
-                'community_type': community_type
-            }).execute()
             if response.data:
-                logging.info(f"Привязанное сообщество записано: {response.data}")
-                return True
+                # Если запись существует, обновляем её
+                response = supabase.table('bound_communities').update({
+                    'community_username': community_username,
+                    'community_type': community_type
+                }).eq('community_id', community_id).eq('user_id', user_id).execute()
+                logging.info(f"Обновлена привязка сообщества {community_username} для пользователя {user_id}")
             else:
-                logging.error(f"Неожиданный формат ответа: {response}")
-                return False
+                # Если записи нет, создаем новую
+                response = supabase.table('bound_communities').insert({
+                    'user_id': user_id,
+                    'community_username': community_username,
+                    'community_id': community_id,
+                    'community_type': community_type
+                }).execute()
+                logging.info(f"Создана новая привязка сообщества {community_username} для пользователя {user_id}")
+
+            return True
         except Exception as e:
             logging.error(f"Ошибка при записи привязанного сообщества: {str(e)}")
             return False
 
-    async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type):
+    async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id):
         data = {
             "giveaway_id": giveaway_id,
             "community_id": community_id,
             "community_username": community_username,
-            "community_type": community_type
+            "community_type": community_type,
+            "user_id": user_id
         }
         try:
             response = supabase.table("giveaway_communities").insert(data).execute()
-            logging.info(f"Привязано сообщество {community_id} (тип: {community_type}) к розыгрышу {giveaway_id}: {response.data}")
+            logging.info(f"Привязано сообщество {community_id} (тип: {community_type}) к розыгрышу {giveaway_id} пользователем {user_id}: {response.data}")
         except Exception as e:
             logging.error(f"Ошибка при привязке сообщества: {str(e)}")
-            # If the error is due to missing column, try inserting without community_type
             if "community_type" in str(e):
                 del data["community_type"]
                 response = supabase.table("giveaway_communities").insert(data).execute()
-                logging.info(f"Привязано сообщество {community_id} к розыгрышу {giveaway_id} без указания типа: {response.data}")
+                logging.info(f"Привязано сообщество {community_id} к розыгрышу {giveaway_id} пользователем {user_id} без указания типа: {response.data}")
             else:
                 raise e
 
     async def verify_partnership(user_id: int, partner_id: int):
         try:
             response = supabase.table('partnerships').select('*').eq('user_id', user_id).eq('partner_id',
-                                                                                            partner_id).execute()
+                                                                                partner_id).execute()
             if response.data:
                 logging.info(f"Партнерство подтверждено между пользователями {user_id} и {partner_id}")
                 return True
@@ -290,4 +303,3 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 'can_pin_messages': 'Закрепление сообщений',
                 'can_manage_video_chats': 'Управление видео чатами'
             }
-
