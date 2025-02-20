@@ -363,37 +363,66 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         await state.clear()
 
     @dp.message(GiveawayStates.waiting_for_edit_winner_count)
-    async def process_new_winner_count(message: types.Message, state: FSMContext):
-        data = await state.get_data()
-        giveaway_id = data['giveaway_id']
+async def process_new_winner_count(message: types.Message, state: FSMContext):
+    data = await state.get_data()
+    giveaway_id = data['giveaway_id']
 
-        try:
-            new_winner_count = int(message.text)
-            if new_winner_count <= 0:
-                raise ValueError("Winner count must be a positive integer")
+    try:
+        new_winner_count = int(message.text)
+        if new_winner_count <= 0:
+            raise ValueError("Winner count must be a positive integer")
 
-            # Get previous giveaway ID
-            previous_giveaway_response = supabase.table('giveaways') \
-                .select('id') \
-                .eq('user_id', message.from_user.id) \
-                .neq('id', giveaway_id) \
-                .order('created_at', desc=True) \
-                .limit(1) \
+        # Update the winner count in giveaways table
+        supabase.table('giveaways').update({'winner_count': new_winner_count}).eq('id', giveaway_id).execute()
+
+        # Get existing congratulations for this giveaway
+        existing_congratulations = supabase.table('congratulations')\
+            .select('place', 'message')\
+            .eq('giveaway_id', giveaway_id)\
+            .execute()
+
+        if existing_congratulations.data:
+            # Если есть существующие поздравления
+            max_existing_place = max(c['place'] for c in existing_congratulations.data)
+            
+            # Если новое количество победителей больше существующего
+            if new_winner_count > max_existing_place:
+                # Добавляем дефолтные поздравления только для новых мест
+                default_congratulations = [
+                    {
+                        'giveaway_id': giveaway_id,
+                        'place': place,
+                        'message': f"Поздравляем! Вы заняли {place} место в розыгрыше!"
+                    }
+                    for place in range(max_existing_place + 1, new_winner_count + 1)
+                ]
+                if default_congratulations:
+                    supabase.table('congratulations').insert(default_congratulations).execute()
+            elif new_winner_count < max_existing_place:
+                # Если новое количество победителей меньше, удаляем лишние места
+                supabase.table('congratulations')\
+                    .delete()\
+                    .eq('giveaway_id', giveaway_id)\
+                    .gt('place', new_winner_count)\
+                    .execute()
+        else:
+            # Если поздравлений нет, создаем новые
+            # Get previous giveaway ID for copying messages
+            previous_giveaway_response = supabase.table('giveaways')\
+                .select('id')\
+                .eq('user_id', message.from_user.id)\
+                .neq('id', giveaway_id)\
+                .order('created_at', desc=True)\
+                .limit(1)\
                 .execute()
-
-            # Update the winner count in giveaways table
-            supabase.table('giveaways').update({'winner_count': new_winner_count}).eq('id', giveaway_id).execute()
-
-            # Delete existing congratulations for this giveaway
-            supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).execute()
 
             if previous_giveaway_response.data:
                 previous_giveaway_id = previous_giveaway_response.data[0]['id']
-
+                
                 # Get congratulations from previous giveaway
-                previous_congratulations = supabase.table('congratulations') \
-                    .select('place', 'message') \
-                    .eq('giveaway_id', previous_giveaway_id) \
+                previous_congratulations = supabase.table('congratulations')\
+                    .select('place', 'message')\
+                    .eq('giveaway_id', previous_giveaway_id)\
                     .execute()
 
                 if previous_congratulations.data:
@@ -401,21 +430,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     new_congratulations = [
                         {
                             'giveaway_id': giveaway_id,
-                            'place': congrat['place'],  # Сохраняем оригинальное место
+                            'place': congrat['place'],
                             'message': congrat['message']
                         }
                         for congrat in previous_congratulations.data
                         if congrat['place'] <= new_winner_count
-                        # Фильтруем места, которые не превышают new_winner_count
                     ]
 
-                    # Insert new congratulations
                     if new_congratulations:
                         supabase.table('congratulations').insert(new_congratulations).execute()
 
-                    # If new_winner_count is greater than previous congratulations, add default messages
-                    max_previous_place = max(
-                        c['place'] for c in previous_congratulations.data) if previous_congratulations.data else 0
+                    # Add default messages for any remaining places
+                    max_previous_place = max(c['place'] for c in previous_congratulations.data)
                     if new_winner_count > max_previous_place:
                         default_congratulations = [
                             {
@@ -428,7 +454,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         if default_congratulations:
                             supabase.table('congratulations').insert(default_congratulations).execute()
                 else:
-                    # If no previous congratulations exist, create default ones
+                    # Create all default congratulations
                     default_congratulations = [
                         {
                             'giveaway_id': giveaway_id,
@@ -439,7 +465,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     ]
                     supabase.table('congratulations').insert(default_congratulations).execute()
             else:
-                # If no previous giveaway exists, create default congratulations
+                # Create all default congratulations
                 default_congratulations = [
                     {
                         'giveaway_id': giveaway_id,
@@ -450,16 +476,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 ]
                 supabase.table('congratulations').insert(default_congratulations).execute()
 
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
 
-        except ValueError:
-            await message.reply("❌ Пожалуйста, введите корректное положительное целое число.")
-        except Exception as e:
-            logging.error(f"Error updating winner count: {str(e)}")
-            await message.reply("❌ Произошла ошибка при обновлении количества победителей.")
+    except ValueError:
+        await message.reply("❌ Пожалуйста, введите корректное положительное целое число.")
+    except Exception as e:
+        logging.error(f"Error updating winner count: {str(e)}")
+        await message.reply("❌ Произошла ошибка при обновлении количества победителей.")
 
-        await state.clear()
+    await state.clear()
 
     async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
         if giveaway['media_type'] and giveaway['media_file_id']:
