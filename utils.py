@@ -109,17 +109,19 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
         new_giveaway_id = new_giveaway_response.data[0]['id']
 
         # Duplicate giveaway_communities data
-        giveaway_communities_response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).execute()
-        if giveaway_communities_response.data:
-            new_giveaway_communities = []
-            for community in giveaway_communities_response.data:
-                new_community = community.copy()
-                new_community.pop('id', None)  # Remove id to create a new entry
-                new_community['giveaway_id'] = new_giveaway_id
-                new_giveaway_communities.append(new_community)
+        congratulations_response = supabase.table('congratulations').select('*').eq('giveaway_id',
+                                                                                    giveaway_id).execute()
+        if congratulations_response.data:
+            new_congratulations = []
+            for congrat in congratulations_response.data:
+                new_congrat = congrat.copy()
+                new_congrat.pop('id', None)  # Remove id to create a new entry
+                new_congrat['giveaway_id'] = new_giveaway_id
+                new_congratulations.append(new_congrat)
 
-            # Insert new records into giveaway_communities
-            supabase.table('giveaway_communities').insert(new_giveaway_communities).execute()
+            # Insert new congratulations
+            if new_congratulations:
+                supabase.table('congratulations').insert(new_congratulations).execute()
 
         # Update the old giveaway, changing User_id to 1 and clearing participant_counter_tasks and published_messages
         supabase.table('giveaways').update({
@@ -127,9 +129,6 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
             'participant_counter_tasks': None,
             'published_messages': None
         }).eq('id', giveaway_id).execute()
-
-        # Update giveaway_id in congratulations table for the old giveaway
-        supabase.table('congratulations').update({'giveaway_id': new_giveaway_id}).eq('giveaway_id', giveaway_id).execute()
 
         logging.info(f"Giveaway {giveaway_id} ended and duplicated with new id {new_giveaway_id}")
 
