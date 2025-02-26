@@ -103,7 +103,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
         community_username = chat.username if chat.username else community_name
 
         if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
-            success = await record_bound_community(user_id, community_username, str(chat.id), chat_type)
+            success = await record_bound_community(user_id, community_username, str(chat.id), chat_type, community_name)
             if success:
                 logging.info(
                     f"Бот добавлен как администратор в {community_username} (ID: {chat.id}) пользователем {user_id}")
@@ -124,7 +124,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
 
         if not giveaway_id:
             if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
-                await record_bound_community(user_id, community_username, str(chat.id), chat_type)
+                await record_bound_community(user_id, community_username, str(chat.id), chat_type, community_name)
                 logging.info(
                     f"Бот добавлен как администратор в {community_username} (ID: {chat.id}) пользователем {user_id}")
             return
@@ -156,11 +156,11 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 else:
                     if partner_id:
                         if await verify_partnership(user_id, int(partner_id)):
-                            await handle_successful_binding(chat.id, community_username, int(partner_id), giveaway_id, state, message_id, chat_type)
+                            await handle_successful_binding(chat.id, community_username, int(partner_id), giveaway_id, state, message_id, chat_type, community_name)
                         else:
                             await bot.send_message(user_id, "Не удалось подтвердить партнерство. Невозможно привязать паблик партнера.")
                     else:
-                        await handle_successful_binding(chat.id, community_username, user_id, giveaway_id, state, message_id, chat_type)
+                        await handle_successful_binding(chat.id, community_username, user_id, giveaway_id, state, message_id, chat_type, community_name)
                     if user_id in pending_channels:
                         del pending_channels[user_id]
             else:
@@ -187,7 +187,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
             )
 
     async def handle_successful_binding(channel_id: int, community_username: str, user_id: int, giveaway_id: str,
-                                        state: FSMContext, message_id: int, chat_type: str):
+                                        state: FSMContext, message_id: int, chat_type: str, community_name: str):
         try:
             # Check if this specific user has already bound this community to this giveaway
             response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).eq(
@@ -202,8 +202,8 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 )
                 return
 
-            await bind_community_to_giveaway(giveaway_id, str(channel_id), community_username, chat_type, user_id)
-            await record_bound_community(user_id, community_username, str(channel_id), chat_type)
+            await bind_community_to_giveaway(giveaway_id, str(channel_id), community_username, chat_type, user_id, community_name)
+            await record_bound_community(user_id, community_username, str(channel_id), chat_type, community_name)
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
@@ -227,7 +227,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 message_id=message_id
             )
 
-    async def record_bound_community(user_id: int, community_username: str, community_id: str, community_type: str):
+    async def record_bound_community(user_id: int, community_username: str, community_id: str, community_type: str, community_name: str):
         try:
             # Проверяем, существует ли уже запись для этого пользователя и сообщества
             response = supabase.table('bound_communities').select('*').eq('community_id', community_id).eq('user_id',
@@ -237,7 +237,8 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 # Если запись существует, обновляем её
                 response = supabase.table('bound_communities').update({
                     'community_username': community_username,
-                    'community_type': community_type
+                    'community_type': community_type,
+                    'community_name': community_name  # Add this line
                 }).eq('community_id', community_id).eq('user_id', user_id).execute()
                 logging.info(f"Обновлена привязка сообщества {community_username} для пользователя {user_id}")
             else:
@@ -246,7 +247,8 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                     'user_id': user_id,
                     'community_username': community_username,
                     'community_id': community_id,
-                    'community_type': community_type
+                    'community_type': community_type,
+                    'community_name': community_name  # Add this line
                 }).execute()
                 logging.info(f"Создана новая привязка сообщества {community_username} для пользователя {user_id}")
 
@@ -255,13 +257,14 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
             logging.error(f"Ошибка при записи привязанного сообщества: {str(e)}")
             return False
 
-    async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id):
+    async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id, community_name):
         data = {
             "giveaway_id": giveaway_id,
             "community_id": community_id,
             "community_username": community_username,
             "community_type": community_type,
-            "user_id": user_id
+            "user_id": user_id,
+            "community_name": community_name  # Add this line
         }
         try:
             response = supabase.table("giveaway_communities").insert(data).execute()
@@ -303,3 +306,4 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 'can_pin_messages': 'Закрепление сообщений',
                 'can_manage_video_chats': 'Управление видео чатами'
             }
+
