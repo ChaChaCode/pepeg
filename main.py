@@ -5,7 +5,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import LabeledPrice, PreCheckoutQuery
 from aiogram.filters import Command
 from supabase import create_client, Client
-
+from aiogram.types import CallbackQuery
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -13,6 +14,7 @@ from created_giveaways import register_created_giveaways_handlers
 from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
 from new_public import register_new_public
+from aiogram.fsm.context import FSMContext
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -148,21 +150,32 @@ async def cmd_start(message: types.Message):
     await send_message_with_image(bot, message.chat.id, "Выберите действие:", reply_markup=keyboard)
 
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
-async def process_back_to_main_menu(callback_query: types.CallbackQuery):
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="Создать розыгрыш", callback_data="create_giveaway")],
-        [types.InlineKeyboardButton(text="Созданные розыгрыши", callback_data="created_giveaways")],
-        [types.InlineKeyboardButton(text="Активные розыгрыши", callback_data="active_giveaways")],
-        [types.InlineKeyboardButton(text="Мои участия", callback_data="my_participations")],
-    ])
-    await send_message_with_image(bot, callback_query.from_user.id, "Выберите действие:",
-                                  reply_markup=keyboard, message_id=callback_query.message.message_id)
+async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
+    # Clear the state
+    await state.clear()
+    await bot.answer_callback_query(callback_query.id)
+
+    # Send a message to show the main menu
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="Создать розыгрыш", callback_data="create_giveaway")
+    keyboard.button(text="Созданные розыгрыши", callback_data="created_giveaways")
+    keyboard.button(text="Активные розыгрыши", callback_data="active_giveaways")
+    keyboard.button(text="Мои участия", callback_data="my_participations")
+    keyboard.adjust(1)
+
+    await send_message_with_image(
+        bot,
+        callback_query.message.chat.id,
+        "Выберите действие:",
+        reply_markup=keyboard.as_markup(),
+        message_id=callback_query.message.message_id
+    )
 
 
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
-        await asyncio.sleep(600)  # Проверка каждые 10 мин
+        await asyncio.sleep(60)  # Проверка каждую минуту
 
 # Главная функция запуска бота
 async def main():
