@@ -273,9 +273,10 @@ async def get_giveaway_communities(supabase: Client, giveaway_id: str) -> List[D
     response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway_id).execute()
     return response.data if response.data else []
 
+
 async def check_usernames(bot: Bot, supabase: Client):
     try:
-        # Проверка пользователей
+        # Проверка пользователей (оставляем без изменений)
         users_response = supabase.table('users').select('user_id, telegram_username').execute()
         users = users_response.data
 
@@ -288,31 +289,42 @@ async def check_usernames(bot: Bot, supabase: Client):
                     supabase.table('users').update({
                         'telegram_username': current_username
                     }).eq('user_id', user['user_id']).execute()
-                    logging.info(f"Updated username for user {user['user_id']}: {user.get('telegram_username')} -> {current_username}")
+                    logging.info(
+                        f"Updated username for user {user['user_id']}: {user.get('telegram_username')} -> {current_username}")
             except Exception as e:
                 logging.error(f"Error checking user {user['user_id']}: {str(e)}")
 
         # Проверка сообществ
-        communities_response = supabase.table('bound_communities').select('community_id, community_username').execute()
+        communities_response = supabase.table('bound_communities').select(
+            'community_id, community_username, community_name').execute()
         communities = communities_response.data
 
         for community in communities:
             try:
                 chat = await bot.get_chat(community['community_id'])
-                current_username = chat.username or chat.title  # Use title if username is None
+                current_username = chat.username or chat.title  # Если username нет, используем title
+                current_name = chat.title
 
-                if current_username != community.get('community_username'):
-                    # Обновляем username в таблице bound_communities
+                # Проверяем изменения в username или name
+                if (current_username != community.get('community_username') or
+                        current_name != community.get('community_name')):
+                    # Обновляем данные в таблице bound_communities
                     supabase.table('bound_communities').update({
-                        'community_username': current_username
+                        'community_username': current_username,
+                        'community_name': current_name
                     }).eq('community_id', community['community_id']).execute()
 
-                    # Обновляем username в таблице giveaway_communities
+                    # Обновляем данные в таблице giveaway_communities
                     supabase.table('giveaway_communities').update({
-                        'community_username': current_username
+                        'community_username': current_username,
+                        'community_name': current_name
                     }).eq('community_id', community['community_id']).execute()
 
-                    logging.info(f"Обновлено имя пользователя для сообщества {community['community_id']}: {community.get('community_username')} -> {current_username}")
+                    logging.info(
+                        f"Обновлены данные для сообщества {community['community_id']}:\n"
+                        f"Username: {community.get('community_username')} -> {current_username}\n"
+                        f"Name: {community.get('community_name')} -> {current_name}"
+                    )
             except aiogram.exceptions.TelegramBadRequest as e:
                 if "chat not found" in str(e).lower():
                     community_name = community.get('community_username', 'Неизвестное сообщество')
