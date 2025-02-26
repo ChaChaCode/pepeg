@@ -6,11 +6,19 @@ from supabase import Client
 from datetime import datetime, timedelta
 import logging
 from utils import send_message_with_image
+import math
 
 def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
-    @dp.callback_query(lambda c: c.data == 'my_participations')
+    @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
     async def process_my_participations(callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
+        ITEMS_PER_PAGE = 5
+
+        # Get page number from callback data
+        current_page = 1
+        if callback_query.data.startswith('my_participations_page:'):
+            current_page = int(callback_query.data.split(':')[1])
+
         try:
             response = supabase.table('participations').select('*, giveaways(*)').eq('user_id', user_id).execute()
             participations = response.data
@@ -22,20 +30,75 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном розыгрыше.")
                 return
 
-            keyboard = InlineKeyboardBuilder()
-            for participation in filtered_participations:
-                giveaway = participation['giveaways']
-                keyboard.button(text=giveaway['name'], callback_data=f"giveaway_{giveaway['id']}")
-            keyboard.button(text="Назад", callback_data="back_to_main_menu")
-            keyboard.adjust(1)
+            total_participations = len(filtered_participations)
+            total_pages = math.ceil(total_participations / ITEMS_PER_PAGE)
 
-            await send_message_with_image(bot, chat_id=callback_query.from_user.id,
-                                          message_id=callback_query.message.message_id,
-                                          text="Список розыгрышей, в которых вы участвуете:",
-                                          reply_markup=keyboard.as_markup())
+            # Calculate slice indices for current page
+            start_idx = (current_page - 1) * ITEMS_PER_PAGE
+            end_idx = start_idx + ITEMS_PER_PAGE
+
+            # Get participations for current page
+            current_participations = filtered_participations[start_idx:end_idx]
+
+            # Generate keyboard with pagination
+            keyboard = InlineKeyboardBuilder()
+
+            # Add participation buttons (each in its own row)
+            for participation in current_participations:
+                giveaway = participation['giveaways']
+                keyboard.row(types.InlineKeyboardButton(
+                    text=giveaway['name'],
+                    callback_data=f"giveaway_{giveaway['id']}"
+                ))
+
+            # Create navigation row
+            nav_buttons = []
+
+            # Previous page button
+            if current_page > 1:
+                nav_buttons.append(types.InlineKeyboardButton(
+                    text="←",
+                    callback_data=f"my_participations_page:{current_page - 1}"
+                ))
+
+            # Page indicator
+            nav_buttons.append(types.InlineKeyboardButton(
+                text=f"{current_page}/{total_pages}",
+                callback_data="ignore"
+            ))
+
+            # Next page button
+            if current_page < total_pages:
+                nav_buttons.append(types.InlineKeyboardButton(
+                    text="→",
+                    callback_data=f"my_participations_page:{current_page + 1}"
+                ))
+
+            # Add navigation buttons in one row
+            keyboard.row(*nav_buttons)
+
+            # Add back button in its own row
+            keyboard.row(types.InlineKeyboardButton(
+                text="Назад",
+                callback_data="back_to_main_menu"
+            ))
+
+            message_text = f"Список розыгрышей, в которых вы участвуете (Страница {current_page} из {total_pages}):"
+
+            await send_message_with_image(
+                bot,
+                chat_id=callback_query.from_user.id,
+                message_id=callback_query.message.message_id,
+                text=message_text,
+                reply_markup=keyboard.as_markup()
+            )
         except Exception as e:
             logging.error(f"Error in process_my_participations: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении ваших участий.")
+
+    @dp.callback_query(lambda c: c.data == "ignore")
+    async def process_ignore(callback_query: CallbackQuery):
+        await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('giveaway_'))
     async def process_giveaway_details(callback_query: CallbackQuery):
@@ -53,8 +116,13 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                              f"Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}")
 
             keyboard = InlineKeyboardBuilder()
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(
+                text=f"Открыть",
+                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+            ),
             keyboard.button(text="Назад к списку", callback_data="my_participations")
-
+            keyboard.adjust(1)
             try:
                 await bot.answer_callback_query(callback_query.id)
             except TelegramBadRequest as e:
