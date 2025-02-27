@@ -8,7 +8,6 @@ import asyncio
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List, Dict, Any
 from aiogram.enums import ChatMemberStatus
-# Configure logging
 logging.basicConfig(level=logging.INFO)
 from datetime import datetime
 import pytz
