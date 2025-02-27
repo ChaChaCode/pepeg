@@ -22,6 +22,12 @@ supabase: Client = create_client(supabase_url, supabase_key)
 # Storage configuration
 BUCKET_NAME = 'pepeg'
 
+# Constraints
+MAX_NAME_LENGTH = 50
+MAX_DESCRIPTION_LENGTH = 2500
+MAX_MEDIA_SIZE_MB = 5
+MAX_WINNERS = 50
+
 
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
@@ -34,6 +40,11 @@ class GiveawayStates(StatesGroup):
 
 async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
     try:
+        # Check file size (5 MB limit)
+        file_size_mb = len(file_content) / (1024 * 1024)
+        if file_size_mb > MAX_MEDIA_SIZE_MB:
+            return False, f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ"
+
         # Generate unique filename to avoid conflicts
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
@@ -123,23 +134,59 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         await state.set_state(GiveawayStates.waiting_for_name)
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
-        await send_message_with_image(bot, callback_query.from_user.id, "Напишите название розыгрыша",
+        await send_message_with_image(bot, callback_query.from_user.id,
+                                      f"Напишите название розыгрыша (максимум {MAX_NAME_LENGTH} символов)",
                                       reply_markup=keyboard, message_id=callback_query.message.message_id)
         await state.update_data(last_message_id=callback_query.message.message_id)
 
     @dp.message(GiveawayStates.waiting_for_name)
     async def process_name(message: types.Message, state: FSMContext):
+        # Check name length
+        if len(message.text) > MAX_NAME_LENGTH:
+            data = await state.get_data()
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(message.text)} символов. Пожалуйста, введите более короткое название.",
+                reply_markup=keyboard,
+                message_id=data['last_message_id']
+            )
+            return
+
         await state.update_data(name=message.text)
         await state.set_state(GiveawayStates.waiting_for_description)
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
         data = await state.get_data()
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-        await send_message_with_image(bot, message.chat.id, "Напишите описание для розыгрыша", reply_markup=keyboard,
-                                      message_id=data['last_message_id'])
+        await send_message_with_image(
+            bot,
+            message.chat.id,
+            f"Напишите описание для розыгрыша (максимум {MAX_DESCRIPTION_LENGTH} символов)",
+            reply_markup=keyboard,
+            message_id=data['last_message_id']
+        )
 
     @dp.message(GiveawayStates.waiting_for_description)
     async def process_description(message: types.Message, state: FSMContext):
+        # Check description length
+        if len(message.text) > MAX_DESCRIPTION_LENGTH:
+            data = await state.get_data()
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(message.text)} символов. Пожалуйста, введите более короткое описание.",
+                reply_markup=keyboard,
+                message_id=data['last_message_id']
+            )
+            return
+
         await state.update_data(description=message.text)
         await state.set_state(GiveawayStates.waiting_for_media_choice)
         keyboard = InlineKeyboardBuilder()
@@ -149,20 +196,27 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         keyboard.adjust(2, 1)
         data = await state.get_data()
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-        await send_message_with_image(bot, message.chat.id, "Хотите добавить фото, GIF или видео?",
-                                      reply_markup=keyboard.as_markup(), message_id=data['last_message_id'])
+        await send_message_with_image(
+            bot,
+            message.chat.id,
+            f"Хотите добавить фото, GIF или видео? (максимальный размер файла: {MAX_MEDIA_SIZE_MB} МБ)",
+            reply_markup=keyboard.as_markup(),
+            message_id=data['last_message_id']
+        )
 
     @dp.callback_query(lambda c: c.data in ["add_media", "skip_media"])
     async def process_media_choice(callback_query: CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(callback_query.id)
         if callback_query.data == "add_media":
             await state.set_state(GiveawayStates.waiting_for_media_upload)
-            await send_message_with_image(bot, callback_query.from_user.id,
-                                          "Пожалуйста, отправьте фото, GIF или видео.",
-                                          reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                                              [InlineKeyboardButton(text="В меню",
-                                                                    callback_data="back_to_main_menu")]]),
-                                          message_id=callback_query.message.message_id)
+            await send_message_with_image(
+                bot,
+                callback_query.from_user.id,
+                f"Пожалуйста, отправьте фото, GIF или видео (максимальный размер файла: {MAX_MEDIA_SIZE_MB} МБ).",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]]),
+                message_id=callback_query.message.message_id
+            )
         else:
             await process_end_time_request(callback_query.from_user.id, state, callback_query.message.message_id)
 
@@ -191,19 +245,38 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 file_ext = 'jpg'
             elif message.animation:
                 file_id = message.animation.file_id
-                media_type = 'gif'
-                file_ext = 'gif'
+                media_type = 'gif'  # Keep the media type as 'gif' for identification
+                file_ext = 'mp4'  # Change the extension to 'mp4' instead of 'gif'
             elif message.video:
                 file_id = message.video.file_id
                 media_type = 'video'
                 file_ext = 'mp4'
             else:
-                await message.reply("Пожалуйста, отправьте фото, GIF или видео.")
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    "Пожалуйста, отправьте фото, GIF или видео.",
+                    reply_markup=keyboard,
+                    message_id=last_message_id
+                )
                 return
 
             # Get file from Telegram
             file = await bot.get_file(file_id)
             file_content = await bot.download_file(file.file_path)
+
+            # Check file size
+            file_size_mb = file.file_size / (1024 * 1024)
+            if file_size_mb > MAX_MEDIA_SIZE_MB:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ. Текущий размер: {file_size_mb:.2f} МБ. Пожалуйста, отправьте файл меньшего размера.",
+                    reply_markup=keyboard,
+                    message_id=last_message_id
+                )
+                return
 
             # Generate unique filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -224,7 +297,16 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
 
         except Exception as e:
             logger.error(f"Error processing media upload: {str(e)}")
-            await message.reply("Произошла ошибка при обработке медиафайла. Пожалуйста, попробуйте еще раз.")
+            data = await state.get_data()
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "Произошла ошибка при обработке медиафайла. Пожалуйста, попробуйте еще раз.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]]),
+                message_id=data.get('last_message_id')
+            )
             return
 
     async def process_end_time_request(chat_id: int, state: FSMContext, message_id: int = None):
@@ -261,7 +343,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "Укажите количество победителей",
+                f"Укажите количество победителей (максимум {MAX_WINNERS} победителей)",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
@@ -299,6 +381,20 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             winner_count = int(message.text)
             if winner_count <= 0:
                 raise ValueError("Winner count must be positive")
+
+            # Check winner count limit
+            if winner_count > MAX_WINNERS:
+                data = await state.get_data()
+                keyboard = InlineKeyboardBuilder()
+                keyboard.button(text="В меню", callback_data="back_to_main_menu")
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    f"Слишком много победителей. Максимальное количество: {MAX_WINNERS}. Пожалуйста, введите меньшее число.",
+                    message_id=data.get('last_message_id'),
+                    reply_markup=keyboard.as_markup()
+                )
+                return
 
             data = await state.get_data()
 
@@ -384,4 +480,3 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
-
