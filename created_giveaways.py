@@ -178,7 +178,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
 Количество победителей: {giveaway['winner_count']}
 Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
-            """
+"""
 
             try:
                 await bot.answer_callback_query(callback_query.id)
@@ -283,16 +283,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         keyboard.adjust(2, 2, 1, 1)
 
         giveaway_info = f"""
-        📊 Текущая информация о розыгрыше: 
+📊 Текущая информация о розыгрыше: 
 
-    📝  Название:  {giveaway['name']}
-    📄  Описание:  {giveaway['description']}
+📝  Название:  {giveaway['name']}
+📄  Описание:  {giveaway['description']}
 
-    🏆  Количество победителей:  {giveaway['winner_count']}
-    🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+🏆  Количество победителей:  {giveaway['winner_count']}
+🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 
-    🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
-            """
+🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
+"""
 
         try:
             # Check if giveaway has media
@@ -838,10 +838,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
-    Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
 
-    Текущая дата и время: <code>{current_time}</code>
-            """
+Текущая дата и время:
+<code>{current_time}</code>
+"""
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -897,8 +898,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 Вы ввели неправильный формат даты. Сообщение удалено.
 
 Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
-(текущая дата и время: <code>{current_time}</code>)
-            """
+текущая дата и время: 
+<code>{current_time}</code>
+"""
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -1418,7 +1420,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 
 Нажмите кнопку ниже, чтобы принять участие!
-            """
+"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
