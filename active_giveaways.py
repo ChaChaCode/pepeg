@@ -146,7 +146,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 Количество победителей: {giveaway['winner_count']}
 Участвуют: {participants_count}
-        """
+"""
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="Редактировать Пост", callback_data=f"edit_active_post:{giveaway_id}")
@@ -227,16 +227,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         keyboard.adjust(2, 2, 1, 1)
 
         giveaway_info = f"""
-    📊 Текущая информация о розыгрыше: 
+📊 Текущая информация о розыгрыше: 
 
-    📝  Название:  {giveaway['name']}
-    📄  Описание:  {giveaway['description']}
+📝  Название:  {giveaway['name']}
+📄  Описание:  {giveaway['description']}
 
-    🏆  Количество победителей:  {giveaway['winner_count']}
-    🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+🏆  Количество победителей:  {giveaway['winner_count']}
+🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 
-    🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
-            """
+🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
+"""
 
         try:
             if giveaway['media_type'] and giveaway['media_file_id']:
@@ -324,7 +324,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 Дата завершения: {(datetime.fromisoformat(new_giveaway_data['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 
 Нажмите кнопку ниже, чтобы принять участие!
-                """
+"""
 
                 participants_response = supabase.table('participations').select('count').eq('giveaway_id',
                                                                                             giveaway_id).execute()
@@ -621,10 +621,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
-    Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
 
-    Текущая дата и время: <code>{current_time}</code>
-        """
+Текущая дата и время:
+<code>{current_time}</code>
+"""
 
         await send_message_with_image(
             bot,
@@ -681,11 +682,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Назад", callback_data="_show_edit_menu_active")
             error_message = f"""
-    ❌ Неверный формат даты.
+❌ Неверный формат даты.
 
-    Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
-    (текущая дата и время: <code>{current_time}</code>)
-        """
+Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+текущая дата и время: 
+<code>{current_time}</code>
+"""
             await send_message_with_image(
                 bot,
                 message.chat.id,
