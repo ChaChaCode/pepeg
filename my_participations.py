@@ -61,11 +61,12 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     callback_data=f"my_participations_page:{current_page - 1}"
                 ))
 
-            # Page indicator
-            nav_buttons.append(types.InlineKeyboardButton(
-                text=f"{current_page}/{total_pages}",
-                callback_data="ignore"
-            ))
+            # Page indicator - only show if there's more than one page
+            if total_pages > 1:
+                nav_buttons.append(types.InlineKeyboardButton(
+                    text=f"{current_page}/{total_pages}",
+                    callback_data="ignore"
+                ))
 
             # Next page button
             if current_page < total_pages:
@@ -74,8 +75,9 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     callback_data=f"my_participations_page:{current_page + 1}"
                 ))
 
-            # Add navigation buttons in one row
-            keyboard.row(*nav_buttons)
+            # Add navigation buttons in one row if there are any
+            if nav_buttons:
+                keyboard.row(*nav_buttons)
 
             # Add back button in its own row
             keyboard.row(types.InlineKeyboardButton(
@@ -83,7 +85,11 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 callback_data="back_to_main_menu"
             ))
 
-            message_text = f"Список розыгрышей, в которых вы участвуете (Страница {current_page} из {total_pages}):"
+            message_text = f"Список розыгрышей, в которых вы участвуете"
+            if total_pages > 1:
+                message_text += f" (Страница {current_page} из {total_pages}):"
+            else:
+                message_text += ":"
 
             await send_message_with_image(
                 bot,
