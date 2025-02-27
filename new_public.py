@@ -8,12 +8,14 @@ from supabase import create_client, Client
 from utils import send_message_with_image
 from aiogram.enums import ChatMemberStatus, ChatType
 import logging
+import aiohttp
+import uuid
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
 # Конфигурация и инициализация бота
-BOT_TOKEN = '7908502974:AAHypTBbfW-c9JR94HNYFLL9ZcN-2LaJFoU'
+BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -23,12 +25,15 @@ supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
 supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
 supabase: Client = create_client(supabase_url, supabase_key)
 
+
 class GiveawayStates(StatesGroup):
     binding_communities = State()
     binding_partner_communities = State()
 
+
 # Словарь для хранения ожидающих привязки каналов
 pending_channels = {}
+
 
 def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
     @dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
@@ -93,6 +98,58 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 "Партнерство не найдено. Убедитесь, что у вас есть соглашение о партнерстве с этим пользователем.")
             await state.clear()
 
+    # Функция для загрузки и сохранения аватарки канала/группы
+    async def download_and_save_avatar(chat_id):
+        try:
+            # Получаем информацию о чате, включая фото профиля
+            chat_info = await bot.get_chat(chat_id)
+
+            # Проверяем, есть ли у чата фото профиля
+            if not chat_info.photo:
+                logging.info(f"У чата {chat_id} нет фото профиля")
+                return None
+
+            # Получаем файл фото профиля
+            file_id = chat_info.photo.big_file_id
+            file_info = await bot.get_file(file_id)
+            file_path = file_info.file_path
+
+            # Скачиваем файл
+            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(file_url) as response:
+                    if response.status != 200:
+                        logging.error(f"Не удалось скачать аватар: {response.status}")
+                        return None
+
+                    file_content = await response.read()
+
+            # Генерируем уникальное имя файла
+            file_name = f"{chat_id}_{uuid.uuid4()}.jpg"
+            file_path = f"avatar/{file_name}"
+
+            # Загружаем файл в Supabase Storage
+            response = supabase.storage.from_('pepeg').upload(
+                file_path,
+                file_content,
+                {"content-type": "image/jpeg"}
+            )
+
+            if hasattr(response, 'error') and response.error:
+                logging.error(f"Ошибка при загрузке аватара в Supabase: {response.error}")
+                return None
+
+            # Получаем публичный URL файла
+            public_url = supabase.storage.from_('pepeg').get_public_url(file_path)
+            logging.info(f"Аватар для чата {chat_id} успешно сохранен: {public_url}")
+
+            return public_url
+
+        except Exception as e:
+            logging.error(f"Ошибка при загрузке аватара: {str(e)}")
+            return None
+
     @dp.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_MEMBER))
     async def bot_added_as_admin(event: ChatMemberUpdated, state: FSMContext):
         chat = event.chat
@@ -102,8 +159,14 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
         community_name = chat.title
         community_username = chat.username if chat.username else community_name
 
+        # Загружаем аватар канала/группы
+        avatar_url = None
         if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
-            success = await record_bound_community(user_id, community_username, str(chat.id), chat_type, community_name)
+            avatar_url = await download_and_save_avatar(chat.id)
+
+        if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
+            success = await record_bound_community(user_id, community_username, str(chat.id), chat_type, community_name,
+                                                   avatar_url)
             if success:
                 logging.info(
                     f"Бот добавлен как администратор в {community_username} (ID: {chat.id}) пользователем {user_id}")
@@ -124,7 +187,8 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
 
         if not giveaway_id:
             if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
-                await record_bound_community(user_id, community_username, str(chat.id), chat_type, community_name)
+                await record_bound_community(user_id, community_username, str(chat.id), chat_type, community_name,
+                                             avatar_url)
                 logging.info(
                     f"Бот добавлен как администратор в {community_username} (ID: {chat.id}) пользователем {user_id}")
             return
@@ -156,11 +220,14 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 else:
                     if partner_id:
                         if await verify_partnership(user_id, int(partner_id)):
-                            await handle_successful_binding(chat.id, community_username, int(partner_id), giveaway_id, state, message_id, chat_type, community_name)
+                            await handle_successful_binding(chat.id, community_username, int(partner_id), giveaway_id,
+                                                            state, message_id, chat_type, community_name, avatar_url)
                         else:
-                            await bot.send_message(user_id, "Не удалось подтвердить партнерство. Невозможно привязать паблик партнера.")
+                            await bot.send_message(user_id,
+                                                   "Не удалось подтвердить партнерство. Невозможно привязать паблик партнера.")
                     else:
-                        await handle_successful_binding(chat.id, community_username, user_id, giveaway_id, state, message_id, chat_type, community_name)
+                        await handle_successful_binding(chat.id, community_username, user_id, giveaway_id, state,
+                                                        message_id, chat_type, community_name, avatar_url)
                     if user_id in pending_channels:
                         del pending_channels[user_id]
             else:
@@ -187,7 +254,8 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
             )
 
     async def handle_successful_binding(channel_id: int, community_username: str, user_id: int, giveaway_id: str,
-                                        state: FSMContext, message_id: int, chat_type: str, community_name: str):
+                                        state: FSMContext, message_id: int, chat_type: str, community_name: str,
+                                        avatar_url: str = None):
         try:
             # Check if this specific user has already bound this community to this giveaway
             response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).eq(
@@ -202,8 +270,10 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 )
                 return
 
-            await bind_community_to_giveaway(giveaway_id, str(channel_id), community_username, chat_type, user_id, community_name)
-            await record_bound_community(user_id, community_username, str(channel_id), chat_type, community_name)
+            await bind_community_to_giveaway(giveaway_id, str(channel_id), community_username, chat_type, user_id,
+                                             community_name, avatar_url)
+            await record_bound_community(user_id, community_username, str(channel_id), chat_type, community_name,
+                                         avatar_url)
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
@@ -217,7 +287,8 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 message_id=message_id
             )
             await state.clear()
-            logging.info(f"Успешно привязан(а) {chat_type} {channel_id} к розыгрышу {giveaway_id} для пользователя {user_id}")
+            logging.info(
+                f"Успешно привязан(а) {chat_type} {channel_id} к розыгрышу {giveaway_id} для пользователя {user_id}")
         except Exception as e:
             logging.error(f"Ошибка в handle_successful_binding: {str(e)}")
             await send_message_with_image(
@@ -227,7 +298,8 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 message_id=message_id
             )
 
-    async def record_bound_community(user_id: int, community_username: str, community_id: str, community_type: str, community_name: str):
+    async def record_bound_community(user_id: int, community_username: str, community_id: str, community_type: str,
+                                     community_name: str, media_file_ava: str = None):
         try:
             # Проверяем, существует ли уже запись для этого пользователя и сообщества
             response = supabase.table('bound_communities').select('*').eq('community_id', community_id).eq('user_id',
@@ -235,21 +307,34 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
 
             if response.data:
                 # Если запись существует, обновляем её
-                response = supabase.table('bound_communities').update({
+                update_data = {
                     'community_username': community_username,
                     'community_type': community_type,
-                    'community_name': community_name  # Add this line
-                }).eq('community_id', community_id).eq('user_id', user_id).execute()
+                    'community_name': community_name
+                }
+
+                # Добавляем URL аватарки, если он есть
+                if media_file_ava:
+                    update_data['media_file_ava'] = media_file_ava
+
+                response = supabase.table('bound_communities').update(update_data).eq('community_id', community_id).eq(
+                    'user_id', user_id).execute()
                 logging.info(f"Обновлена привязка сообщества {community_username} для пользователя {user_id}")
             else:
                 # Если записи нет, создаем новую
-                response = supabase.table('bound_communities').insert({
+                insert_data = {
                     'user_id': user_id,
                     'community_username': community_username,
                     'community_id': community_id,
                     'community_type': community_type,
-                    'community_name': community_name  # Add this line
-                }).execute()
+                    'community_name': community_name
+                }
+
+                # Добавляем URL аватарки, если он есть
+                if media_file_ava:
+                    insert_data['media_file_ava'] = media_file_ava
+
+                response = supabase.table('bound_communities').insert(insert_data).execute()
                 logging.info(f"Создана новая привязка сообщества {community_username} для пользователя {user_id}")
 
             return True
@@ -257,31 +342,39 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
             logging.error(f"Ошибка при записи привязанного сообщества: {str(e)}")
             return False
 
-    async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id, community_name):
+    async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id,
+                                         community_name, avatar_url=None):
         data = {
             "giveaway_id": giveaway_id,
             "community_id": community_id,
             "community_username": community_username,
             "community_type": community_type,
             "user_id": user_id,
-            "community_name": community_name  # Add this line
+            "community_name": community_name
         }
+
+        # Добавляем URL аватарки, если он есть
+        if avatar_url:
+            data["media_file_ava"] = avatar_url
+
         try:
             response = supabase.table("giveaway_communities").insert(data).execute()
-            logging.info(f"Привязано сообщество {community_id} (тип: {community_type}) к розыгрышу {giveaway_id} пользователем {user_id}: {response.data}")
+            logging.info(
+                f"Привязано сообщество {community_id} (тип: {community_type}) к розыгрышу {giveaway_id} пользователем {user_id}: {response.data}")
         except Exception as e:
             logging.error(f"Ошибка при привязке сообщества: {str(e)}")
             if "community_type" in str(e):
                 del data["community_type"]
                 response = supabase.table("giveaway_communities").insert(data).execute()
-                logging.info(f"Привязано сообщество {community_id} к розыгрышу {giveaway_id} пользователем {user_id} без указания типа: {response.data}")
+                logging.info(
+                    f"Привязано сообщество {community_id} к розыгрышу {giveaway_id} пользователем {user_id} без указания типа: {response.data}")
             else:
                 raise e
 
     async def verify_partnership(user_id: int, partner_id: int):
         try:
             response = supabase.table('partnerships').select('*').eq('user_id', user_id).eq('partner_id',
-                                                                                partner_id).execute()
+                                                                                            partner_id).execute()
             if response.data:
                 logging.info(f"Партнерство подтверждено между пользователями {user_id} и {partner_id}")
                 return True
@@ -306,4 +399,3 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 'can_pin_messages': 'Закрепление сообщений',
                 'can_manage_video_chats': 'Управление видео чатами'
             }
-
