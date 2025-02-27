@@ -21,12 +21,10 @@ class EditGiveawayStates(StatesGroup):
 
 
 def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
-    ITEMS_PER_PAGE = 5
-
     @dp.callback_query(lambda c: c.data == 'active_giveaways' or c.data.startswith('active_giveaways_page:'))
     async def process_active_giveaways(callback_query: types.CallbackQuery):
         user_id = callback_query.from_user.id
-
+        ITEMS_PER_PAGE = 5
         # Get page number from callback data
         current_page = 1
         if callback_query.data.startswith('active_giveaways_page:'):
@@ -71,11 +69,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     callback_data=f"active_giveaways_page:{current_page - 1}"
                 ))
 
-            # Page indicator
-            nav_buttons.append(types.InlineKeyboardButton(
-                text=f"{current_page}/{total_pages}",
-                callback_data="ignore"
-            ))
+            # Page indicator - only show if there's more than one page
+            if total_pages > 1:
+                nav_buttons.append(types.InlineKeyboardButton(
+                    text=f"{current_page}/{total_pages}",
+                    callback_data="ignore"
+                ))
 
             # Next page button
             if current_page < total_pages:
@@ -84,8 +83,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     callback_data=f"active_giveaways_page:{current_page + 1}"
                 ))
 
-            # Add navigation buttons in one row
-            keyboard.row(*nav_buttons)
+            # Add navigation buttons in one row if there are any
+            if nav_buttons:
+                keyboard.row(*nav_buttons)
 
             # Add back button in its own row
             keyboard.row(types.InlineKeyboardButton(
@@ -96,7 +96,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             await bot.answer_callback_query(callback_query.id)
 
             # Update message with pagination info
-            message_text = f"Выберите активный розыгрыш (Страница {current_page} из {total_pages}):"
+            message_text = "Выберите активный розыгрыш"
+            if total_pages > 1:
+                message_text += f" (Страница {current_page} из {total_pages}):"
+            else:
+                message_text += ":"
 
             await send_message_with_image(
                 bot,
@@ -199,6 +203,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         giveaway_id = callback_query.data.split(':')[1]
         await _show_edit_menu_active(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
 
+    # Constants for validation
+    MAX_NAME_LENGTH = 50
+    MAX_DESCRIPTION_LENGTH = 2500
+    MAX_MEDIA_SIZE_MB = 5
+    MAX_WINNERS = 50
+
     async def _show_edit_menu_active(user_id: int, giveaway_id: str, message_id: int = None):
         response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
         if not response.data:
@@ -217,16 +227,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         keyboard.adjust(2, 2, 1, 1)
 
         giveaway_info = f"""
-📊 Текущая информация о розыгрыше: 
+    📊 Текущая информация о розыгрыше: 
 
-📝  Название:  {giveaway['name']}
-📄  Описание:  {giveaway['description']}
+    📝  Название:  {giveaway['name']}
+    📄  Описание:  {giveaway['description']}
 
-🏆  Количество победителей:  {giveaway['winner_count']}
-🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+    🏆  Количество победителей:  {giveaway['winner_count']}
+    🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 
-🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
-        """
+    🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
+            """
 
         try:
             if giveaway['media_type'] and giveaway['media_file_id']:
@@ -400,7 +410,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            "Введите новое название розыгрыша: \n\nТекущее название будет заменено на введенный вами текст.",
+            f"Введите новое название розыгрыша (максимум {MAX_NAME_LENGTH} символов): \n\nТекущее название будет заменено на введенный вами текст.",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
@@ -410,6 +420,20 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
         new_name = message.text
+
+        # Check name length
+        if len(new_name) > MAX_NAME_LENGTH:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов. Пожалуйста, введите более короткое название.",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id']
+            )
+            return
 
         try:
             supabase.table('giveaways').update({'name': new_name}).eq('id', giveaway_id).execute()
@@ -425,6 +449,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 
         await state.clear()
 
+
     @dp.callback_query(lambda c: c.data.startswith('edit_name_active_active:'))
     async def process_edit_description_active(callback_query: types.CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
@@ -438,7 +463,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            "Введите новое описание розыгрыша: \n\nТекущее описание будет заменено на введенный вами текст.",
+            f"Введите новое описание розыгрыша (максимум {MAX_DESCRIPTION_LENGTH} символов): \n\nТекущее описание будет заменено на введенный вами текст.",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
@@ -448,6 +473,20 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
         new_description = message.text
+
+        # Check description length
+        if len(new_description) > MAX_DESCRIPTION_LENGTH:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов. Пожалуйста, введите более короткое описание.",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id']
+            )
+            return
 
         try:
             supabase.table('giveaways').update({'description': new_description}).eq('id', giveaway_id).execute()
@@ -476,7 +515,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            "Введите новое количество победителей: \n\nВведите положительное целое число.",
+            f"Введите новое количество победителей (максимум {MAX_WINNERS} победителей): \n\nВведите положительное целое число.",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
@@ -505,6 +544,19 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             if new_winner_count <= 0:
                 raise ValueError("Количество победителей должно быть положительным числом.")
 
+            # Check winner count limit
+            if new_winner_count > MAX_WINNERS:
+                keyboard = InlineKeyboardBuilder()
+                keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    f"Слишком много победителей. Максимальное количество: {MAX_WINNERS}. Пожалуйста, введите меньшее число.",
+                    message_id=data.get('last_message_id'),
+                    reply_markup=keyboard.as_markup()
+                )
+                return
+
             # Get current winner count for comparison
             current_winner_count_response = supabase.table('giveaways').select('winner_count').eq('id',
                                                                                                   giveaway_id).single().execute()
@@ -532,7 +584,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             # Show success by updating menu
             await state.clear()
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
-        except (ValueError, TypeError):
+
+        except ValueError:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
@@ -568,10 +621,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
-Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+    Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
 
-Текущая дата и время: <code>{current_time}</code>
-    """
+    Текущая дата и время: <code>{current_time}</code>
+        """
 
         await send_message_with_image(
             bot,
@@ -628,11 +681,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Назад", callback_data="_show_edit_menu_active")
             error_message = f"""
-❌ Неверный формат даты.
+    ❌ Неверный формат даты.
 
-Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
-(текущая дата и время: <code>{current_time}</code>)
-    """
+    Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+    (текущая дата и время: <code>{current_time}</code>)
+        """
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -676,7 +729,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             keyboard.adjust(2)
 
-            text = "Хотите добавить фото, GIF или видео?"
+            text = f"Хотите добавить фото, GIF или видео? (максимальный размер файла: {MAX_MEDIA_SIZE_MB} МБ)"
 
         await send_message_with_image(
             bot,
@@ -700,7 +753,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            "Пожалуйста, отправьте фото, GIF или видео.",
+            f"Пожалуйста, отправьте фото, GIF или видео (максимальный размер файла: {MAX_MEDIA_SIZE_MB} МБ).",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
@@ -734,8 +787,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                 file_ext = 'jpg'
             elif message.animation:
                 file_id = message.animation.file_id
-                media_type = 'gif'
-                file_ext = 'gif'
+                media_type = 'gif'  # Keep the media type as 'gif' for identification
+                file_ext = 'mp4'  # Change the extension to 'mp4' instead of 'gif'
             elif message.video:
                 file_id = message.video.file_id
                 media_type = 'video'
@@ -754,6 +807,18 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             # Get file from Telegram
             file = await bot.get_file(file_id)
             file_content = await bot.download_file(file.file_path)
+
+            # Check file size
+            file_size_mb = file.file_size / (1024 * 1024)
+            if file_size_mb > MAX_MEDIA_SIZE_MB:
+                await send_message_with_image(
+                    bot,
+                    message.from_user.id,
+                    f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ. Текущий размер: {file_size_mb:.2f} МБ. Пожалуйста, отправьте файл меньшего размера.",
+                    reply_markup=keyboard.as_markup(),
+                    message_id=data.get('last_message_id')
+                )
+                return
 
             # Generate unique filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -800,7 +865,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
-            # Don't clear state to allow retry
 
     @dp.callback_query(lambda c: c.data.startswith('delete_media_active:'))
     async def process_delete_media_active(callback_query: types.CallbackQuery, state: FSMContext):
