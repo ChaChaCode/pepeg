@@ -318,7 +318,8 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         html_message = f"""
 Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
 
-Текущая дата и время: <code>{current_time}</code>
+Текущая дата и время:
+<code>{current_time}</code>
 """
 
         await send_message_with_image(
@@ -359,8 +360,9 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
 Вы ввели неправильный формат даты. Сообщение удалено.
 
 Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
-(текущая дата и время: <code>{current_time}</code>)
-    """
+текущая дата и время:
+<code>{current_time}</code>
+"""
             # Changed from bot.edit_message_text to send_message_with_image
             await send_message_with_image(
                 bot,
