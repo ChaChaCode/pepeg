@@ -9,6 +9,10 @@ import pytz
 from utils import send_message_with_image
 import logging
 import asyncio
+import boto3
+from botocore.client import Config
+import io
+import requests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -19,8 +23,22 @@ supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
 supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
 supabase: Client = create_client(supabase_url, supabase_key)
 
-# Storage configuration
-BUCKET_NAME = 'pepeg'
+# Yandex Cloud S3 configuration
+YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
+YANDEX_SECRET_KEY = 'YCPkR9H9Ucebg6L6eMGvtfKuFIcO_MK7gyiffY6H'
+YANDEX_BUCKET_NAME = 'raffle'  # Make sure this bucket exists in your Yandex Cloud account
+YANDEX_ENDPOINT_URL = 'https://storage.yandexcloud.net'
+YANDEX_REGION = 'ru-central1'  # Add the region
+
+# Initialize S3 client for Yandex Cloud
+s3_client = boto3.client(
+    's3',
+    region_name=YANDEX_REGION,
+    aws_access_key_id=YANDEX_ACCESS_KEY,
+    aws_secret_access_key=YANDEX_SECRET_KEY,
+    endpoint_url=YANDEX_ENDPOINT_URL,
+    config=Config(signature_version='s3v4')
+)
 
 # Constraints
 MAX_NAME_LENGTH = 50
@@ -49,31 +67,82 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
 
-        # Upload file to the existing bucket
-        response = supabase.storage.from_(BUCKET_NAME).upload(
-            path=unique_filename,
-            file=file_content,
-            file_options={
-                "content-type": "application/octet-stream",
-                "upsert": False  # Don't overwrite if file exists
-            }
-        )
+        # Upload file to Yandex Cloud S3
+        try:
+            # First, check if the bucket exists
+            try:
+                s3_client.head_bucket(Bucket=YANDEX_BUCKET_NAME)
+                logger.info(f"Bucket {YANDEX_BUCKET_NAME} exists and is accessible")
+            except Exception as bucket_error:
+                logger.error(f"Bucket error: {str(bucket_error)}")
+                # If the bucket doesn't exist, try to create it
+                try:
+                    logger.info(f"Attempting to create bucket {YANDEX_BUCKET_NAME}")
+                    s3_client.create_bucket(
+                        Bucket=YANDEX_BUCKET_NAME,
+                        CreateBucketConfiguration={'LocationConstraint': YANDEX_REGION}
+                    )
+                    logger.info(f"Bucket {YANDEX_BUCKET_NAME} created successfully")
+                except Exception as create_error:
+                    logger.error(f"Failed to create bucket: {str(create_error)}")
+                    raise Exception(f"Cannot access or create bucket: {str(create_error)}")
 
-        if hasattr(response, 'error') and response.error:
-            logger.error(f"Upload error: {response.error}")
-            raise Exception(response.error)
+            # Try to upload the file
+            logger.info(f"Uploading file {unique_filename} to bucket {YANDEX_BUCKET_NAME}")
+            s3_client.put_object(
+                Bucket=YANDEX_BUCKET_NAME,
+                Key=unique_filename,
+                Body=io.BytesIO(file_content),
+                ContentType="application/octet-stream",
+                ACL='public-read'  # Make the object publicly readable
+            )
 
-        # Get public URL
-        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(unique_filename)
+            # Generate public URL for the uploaded file
+            public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
 
-        # Verify upload was successful
-        if not public_url:
-            raise Exception("Failed to get public URL after upload")
+            logger.info(f"File uploaded successfully to Yandex Cloud: {unique_filename}")
+            logger.info(f"Public URL: {public_url}")
 
-        logger.info(f"File uploaded successfully: {unique_filename}")
-        logger.info(f"Public URL: {public_url}")
+            return True, public_url
 
-        return True, public_url
+        except Exception as s3_error:
+            logger.error(f"Yandex Cloud S3 upload error: {str(s3_error)}")
+
+            # Try an alternative approach if the first one fails
+            try:
+                logger.info("Trying alternative upload method...")
+                # Try using presigned URL for upload
+                presigned_url = s3_client.generate_presigned_url(
+                    'put_object',
+                    Params={
+                        'Bucket': YANDEX_BUCKET_NAME,
+                        'Key': unique_filename,
+                        'ContentType': 'application/octet-stream',
+                        'ACL': 'public-read'
+                    },
+                    ExpiresIn=3600
+                )
+
+                # Use requests to upload via presigned URL
+                response = requests.put(
+                    presigned_url,
+                    data=file_content,
+                    headers={'Content-Type': 'application/octet-stream'}
+                )
+
+                if response.status_code == 200:
+                    # Generate public URL for the uploaded file
+                    public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
+                    logger.info(f"File uploaded successfully using presigned URL: {unique_filename}")
+                    logger.info(f"Public URL: {public_url}")
+                    return True, public_url
+                else:
+                    logger.error(f"Failed to upload using presigned URL: {response.status_code} - {response.text}")
+                    raise Exception(f"Failed to upload using presigned URL: {response.status_code}")
+
+            except Exception as alt_error:
+                logger.error(f"Alternative upload method failed: {str(alt_error)}")
+                raise Exception(f"Failed to upload to Yandex Cloud: {str(s3_error)}")
 
     except Exception as e:
         error_msg = str(e)
@@ -246,7 +315,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             elif message.animation:
                 file_id = message.animation.file_id
                 media_type = 'gif'  # Keep the media type as 'gif' for identification
-                file_ext = 'mp4'  # Change the extension to 'mp4' instead of 'gif'
+                file_ext = 'gif'  # Change the extension to 'mp4' instead of 'gif'
             elif message.video:
                 file_id = message.video.file_id
                 media_type = 'video'
@@ -282,7 +351,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"{timestamp}_{message.message_id}.{file_ext}"
 
-            # Upload to Supabase Storage
+            # Upload to Yandex Cloud Storage
             success, result = await upload_to_storage(file_content.read(), filename)
 
             if not success:
@@ -482,3 +551,5 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
+
+
