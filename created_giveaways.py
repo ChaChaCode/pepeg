@@ -13,6 +13,9 @@ import aiogram.exceptions
 import json
 import asyncio
 import math
+import boto3
+from botocore.client import Config
+import io
 
 # Bot configuration and initialization
 BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
@@ -25,9 +28,31 @@ supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
 supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
 supabase: Client = create_client(supabase_url, supabase_key)
 
+# Yandex Cloud S3 configuration
+YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
+YANDEX_SECRET_KEY = 'YCPkR9H9Ucebg6L6eMGvtfKuFIcO_MK7gyiffY6H'
+YANDEX_BUCKET_NAME = 'raffle'
+YANDEX_ENDPOINT_URL = 'https://storage.yandexcloud.net'
+YANDEX_REGION = 'ru-central1'
+
+# Initialize S3 client for Yandex Cloud
+s3_client = boto3.client(
+    's3',
+    region_name=YANDEX_REGION,
+    aws_access_key_id=YANDEX_ACCESS_KEY,
+    aws_secret_access_key=YANDEX_SECRET_KEY,
+    endpoint_url=YANDEX_ENDPOINT_URL,
+    config=Config(signature_version='s3v4')
+)
+
 user_selected_communities = {}
 paid_users: Dict[int, str] = {}
 
+# Constants for validation
+MAX_NAME_LENGTH = 50
+MAX_DESCRIPTION_LENGTH = 2500
+MAX_MEDIA_SIZE_MB = 5
+MAX_WINNERS = 50
 
 # States for the FSM
 class GiveawayStates(StatesGroup):
@@ -48,6 +73,63 @@ class GiveawayStates(StatesGroup):
     creating_giveaway = State()
     binding_communities = State()
 
+async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
+    try:
+        # Check file size (5 MB limit)
+        file_size_mb = len(file_content) / (1024 * 1024)
+        if file_size_mb > MAX_MEDIA_SIZE_MB:
+            return False, f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ"
+
+        # Generate unique filename to avoid conflicts
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        unique_filename = f"{timestamp}_{filename}"
+
+        # Upload file to Yandex Cloud S3
+        try:
+            # First, check if the bucket exists
+            try:
+                s3_client.head_bucket(Bucket=YANDEX_BUCKET_NAME)
+                logging.info(f"Bucket {YANDEX_BUCKET_NAME} exists and is accessible")
+            except Exception as bucket_error:
+                logging.error(f"Bucket error: {str(bucket_error)}")
+                # If the bucket doesn't exist, try to create it
+                try:
+                    logging.info(f"Attempting to create bucket {YANDEX_BUCKET_NAME}")
+                    s3_client.create_bucket(
+                        Bucket=YANDEX_BUCKET_NAME,
+                        CreateBucketConfiguration={'LocationConstraint': YANDEX_REGION}
+                    )
+                    logging.info(f"Bucket {YANDEX_BUCKET_NAME} created successfully")
+                except Exception as create_error:
+                    logging.error(f"Failed to create bucket: {str(create_error)}")
+                    raise Exception(f"Cannot access or create bucket: {str(create_error)}")
+
+            # Try to upload the file
+            logging.info(f"Uploading file {unique_filename} to bucket {YANDEX_BUCKET_NAME}")
+            s3_client.put_object(
+                Bucket=YANDEX_BUCKET_NAME,
+                Key=unique_filename,
+                Body=io.BytesIO(file_content),
+                ContentType="application/octet-stream",
+                ACL='public-read'  # Make the object publicly readable
+            )
+
+            # Generate public URL for the uploaded file
+            public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
+
+            logging.info(f"File uploaded successfully to Yandex Cloud: {unique_filename}")
+            logging.info(f"Public URL: {public_url}")
+
+            return True, public_url
+
+        except Exception as s3_error:
+            logging.error(f"Yandex Cloud S3 upload error: {str(s3_error)}")
+            raise Exception(f"Failed to upload to Yandex Cloud: {str(s3_error)}")
+
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"Storage upload error: {error_msg}")
+        return False, error_msg
 
 def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
@@ -677,7 +759,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             elif message.animation:
                 file_id = message.animation.file_id
                 media_type = 'gif'  # Keep the media type as 'gif' for identification
-                file_ext = 'mp4'  # Change the extension to 'mp4' instead of 'gif'
+                file_ext = 'gif'  # Use gif extension
             elif message.video:
                 file_id = message.video.file_id
                 media_type = 'video'
@@ -707,23 +789,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"{timestamp}_{message.message_id}.{file_ext}"
 
-            # Upload to Supabase Storage
-            response = supabase.storage.from_('pepeg').upload(
-                path=filename,
-                file=file_content.read(),
-                file_options={"content-type": "application/octet-stream"}
-            )
+            # Upload to Yandex Cloud Storage
+            success, result = await upload_to_storage(file_content.read(), filename)
 
-            if hasattr(response, 'error') and response.error:
-                raise Exception(response.error)
-
-            # Get public URL
-            public_url = supabase.storage.from_('pepeg').get_public_url(filename)
+            if not success:
+                raise Exception(f"Failed to upload to storage: {result}")
 
             # Update database with new media info
             supabase.table('giveaways').update({
                 'media_type': media_type,
-                'media_file_id': public_url
+                'media_file_id': result
             }).eq('id', giveaway_id).execute()
 
             # Delete user's message with media
