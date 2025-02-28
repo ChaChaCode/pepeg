@@ -10,6 +10,10 @@ from aiogram.enums import ChatMemberStatus, ChatType
 import logging
 import aiohttp
 import uuid
+import boto3
+from botocore.client import Config
+import io
+from datetime import datetime
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -25,6 +29,23 @@ supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
 supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
 supabase: Client = create_client(supabase_url, supabase_key)
 
+# Yandex Cloud S3 configuration
+YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
+YANDEX_SECRET_KEY = 'YCPkR9H9Ucebg6L6eMGvtfKuFIcO_MK7gyiffY6H'
+YANDEX_BUCKET_NAME = 'raffle'
+YANDEX_ENDPOINT_URL = 'https://storage.yandexcloud.net'
+YANDEX_REGION = 'ru-central1'
+
+# Initialize S3 client for Yandex Cloud
+s3_client = boto3.client(
+    's3',
+    region_name=YANDEX_REGION,
+    aws_access_key_id=YANDEX_ACCESS_KEY,
+    aws_secret_access_key=YANDEX_SECRET_KEY,
+    endpoint_url=YANDEX_ENDPOINT_URL,
+    config=Config(signature_version='s3v4')
+)
+
 
 class GiveawayStates(StatesGroup):
     binding_communities = State()
@@ -33,6 +54,65 @@ class GiveawayStates(StatesGroup):
 
 # Словарь для хранения ожидающих привязки каналов
 pending_channels = {}
+
+
+async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
+    try:
+        # Check file size (5 MB limit)
+        file_size_mb = len(file_content) / (1024 * 1024)
+        if file_size_mb > 5:  # 5 MB limit
+            return False, f"Файл слишком большой. Максимальный размер: 5 МБ"
+
+        # Generate unique filename to avoid conflicts
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        unique_filename = f"{timestamp}_{filename}"
+
+        # Upload file to Yandex Cloud S3
+        try:
+            # First, check if the bucket exists
+            try:
+                s3_client.head_bucket(Bucket=YANDEX_BUCKET_NAME)
+                logging.info(f"Bucket {YANDEX_BUCKET_NAME} exists and is accessible")
+            except Exception as bucket_error:
+                logging.error(f"Bucket error: {str(bucket_error)}")
+                # If the bucket doesn't exist, try to create it
+                try:
+                    logging.info(f"Attempting to create bucket {YANDEX_BUCKET_NAME}")
+                    s3_client.create_bucket(
+                        Bucket=YANDEX_BUCKET_NAME,
+                        CreateBucketConfiguration={'LocationConstraint': YANDEX_REGION}
+                    )
+                    logging.info(f"Bucket {YANDEX_BUCKET_NAME} created successfully")
+                except Exception as create_error:
+                    logging.error(f"Failed to create bucket: {str(create_error)}")
+                    raise Exception(f"Cannot access or create bucket: {str(create_error)}")
+
+            # Try to upload the file
+            logging.info(f"Uploading file {unique_filename} to bucket {YANDEX_BUCKET_NAME}")
+            s3_client.put_object(
+                Bucket=YANDEX_BUCKET_NAME,
+                Key=unique_filename,
+                Body=io.BytesIO(file_content),
+                ContentType="application/octet-stream",
+                ACL='public-read'  # Make the object publicly readable
+            )
+
+            # Generate public URL for the uploaded file
+            public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
+
+            logging.info(f"File uploaded successfully to Yandex Cloud: {unique_filename}")
+            logging.info(f"Public URL: {public_url}")
+
+            return True, public_url
+
+        except Exception as s3_error:
+            logging.error(f"Yandex Cloud S3 upload error: {str(s3_error)}")
+            raise Exception(f"Failed to upload to Yandex Cloud: {str(s3_error)}")
+
+    except Exception as e:
+        error_msg = str(e)
+        logging.error(f"Storage upload error: {error_msg}")
+        return False, error_msg
 
 
 def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
@@ -127,23 +207,15 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
 
             # Генерируем уникальное имя файла
             file_name = f"{chat_id}_{uuid.uuid4()}.jpg"
-            file_path = f"avatar/{file_name}"
 
-            # Загружаем файл в Supabase Storage
-            response = supabase.storage.from_('pepeg').upload(
-                file_path,
-                file_content,
-                {"content-type": "image/jpeg"}
-            )
+            # Загружаем файл в Yandex Cloud Storage
+            success, public_url = await upload_to_storage(file_content, file_name)
 
-            if hasattr(response, 'error') and response.error:
-                logging.error(f"Ошибка при загрузке аватара в Supabase: {response.error}")
+            if not success:
+                logging.error(f"Ошибка при загрузке аватара в Yandex Cloud: {public_url}")
                 return None
 
-            # Получаем публичный URL файла
-            public_url = supabase.storage.from_('pepeg').get_public_url(file_path)
             logging.info(f"Аватар для чата {chat_id} успешно сохранен: {public_url}")
-
             return public_url
 
         except Exception as e:
@@ -399,3 +471,4 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                 'can_pin_messages': 'Закрепление сообщений',
                 'can_manage_video_chats': 'Управление видео чатами'
             }
+
