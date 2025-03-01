@@ -1707,12 +1707,15 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             user_selected_communities.pop(user_id, None)
 
     async def get_participant_count(giveaway_id: str, supabase: Client) -> int:
-        """Get the current number of participants for a giveaway"""
+        """Получить текущее количество участников розыгрыша"""
         try:
-            response = supabase.table('participations').select('id').eq('giveaway_id', giveaway_id).execute()
-            return len(response.data) if response.data else 0
+            # Используем count() вместо получения всех записей
+            response = supabase.table('participations').select('*', count='exact').eq('giveaway_id',
+                                                                                      giveaway_id).execute()
+            # Количество возвращается в свойстве count
+            return response.count if hasattr(response, 'count') else 0
         except Exception as e:
-            logging.error(f"Error getting participant count: {str(e)}")
+            logging.error(f"Ошибка при получении количества участников: {str(e)}")
             return 0
 
     async def update_participant_button(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, supabase: Client):
