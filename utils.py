@@ -236,10 +236,15 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
         try:
             # Get the congratulatory message for this place, or use a default if not found
             congrats_message = congrats_messages.get(index, f"Поздравляем! Вы выиграли в розыгрыше \"{giveaway['name']}\"!")
-
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(
+                text=f"Результаты",
+                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}"
+            ),
             await bot.send_message(
                 chat_id=winner['user_id'],
-                text=congrats_message
+                text=congrats_message,
+                reply_markup=keyboard.as_markup()
             )
         except Exception as e:
             logging.error(f"Error notifying winner {winner['user_id']}: {e}")
