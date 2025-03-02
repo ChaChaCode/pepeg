@@ -55,6 +55,7 @@ MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
 
 # States for the FSM
+# States for the FSM
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_description = State()
@@ -1032,8 +1033,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         supabase.table("giveaway_communities").delete().eq("giveaway_id", giveaway_id).eq("community_id",
                                                                                           community_id).execute()
 
-    @dp.callback_query(lambda c: c.data.startswith('bind_communities:'))
+    @dp.callback_query(lambda c: c.data == 'bind_communities:' or c.data.startswith('bind_communities:'))
     async def process_bind_communities(callback_query: types.CallbackQuery, state: FSMContext):
+        if callback_query.data == 'bind_communities:':
+            await bot.answer_callback_query(callback_query.id, text="Неверный формат данных")
+            return
+
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
         await state.update_data(giveaway_id=giveaway_id)
@@ -1059,12 +1064,23 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             community_username = community['community_username']
             community_name = community['community_name']  # Get community_name
             is_selected = (community_id, community_username) in user_selected_communities[user_id]['communities']
-            text = f"{community_name}"  # Use community_name instead of @{community_username}
+
+            # Truncate long community names
+            display_name = truncate_name(community_name)
+            text = f"{display_name}"
             if is_selected:
                 text += ' ✅'
+
+            # Make sure callback data is not too long
+            # Telegram has a 64 byte limit for callback_data
+            callback_data = f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
+            if len(callback_data.encode('utf-8')) > 60:  # Leave some margin
+                # Use just the ID for the callback data
+                callback_data = f"toggle_community:{giveaway_id}:{community_id}:id"
+
             keyboard.button(
                 text=text,
-                callback_data=f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
+                callback_data=callback_data
             )
 
         # Add buttons for other actions
@@ -1081,12 +1097,27 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             message_id=callback_query.message.message_id
         )
 
+    def truncate_name(name, max_length=20):
+        """Truncate a name if it's too long and add ellipsis"""
+        if len(name) <= max_length:
+            return name
+        return name[:max_length - 3] + "..."
+
+    # Fix for the toggle_community callback handler
     @dp.callback_query(lambda c: c.data.startswith('toggle_community:'))
     async def process_toggle_community(callback_query: types.CallbackQuery):
-        _, giveaway_id, community_id, community_username = callback_query.data.split(':')
+        # Get user_id from the callback query
         user_id = callback_query.from_user.id
 
-        # Modified query to handle multiple results
+        # Extract data from callback
+        parts = callback_query.data.split(':')
+        if len(parts) >= 4:
+            _, giveaway_id, community_id, community_username = parts
+        else:
+            # Handle malformed callback data
+            await bot.answer_callback_query(callback_query.id, text="Invalid callback data")
+            return
+
         try:
             # Get community name from bound_communities - take the first result
             response = supabase.table('bound_communities').select('community_name').eq('community_id',
@@ -1111,12 +1142,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         current_text = button.text
                         # Toggle the selection
                         if '✅' in current_text:
-                            new_text = f"{community_name}"  # Use community_name
+                            new_text = f"{truncate_name(community_name)}"  # Truncate name
                             user_selected_communities[user_id]['communities'].discard(
                                 (community_id, community_username))
                             logging.info(f"Removing community {community_name} from selection")
                         else:
-                            new_text = f"{community_name} ✅"  # Use community_name
+                            new_text = f"{truncate_name(community_name)} ✅"  # Truncate name
                             user_selected_communities[user_id]['communities'].add((community_id, community_username))
                             logging.info(f"Adding community {community_name} to selection")
                         new_row.append(InlineKeyboardButton(text=new_text, callback_data=button.callback_data))
@@ -1157,9 +1188,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             keyboard = InlineKeyboardBuilder()
             for community in communities:
+                # Truncate long community names
+                display_name = truncate_name(community['community_name'])
+
+                # Make sure callback data is not too long
+                callback_data = f"toggle_activate_community:{giveaway_id}:{community['community_id']}:{community['community_username']}"
+                if len(callback_data.encode('utf-8')) > 60:  # Leave some margin
+                    # Use just the ID for the callback data
+                    callback_data = f"toggle_activate_community:{giveaway_id}:{community['community_id']}:id"
+
                 keyboard.button(
-                    text=f"{community['community_name']}",  # Use community_name
-                    callback_data=f"toggle_activate_community:{giveaway_id}:{community['community_id']}:{community['community_username']}"
+                    text=display_name,
+                    callback_data=callback_data
                 )
             keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_activate_selection:{giveaway_id}")
             keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
@@ -1742,4 +1782,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         while True:
             await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
             await asyncio.sleep(60)
+
+
 
