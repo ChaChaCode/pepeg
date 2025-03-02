@@ -54,8 +54,6 @@ MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
 
-# States for the FSM
-# States for the FSM
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_description = State()
@@ -1011,23 +1009,37 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         return response.data if response.data else []
 
     async def bind_community_to_giveaway(giveaway_id, community_id, community_username):
-        # Get the community details from bound_communities
-        response = supabase.table('bound_communities').select('*').eq('community_id', community_id).execute()
+        try:
+            # Get the community details from bound_communities
+            response = supabase.table('bound_communities').select('*').eq('community_id', community_id).execute()
 
-        if response.data and len(response.data) > 0:
-            # Use the first matching community if multiple exist
+            if not response.data:
+                logging.error(f"No community found with ID {community_id}")
+                return False
+
             community = response.data[0]
+
+            # If community_username is 'id', use the actual username or name from bound_communities
+            actual_username = community_username
+            if community_username == 'id':
+                actual_username = community.get('community_username') or community.get('community_name')
+
             data = {
                 "giveaway_id": giveaway_id,
                 "community_id": community_id,
-                "community_username": community_username,
+                "community_username": actual_username,  # Use actual username
                 "community_type": community['community_type'],
                 "user_id": community['user_id'],
                 "community_name": community['community_name']
             }
+
+            # Insert the data into giveaway_communities
             supabase.table("giveaway_communities").insert(data).execute()
-        else:
-            logging.error(f"No community found with ID {community_id}")
+            return True
+
+        except Exception as e:
+            logging.error(f"Error in bind_community_to_giveaway: {str(e)}")
+            return False
 
     async def unbind_community_from_giveaway(giveaway_id, community_id):
         supabase.table("giveaway_communities").delete().eq("giveaway_id", giveaway_id).eq("community_id",
@@ -1299,134 +1311,71 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         user_id = callback_query.from_user.id
 
         try:
-            # Получаем текущие привязанные паблики для этого гивевея
+            # Get current bound communities
             current_bound_communities = await get_giveaway_communities(giveaway_id)
             current_set = set(
                 (str(comm['community_id']), comm['community_username']) for comm in current_bound_communities)
 
-            # Получаем текущее состояние кнопок и их текст
+            # Get selected communities from buttons
             selected_set = set()
-            button_texts = {}  # Словарь для хранения текущего текста кнопок
             for row in callback_query.message.reply_markup.inline_keyboard:
                 for button in row:
-                    if button.callback_data.startswith('toggle_community:'):
-                        _, _, community_id, community_username = button.callback_data.split(':')
-                        if '✅' in button.text:
-                            selected_set.add((str(community_id), community_username))
-                        # Сохраняем текущий текст кнопки
-                        button_texts[(str(community_id), community_username)] = button.text
+                    if button.callback_data.startswith('toggle_community:') and '✅' in button.text:
+                        parts = button.callback_data.split(':')
+                        if len(parts) >= 3:
+                            community_id = parts[2]
+                            # Get community info from database to ensure we have correct username
+                            response = supabase.table('bound_communities').select('*').eq('community_id',
+                                                                                          community_id).execute()
+                            if response.data:
+                                community = response.data[0]
+                                community_username = community.get('community_username') or community.get(
+                                    'community_name')
+                                selected_set.add((str(community_id), community_username))
 
-            # Находим паблики для добавления и удаления
+            # Find communities to add and remove
             to_add = selected_set - current_set
             to_remove = current_set - selected_set
 
             changes_made = bool(to_add or to_remove)
 
-            # Если есть изменения, применяем их
             if changes_made:
-                # Добавляем новые привязки
+                # Add new bindings
                 for community_id, community_username in to_add:
-                    await bind_community_to_giveaway(giveaway_id, community_id, community_username)
-                    logging.info(f"Added binding for community {community_username} to giveaway {giveaway_id}")
-
-                # Удаляем старые привязки
-                for community_id, community_username in to_remove:
-                    await unbind_community_from_giveaway(giveaway_id, community_id)
-                    logging.info(f"Removed binding for community {community_username} from giveaway {giveaway_id}")
-
-            # Обновляем сообщение с сохранением текущего формата кнопок
-            bound_communities = await get_bound_communities(user_id)
-            giveaway_communities = await get_giveaway_communities(giveaway_id)
-
-            keyboard = InlineKeyboardBuilder()
-
-            for community in bound_communities:
-                community_id = community['community_id']
-                community_username = community['community_username']
-
-                # Если кнопка уже существовала, используем её текущий текст
-                if (str(community_id), community_username) in button_texts:
-                    text = button_texts[(str(community_id), community_username)]
-                else:
-                    # Для новых кнопок используем community_name
-                    is_selected = any(str(comm['community_id']) == str(community_id) for comm in giveaway_communities)
-                    text = f"{community['community_name']}"
-                    if is_selected:
-                        text += ' ✅'
-
-                keyboard.button(
-                    text=text,
-                    callback_data=f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
-                )
-
-            keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_community_selection:{giveaway_id}")
-            keyboard.button(text="Привязать новый паблик", callback_data=f"bind_new_community:{giveaway_id}")
-            keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
-            keyboard.adjust(1)
-
-            new_markup = keyboard.as_markup()
-
-            try:
-                # Обновляем клавиатуру
-                await bot.edit_message_reply_markup(
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.message_id,
-                    reply_markup=new_markup
-                )
-
-                if changes_made:
-                    await bot.answer_callback_query(callback_query.id, text="Привязки пабликов обновлены!")
-
-                    # Создаем новый объект CallbackQuery для просмотра созданного розыгрыша
-                    new_callback_query = types.CallbackQuery(
-                        id=callback_query.id,
-                        from_user=callback_query.from_user,
-                        chat_instance=callback_query.chat_instance,
-                        message=callback_query.message,
-                        data=f"view_created_giveaway:{giveaway_id}"
-                    )
-
-                    # Очищаем выбранные сообщества для этого пользователя
-                    if user_id in user_selected_communities:
-                        del user_selected_communities[user_id]
-
-                    # Перенаправляем на просмотр созданного розыгрыша только если были изменения
-                    await process_view_created_giveaway(new_callback_query)
-                else:
-                    await bot.answer_callback_query(callback_query.id, text="Список пабликов не изменился.")
-
-            except aiogram.exceptions.TelegramBadRequest as e:
-                if "message is not modified" in str(e):
-                    # Если сообщение не изменилось, это не ошибка
-                    logging.info("Message not modified, as it's identical to the current one.")
-                    if changes_made:
-                        await bot.answer_callback_query(callback_query.id, text="Привязки пабликов обновлены!")
-
-                        # Создаем новый объект CallbackQuery и перенаправляем только если были изменения
-                        new_callback_query = types.CallbackQuery(
-                            id=callback_query.id,
-                            from_user=callback_query.from_user,
-                            chat_instance=callback_query.chat_instance,
-                            message=callback_query.message,
-                            data=f"view_created_giveaway:{giveaway_id}"
-                        )
-
-                        # Очищаем выбранные сообщества для этого пользователя
-                        if user_id in user_selected_communities:
-                            del user_selected_communities[user_id]
-
-                        await process_view_created_giveaway(new_callback_query)
+                    success = await bind_community_to_giveaway(giveaway_id, community_id, community_username)
+                    if success:
+                        logging.info(f"Added binding for community {community_username} to giveaway {giveaway_id}")
                     else:
-                        await bot.answer_callback_query(callback_query.id, text="Список пабликов не изменился.")
-                else:
-                    # Если возникла другая ошибка, логируем её
-                    logging.error(f"Error updating keyboard: {e}")
-                    await bot.answer_callback_query(callback_query.id,
-                                                    text="Произошла ошибка при обновлении списка пабликов.")
+                        logging.error(f"Failed to add binding for community {community_username}")
+
+                # Remove old bindings
+                for community_id, _ in to_remove:
+                    await unbind_community_from_giveaway(giveaway_id, community_id)
+
+                await bot.answer_callback_query(callback_query.id, text="Привязки пабликов обновлены!")
+
+                # Redirect to view giveaway
+                new_callback_query = types.CallbackQuery(
+                    id=callback_query.id,
+                    from_user=callback_query.from_user,
+                    chat_instance=callback_query.chat_instance,
+                    message=callback_query.message,
+                    data=f"view_created_giveaway:{giveaway_id}"
+                )
+
+                if user_id in user_selected_communities:
+                    del user_selected_communities[user_id]
+
+                await process_view_created_giveaway(new_callback_query)
+            else:
+                await bot.answer_callback_query(callback_query.id, text="Список пабликов не изменился")
 
         except Exception as e:
             logging.error(f"Error in process_confirm_community_selection: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при обработке запроса.")
+            await bot.answer_callback_query(
+                callback_query.id,
+                text="Произошла ошибка при обновлении списка пабликов. Пожалуйста, попробуйте еще раз."
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('select_community:'))
     async def process_select_community(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1782,6 +1731,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         while True:
             await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
             await asyncio.sleep(60)
+
 
 
 
