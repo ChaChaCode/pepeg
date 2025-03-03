@@ -615,7 +615,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                 message.chat.id,
                 "Обновление количества победителей...",
                 message_id=data.get('last_message_id'),
-                reply_markup=keyboard.as_markup()
             )
 
             new_winner_count = int(message.text)
@@ -736,7 +735,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                 message.chat.id,
                 "Обновление даты завершения...",
                 message_id=data.get('last_message_id'),
-                reply_markup=keyboard.as_markup()
             )
 
             new_end_time = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
@@ -857,7 +855,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                 message.chat.id,
                 "Загрузка...",
                 message_id=data.get('last_message_id'),
-                reply_markup=keyboard.as_markup()
             )
 
             # Process media file
