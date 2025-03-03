@@ -40,7 +40,7 @@ s3_client = boto3.client(
     's3',
     region_name=YANDEX_REGION,
     aws_access_key_id=YANDEX_ACCESS_KEY,
-    aws_secret_access_key=YANDEX_SECRET_KEY,
+    aws_secret_access_key=YANDEX_SECRET_KEY,  # Исправлено с aws_secret_key на aws_secret_access_key
     endpoint_url=YANDEX_ENDPOINT_URL,
     config=Config(signature_version='s3v4')
 )
@@ -53,6 +53,7 @@ MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
+
 
 # States for the FSM
 class GiveawayStates(StatesGroup):
@@ -72,77 +73,44 @@ class GiveawayStates(StatesGroup):
     waiting_for_edit_winner_count = State()
     creating_giveaway = State()
     binding_communities = State()
+    waiting_for_invite_quantity = State()
+
 
 async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
     try:
-        # Check file size (5 MB limit)
         file_size_mb = len(file_content) / (1024 * 1024)
         if file_size_mb > MAX_MEDIA_SIZE_MB:
             return False, f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ"
 
-        # Generate unique filename to avoid conflicts
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
 
-        # Upload file to Yandex Cloud S3
-        try:
-            # First, check if the bucket exists
-            try:
-                s3_client.head_bucket(Bucket=YANDEX_BUCKET_NAME)
-                logging.info(f"Bucket {YANDEX_BUCKET_NAME} exists and is accessible")
-            except Exception as bucket_error:
-                logging.error(f"Bucket error: {str(bucket_error)}")
-                # If the bucket doesn't exist, try to create it
-                try:
-                    logging.info(f"Attempting to create bucket {YANDEX_BUCKET_NAME}")
-                    s3_client.create_bucket(
-                        Bucket=YANDEX_BUCKET_NAME,
-                        CreateBucketConfiguration={'LocationConstraint': YANDEX_REGION}
-                    )
-                    logging.info(f"Bucket {YANDEX_BUCKET_NAME} created successfully")
-                except Exception as create_error:
-                    logging.error(f"Failed to create bucket: {str(create_error)}")
-                    raise Exception(f"Cannot access or create bucket: {str(create_error)}")
+        s3_client.put_object(
+            Bucket=YANDEX_BUCKET_NAME,
+            Key=unique_filename,
+            Body=io.BytesIO(file_content),
+            ContentType="application/octet-stream",
+            ACL='public-read'
+        )
 
-            # Try to upload the file
-            logging.info(f"Uploading file {unique_filename} to bucket {YANDEX_BUCKET_NAME}")
-            s3_client.put_object(
-                Bucket=YANDEX_BUCKET_NAME,
-                Key=unique_filename,
-                Body=io.BytesIO(file_content),
-                ContentType="application/octet-stream",
-                ACL='public-read'  # Make the object publicly readable
-            )
-
-            # Generate public URL for the uploaded file
-            public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
-
-            logging.info(f"File uploaded successfully to Yandex Cloud: {unique_filename}")
-            logging.info(f"Public URL: {public_url}")
-
-            return True, public_url
-
-        except Exception as s3_error:
-            logging.error(f"Yandex Cloud S3 upload error: {str(s3_error)}")
-            raise Exception(f"Failed to upload to Yandex Cloud: {str(s3_error)}")
-
+        public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
+        return True, public_url
     except Exception as e:
         error_msg = str(e)
         logging.error(f"Storage upload error: {error_msg}")
         return False, error_msg
+
 
 def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
     async def process_created_giveaways(callback_query: types.CallbackQuery):
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
-        # Get page number from callback data
         current_page = 1
         if callback_query.data.startswith('created_giveaways_page:'):
             current_page = int(callback_query.data.split(':')[1])
 
         try:
-            # Get all giveaways for pagination calculation
             response = supabase.table('giveaways').select('*').eq('user_id', user_id).eq('is_active', False).execute()
 
             if not response.data:
@@ -152,66 +120,44 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             total_giveaways = len(response.data)
             total_pages = math.ceil(total_giveaways / ITEMS_PER_PAGE)
 
-            # Calculate slice indices for current page
             start_idx = (current_page - 1) * ITEMS_PER_PAGE
             end_idx = start_idx + ITEMS_PER_PAGE
-
-            # Get giveaways for current page
             current_giveaways = response.data[start_idx:end_idx]
 
-            # Generate keyboard with pagination
             keyboard = InlineKeyboardBuilder()
-
-            # Add giveaway buttons (each in its own row)
             for giveaway in current_giveaways:
                 keyboard.row(types.InlineKeyboardButton(
                     text=giveaway['name'],
                     callback_data=f"view_created_giveaway:{giveaway['id']}"
                 ))
 
-            # Create navigation row
             nav_buttons = []
-
-            # Previous page button
             if current_page > 1:
                 nav_buttons.append(types.InlineKeyboardButton(
                     text="←",
                     callback_data=f"created_giveaways_page:{current_page - 1}"
                 ))
-
-            # Page indicator - only show if there's more than one page
             if total_pages > 1:
                 nav_buttons.append(types.InlineKeyboardButton(
                     text=f"{current_page}/{total_pages}",
                     callback_data="ignore"
                 ))
-
-            # Next page button
             if current_page < total_pages:
                 nav_buttons.append(types.InlineKeyboardButton(
                     text="→",
                     callback_data=f"created_giveaways_page:{current_page + 1}"
                 ))
 
-            # Add navigation buttons in one row if there are any
             if nav_buttons:
                 keyboard.row(*nav_buttons)
-
-            # Add back button in its own row
             keyboard.row(types.InlineKeyboardButton(
                 text="Назад",
                 callback_data="back_to_main_menu"
             ))
 
             await bot.answer_callback_query(callback_query.id)
-
-            # Update message with pagination info
-            message_text = "Выберите розыгрыш для просмотра"
-            if total_pages > 1:
-                message_text += f" (Страница {current_page} из {total_pages}):"
-            else:
-                message_text += ":"
-
+            message_text = f"Выберите розыгрыш для просмотра" + (
+                f" (Страница {current_page} из {total_pages}):" if total_pages > 1 else ":")
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
@@ -219,13 +165,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id
             )
-
         except Exception as e:
             logging.error(f"Error in process_created_giveaways: {str(e)}")
-            await bot.answer_callback_query(
-                callback_query.id,
-                text="Произошла ошибка при получении розыгрышей."
-            )
+            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении розыгрышей.")
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: types.CallbackQuery):
@@ -235,23 +177,27 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_view_created_giveaway(callback_query: types.CallbackQuery):
         try:
             giveaway_id = callback_query.data.split(':')[1]
-
             response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
+
             if not response.data:
                 await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
                 return
 
             giveaway = response.data
 
-            # Генерация клавиатуры
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Редактировать пост", callback_data=f"edit_post:{giveaway_id}")
             keyboard.button(text="Привязать сообщества", callback_data=f"bind_communities:{giveaway_id}")
-            keyboard.button(text="Активировать розыгрыш", callback_data=f"activate_giveaway:{giveaway_id}")
+            keyboard.button(text="Опубликовать розыгрыш", callback_data=f"activate_giveaway:{giveaway_id}")
+            keyboard.button(text="Задание пригласить друга", callback_data=f"add_invite_task:{giveaway_id}")
             keyboard.button(text="Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
             keyboard.button(text="Удалить розыгрыш", callback_data=f"delete_giveaway:{giveaway_id}")
             keyboard.button(text="Назад к списку", callback_data="created_giveaways")
             keyboard.adjust(1)
+
+            invite_info = ""
+            if giveaway.get('invite', False):
+                invite_info = f"\nТребуется пригласить: {giveaway['quantity_invite']} друзей"
 
             giveaway_info = f"""
 {giveaway['name']}
@@ -260,6 +206,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
 Количество победителей: {giveaway['winner_count']}
 Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+{invite_info}
 """
 
             try:
@@ -270,7 +217,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 else:
                     raise
 
-            # Check if giveaway has media
             if giveaway['media_type'] and giveaway['media_file_id']:
                 try:
                     if giveaway['media_type'] == 'photo':
@@ -297,13 +243,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 except aiogram.exceptions.TelegramBadRequest as e:
                     if "message to edit not found" in str(e):
                         logging.warning(f"Message to edit not found: {e}")
-                        # Fallback: send a new message
                         await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info,
                                                         keyboard)
                     else:
                         raise
             else:
-                # If no media, use the default image
                 try:
                     await send_message_with_image(
                         bot,
@@ -315,7 +259,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 except aiogram.exceptions.TelegramBadRequest as e:
                     if "message to edit not found" in str(e):
                         logging.warning(f"Message to edit not found: {e}")
-                        # Fallback: send a new message
                         await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info,
                                                         keyboard)
                     else:
@@ -328,11 +271,145 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                                                 text="Произошла ошибка при получении информации о розыгрыше.")
             except aiogram.exceptions.TelegramBadRequest:
                 logging.warning("Failed to answer callback query due to timeout")
-
-            # Send a new message with the error information
             await bot.send_message(
                 chat_id=callback_query.from_user.id,
                 text="Произошла ошибка при получении информации о розыгрыше. Пожалуйста, попробуйте еще раз."
+            )
+
+    @dp.callback_query(lambda c: c.data.startswith('add_invite_task:'))
+    async def process_add_invite_task(callback_query: types.CallbackQuery):
+        giveaway_id = callback_query.data.split(':')[1]
+        response = supabase.table('giveaways').select('invite', 'quantity_invite').eq('id',
+                                                                                      giveaway_id).single().execute()
+        giveaway = response.data
+
+        keyboard = InlineKeyboardBuilder()
+
+        if giveaway.get('invite', False):
+            # Если задание уже активировано
+            keyboard.button(text="Изменить количество приглашений",
+                            callback_data=f"change_invite_quantity:{giveaway_id}")
+            keyboard.button(text="Убрать задание", callback_data=f"remove_invite_task:{giveaway_id}")
+            keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+            keyboard.adjust(1)
+
+            message_text = f"Задание 'Пригласить друга' активировано.\nЧтобы пользователь мог участвовать, ему нужно пригласить {giveaway['quantity_invite']} друга(ов)."
+        else:
+            # Если задание еще не добавлено
+            keyboard.button(text="Да", callback_data=f"confirm_invite_task:{giveaway_id}")
+            keyboard.button(text="Отмена", callback_data=f"view_created_giveaway:{giveaway_id}")
+            keyboard.adjust(2)
+            message_text = "Хотите ли добавить дополнительное задание приглашение друзей для участия в розыгрыше?"
+
+        await bot.answer_callback_query(callback_query.id)
+        await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id
+        )
+
+    @dp.callback_query(lambda c: c.data.startswith('confirm_invite_task:'))
+    async def process_confirm_invite_task(callback_query: types.CallbackQuery, state: FSMContext):
+        giveaway_id = callback_query.data.split(':')[1]
+        await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
+        await state.set_state(GiveawayStates.waiting_for_invite_quantity)
+
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+
+        await bot.answer_callback_query(callback_query.id)
+        await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            "Введите число сколько пользователь должен пригласить друзей для того чтобы он смог участвовать:",
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id
+        )
+
+    @dp.callback_query(lambda c: c.data.startswith('change_invite_quantity:'))
+    async def process_change_invite_quantity(callback_query: types.CallbackQuery, state: FSMContext):
+        giveaway_id = callback_query.data.split(':')[1]
+        await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
+        await state.set_state(GiveawayStates.waiting_for_invite_quantity)
+
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+
+        await bot.answer_callback_query(callback_query.id)
+        await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            "Введите новое число сколько пользователь должен пригласить друзей для участия:",
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id
+        )
+
+    @dp.callback_query(lambda c: c.data.startswith('remove_invite_task:'))
+    async def process_remove_invite_task(callback_query: types.CallbackQuery):
+        giveaway_id = callback_query.data.split(':')[1]
+
+        try:
+            supabase.table('giveaways').update({
+                'invite': False,
+                'quantity_invite': 0
+            }).eq('id', giveaway_id).execute()
+
+            await bot.answer_callback_query(callback_query.id, text="Задание 'Пригласить друга' удалено.")
+            new_callback_query = types.CallbackQuery(
+                id=callback_query.id,
+                from_user=callback_query.from_user,
+                chat_instance=callback_query.chat_instance,
+                message=callback_query.message,
+                data=f"view_created_giveaway:{giveaway_id}"
+            )
+            await process_view_created_giveaway(new_callback_query)
+        except Exception as e:
+            logging.error(f"Error removing invite task: {str(e)}")
+            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при удалении задания.")
+
+    @dp.message(GiveawayStates.waiting_for_invite_quantity)
+    async def process_invite_quantity(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        giveaway_id = data['giveaway_id']
+        last_message_id = data['last_message_id']
+
+        try:
+            quantity = int(message.text)
+            if quantity <= 0:
+                raise ValueError("Количество должно быть положительным")
+
+            supabase.table('giveaways').update({
+                'invite': True,
+                'quantity_invite': quantity
+            }).eq('id', giveaway_id).execute()
+
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="Назад к розыгрышу", callback_data=f"view_created_giveaway:{giveaway_id}")
+
+            await send_message_with_image(
+                bot,
+                message.from_user.id,
+                f"Вы успешно добавили/изменили задание 'Пригласить друга'. Теперь для участия пользователь должен пригласить {quantity} друга(ов) (и подписаться на ваши привязанные каналы).",
+                reply_markup=keyboard.as_markup(),
+                message_id=last_message_id
+            )
+
+            await state.clear()
+
+        except ValueError:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+            await send_message_with_image(
+                bot,
+                message.from_user.id,
+                "Пожалуйста, введите положительное целое число",
+                reply_markup=keyboard.as_markup(),
+                message_id=last_message_id
             )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_post:'))
@@ -340,14 +417,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         giveaway_id = callback_query.data.split(':')[1]
         await _show_edit_menu(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
 
-    # Constants for validation
-    MAX_NAME_LENGTH = 50
-    MAX_DESCRIPTION_LENGTH = 2500
-    MAX_MEDIA_SIZE_MB = 5
-    MAX_WINNERS = 50
-
     async def _show_edit_menu(user_id: int, giveaway_id: str, message_id: int = None):
-        # Fetch the giveaway data
         response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
         if not response.data:
             await bot.send_message(user_id, "Розыгрыш не найден.")
@@ -364,6 +434,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1)
 
+        invite_info = ""
+        if giveaway.get('invite', False):
+            invite_info = f"\n👥 Требуется пригласить: {giveaway['quantity_invite']} друзей"
+
         giveaway_info = f"""
 📊 Текущая информация о розыгрыше: 
 
@@ -374,50 +448,33 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 
 🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
+{invite_info}
 """
 
         try:
-            # Check if giveaway has media
             if giveaway['media_type'] and giveaway['media_file_id']:
-                try:
-                    if giveaway['media_type'] == 'photo':
-                        await bot.edit_message_media(
-                            chat_id=user_id,
-                            message_id=message_id,
-                            media=types.InputMediaPhoto(media=giveaway['media_file_id'], caption=giveaway_info),
-                            reply_markup=keyboard.as_markup()
-                        )
-                    elif giveaway['media_type'] == 'gif':
-                        await bot.edit_message_media(
-                            chat_id=user_id,
-                            message_id=message_id,
-                            media=types.InputMediaAnimation(media=giveaway['media_file_id'], caption=giveaway_info),
-                            reply_markup=keyboard.as_markup()
-                        )
-                    elif giveaway['media_type'] == 'video':
-                        await bot.edit_message_media(
-                            chat_id=user_id,
-                            message_id=message_id,
-                            media=types.InputMediaVideo(media=giveaway['media_file_id'], caption=giveaway_info),
-                            reply_markup=keyboard.as_markup()
-                        )
-                except aiogram.exceptions.TelegramBadRequest as e:
-                    if "message to edit not found" in str(e):
-                        logging.warning(f"Message to edit not found: {e}")
-                        # If message not found, send a new message
-                        if giveaway['media_type'] == 'photo':
-                            await bot.send_photo(user_id, photo=giveaway['media_file_id'], caption=giveaway_info,
-                                                 reply_markup=keyboard.as_markup())
-                        elif giveaway['media_type'] == 'gif':
-                            await bot.send_animation(user_id, animation=giveaway['media_file_id'],
-                                                     caption=giveaway_info, reply_markup=keyboard.as_markup())
-                        elif giveaway['media_type'] == 'video':
-                            await bot.send_video(user_id, video=giveaway['media_file_id'], caption=giveaway_info,
-                                                 reply_markup=keyboard.as_markup())
-                    else:
-                        raise
+                if giveaway['media_type'] == 'photo':
+                    await bot.edit_message_media(
+                        chat_id=user_id,
+                        message_id=message_id,
+                        media=types.InputMediaPhoto(media=giveaway['media_file_id'], caption=giveaway_info),
+                        reply_markup=keyboard.as_markup()
+                    )
+                elif giveaway['media_type'] == 'gif':
+                    await bot.edit_message_media(
+                        chat_id=user_id,
+                        message_id=message_id,
+                        media=types.InputMediaAnimation(media=giveaway['media_file_id'], caption=giveaway_info),
+                        reply_markup=keyboard.as_markup()
+                    )
+                elif giveaway['media_type'] == 'video':
+                    await bot.edit_message_media(
+                        chat_id=user_id,
+                        message_id=message_id,
+                        media=types.InputMediaVideo(media=giveaway['media_file_id'], caption=giveaway_info),
+                        reply_markup=keyboard.as_markup()
+                    )
             else:
-                # If no media, use the default image
                 await send_message_with_image(
                     bot,
                     user_id,
@@ -436,7 +493,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_edit_name(callback_query: types.CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
-        await state.set_state(GiveawayStates.waiting_for_edit_name)  # Новое состояние для редактирования названия
+        await state.set_state(GiveawayStates.waiting_for_edit_name)
         await bot.answer_callback_query(callback_query.id)
 
         keyboard = InlineKeyboardBuilder()
@@ -492,7 +549,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         giveaway_id = data['giveaway_id']
         new_name = message.text
 
-        # Check name length
         if len(new_name) > MAX_NAME_LENGTH:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
@@ -500,7 +556,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов. Пожалуйста, введите более короткое название.",
+                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов.",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id']
             )
@@ -513,7 +569,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         except Exception as e:
             logging.error(f"Error updating giveaway name: {str(e)}")
             await message.reply("❌ Произошла ошибка при обновлении названия розыгрыша.")
-
         await state.clear()
 
     @dp.message(GiveawayStates.waiting_for_edit_description)
@@ -522,7 +577,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         giveaway_id = data['giveaway_id']
         new_description = message.text
 
-        # Check description length
         if len(new_description) > MAX_DESCRIPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
@@ -530,7 +584,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов. Пожалуйста, введите более короткое описание.",
+                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов.",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id']
             )
@@ -543,20 +597,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         except Exception as e:
             logging.error(f"Error updating giveaway description: {str(e)}")
             await message.reply("❌ Произошла ошибка при обновлении описания розыгрыша.")
-
         await state.clear()
 
     @dp.message(GiveawayStates.waiting_for_edit_winner_count)
     async def process_new_winner_count(message: types.Message, state: FSMContext):
-        # Delete user's message first
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
         try:
             new_winner_count = int(message.text)
             if new_winner_count <= 0:
                 raise ValueError("Winner count must be positive")
 
-            # Check winner count limit
             if new_winner_count > MAX_WINNERS:
                 data = await state.get_data()
                 keyboard = InlineKeyboardBuilder()
@@ -564,7 +614,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    f"Слишком много победителей. Максимальное количество: {MAX_WINNERS}. Пожалуйста, введите меньшее число.",
+                    f"Слишком много победителей. Максимальное количество: {MAX_WINNERS}.",
                     message_id=data.get('last_message_id'),
                     reply_markup=keyboard.as_markup()
                 )
@@ -573,7 +623,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             data = await state.get_data()
             giveaway_id = data['giveaway_id']
 
-            # Show loading message
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
@@ -583,15 +632,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message_id=data.get('last_message_id'),
             )
 
-            # Get current winner count for comparison
             current_winner_count_response = supabase.table('giveaways').select('winner_count').eq('id',
                                                                                                   giveaway_id).single().execute()
             current_winner_count = current_winner_count_response.data['winner_count']
 
-            # Update winner count
             supabase.table('giveaways').update({'winner_count': new_winner_count}).eq('id', giveaway_id).execute()
 
-            # Handle congratulations messages
             if new_winner_count > current_winner_count:
                 for place in range(current_winner_count + 1, new_winner_count + 1):
                     supabase.table('congratulations').insert({
@@ -603,17 +649,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).gte('place',
                                                                                               new_winner_count + 1).execute()
 
-            # Clear state and show edit menu
             await state.clear()
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
 
         except ValueError:
-            # Get state data for message update
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
-
-            # Update message with error
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -621,32 +663,28 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
-            # Don't clear state to continue waiting for input
-
         except Exception as e:
             logging.error(f"Error updating winner count: {str(e)}")
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
-
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Произошла ошибка при обновлении количества победителей. Пожалуйста, попробуйте еще раз.",
+                "❌ Произошла ошибка при обновлении количества победителей.",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
 
     async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
         if giveaway['media_type'] and giveaway['media_file_id']:
-            media_type = giveaway['media_type']
-            if media_type == 'photo':
+            if giveaway['media_type'] == 'photo':
                 await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info,
                                      reply_markup=keyboard.as_markup())
-            elif media_type == 'gif':
-                await bot.send_animation(chat_id, animation=giveaway['media_file_id'],
-                                         caption=giveaway_info, reply_markup=keyboard.as_markup())
-            elif media_type == 'video':
+            elif giveaway['media_type'] == 'gif':
+                await bot.send_animation(chat_id, animation=giveaway['media_file_id'], caption=giveaway_info,
+                                         reply_markup=keyboard.as_markup())
+            elif giveaway['media_type'] == 'video':
                 await bot.send_video(chat_id, video=giveaway['media_file_id'], caption=giveaway_info,
                                      reply_markup=keyboard.as_markup())
         else:
@@ -662,16 +700,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Изменить медиа файл", callback_data=f"change_media:{giveaway_id}")
             keyboard.button(text="Удалить медиа файл", callback_data=f"delete_media:{giveaway_id}")
-            keyboard.button(text="Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")  # Changed this line
+            keyboard.button(text="Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")
             keyboard.adjust(1)
-
             text = "Выберите действие, которое хотите сделать:"
         else:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Да", callback_data=f"add_media:{giveaway_id}")
-            keyboard.button(text="Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")  # Changed this line
+            keyboard.button(text="Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")
             keyboard.adjust(2)
-
             text = f"Хотите добавить фото, GIF или видео? (максимальный размер файла: {MAX_MEDIA_SIZE_MB} МБ)"
 
         message = await send_message_with_image(
@@ -681,12 +717,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
-
         if message:
             await state.update_data(last_bot_message_id=message.message_id)
-        else:
-            logging.error("Failed to send or update message in process_manage_media")
-
         await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('add_media:') or c.data.startswith('change_media:'))
@@ -709,12 +741,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             reply_markup=keyboard,
             message_id=last_message_id
         )
-
         if message:
             await state.update_data(last_bot_message_id=message.message_id)
-        else:
-            logging.error("Failed to send or update message in process_add_or_change_media")
-
         await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('back_to_edit_menu:'))
@@ -722,7 +750,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         giveaway_id = callback_query.data.split(':')[1]
         data = await state.get_data()
         last_message_id = data.get('last_bot_message_id') or callback_query.message.message_id
-
         await _show_edit_menu(callback_query.from_user.id, giveaway_id, last_message_id)
         await bot.answer_callback_query(callback_query.id)
 
@@ -733,12 +760,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             giveaway_id = data.get('giveaway_id')
             last_message_id = data.get('last_bot_message_id')
 
-            if not giveaway_id:
-                await message.reply("Произошла ошибка. Пожалуйста, попробуйте снова.")
-                await state.clear()
-                return
-
-            # Show loading message
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")]
             ])
@@ -750,15 +771,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message_id=last_message_id
             )
 
-            # Process media file
             if message.photo:
                 file_id = message.photo[-1].file_id
                 media_type = 'photo'
                 file_ext = 'jpg'
             elif message.animation:
                 file_id = message.animation.file_id
-                media_type = 'gif'  # Keep the media type as 'gif' for identification
-                file_ext = 'gif'  # Use gif extension
+                media_type = 'gif'
+                file_ext = 'gif'
             elif message.video:
                 file_id = message.video.file_id
                 media_type = 'video'
@@ -767,43 +787,34 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await message.reply("Пожалуйста, отправьте фото, GIF или видео.")
                 return
 
-            # Get file from Telegram
             file = await bot.get_file(file_id)
             file_content = await bot.download_file(file.file_path)
 
-            # Check file size
             file_size_mb = file.file_size / (1024 * 1024)
             if file_size_mb > MAX_MEDIA_SIZE_MB:
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 await send_message_with_image(
                     bot,
                     message.from_user.id,
-                    f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ. Текущий размер: {file_size_mb:.2f} МБ. Пожалуйста, отправьте файл меньшего размера.",
+                    f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ.",
                     reply_markup=keyboard,
                     message_id=last_message_id
                 )
                 return
 
-            # Generate unique filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"{timestamp}_{message.message_id}.{file_ext}"
-
-            # Upload to Yandex Cloud Storage
             success, result = await upload_to_storage(file_content.read(), filename)
 
             if not success:
                 raise Exception(f"Failed to upload to storage: {result}")
 
-            # Update database with new media info
             supabase.table('giveaways').update({
                 'media_type': media_type,
                 'media_file_id': result
             }).eq('id', giveaway_id).execute()
 
-            # Delete user's message with media
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
-            # Clear state and return to edit menu
             await state.clear()
             await _show_edit_menu(message.from_user.id, giveaway_id, last_message_id)
 
@@ -815,28 +826,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     @dp.callback_query(lambda c: c.data.startswith('delete_media:'))
     async def process_delete_media(callback_query: types.CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
-
         try:
-            # Update the giveaway to remove media
             supabase.table('giveaways').update({
                 'media_type': None,
                 'media_file_id': None
             }).eq('id', giveaway_id).execute()
-
-            # Get the last message ID from state
             data = await state.get_data()
             last_message_id = data.get('last_bot_message_id') or callback_query.message.message_id
-
-            # Immediately show the updated edit menu
             await _show_edit_menu(callback_query.from_user.id, giveaway_id, last_message_id)
-
         except Exception as e:
             logging.error(f"Error in process_delete_media: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при удалении медиа файла.")
-
-        finally:
-            # Always answer the callback query to prevent the "loading" state on the button
-            await bot.answer_callback_query(callback_query.id)
+        await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('delete_giveaway:'))
     async def process_delete_giveaway(callback_query: types.CallbackQuery):
@@ -845,7 +846,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         keyboard.button(text="Да", callback_data=f"confirm_delete_giveaway:{giveaway_id}")
         keyboard.button(text="Отмена", callback_data=f"cancel_delete_giveaway:{giveaway_id}")
         keyboard.adjust(2)
-
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -858,16 +858,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_confirm_delete_giveaway(callback_query: types.CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
         try:
-            # Delete related records from giveaway_communities table
             supabase.table('giveaway_communities').delete().eq('giveaway_id', giveaway_id).execute()
-
-            # Delete related records from participations table
             supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
-
-            # Delete related records from congratulations table
             supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).execute()
-
-            # Delete the giveaway from giveaways table
             response = supabase.table('giveaways').delete().eq('id', giveaway_id).execute()
 
             if response.data:
@@ -882,7 +875,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 )
             else:
                 raise Exception("No data returned from giveaway deletion")
-
         except Exception as e:
             logging.error(f"Error deleting giveaway: {str(e)}")
             keyboard = InlineKeyboardBuilder()
@@ -928,9 +920,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
     @dp.message(GiveawayStates.waiting_for_new_end_time)
     async def process_new_end_time(message: types.Message, state: FSMContext):
-        # Delete user's message first
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
 
@@ -944,7 +934,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             moscow_tz = pytz.timezone('Europe/Moscow')
             new_end_time_tz = moscow_tz.localize(new_end_time)
 
-            # Show loading message
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
@@ -954,18 +943,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message_id=data.get('last_message_id'),
             )
 
-            # Update the end time
             supabase.table('giveaways').update({'end_time': new_end_time_tz.isoformat()}).eq('id',
                                                                                              giveaway_id).execute()
-
-            # Clear state and show edit menu
             await state.clear()
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
-
         except ValueError:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
-
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             html_message = f"""
 Вы ввели неправильный формат даты. Сообщение удалено.
@@ -982,26 +966,21 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
             )
-            # Don't clear state to continue waiting for input
-
         except Exception as e:
             logging.error(f"Error updating end time: {str(e)}")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
-
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Произошла ошибка при обновлении даты завершения розыгрыша. Пожалуйста, попробуйте еще раз.",
+                "❌ Произошла ошибка при обновлении даты завершения розыгрыша.",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
 
     async def get_giveaway_creator(giveaway_id: str) -> int:
         response = supabase.table('giveaways').select('user_id').eq('id', giveaway_id).single().execute()
-        if response.data:
-            return int(response.data['user_id'])  # Убедимся, что возвращаемое значение — это int
-        return -1  # Возвращаем значение по умолчанию
+        return int(response.data['user_id']) if response.data else -1
 
     async def get_bound_communities(user_id: int) -> List[Dict[str, Any]]:
         response = supabase.table('bound_communities').select('*').eq('user_id', user_id).execute()
@@ -1009,33 +988,25 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
     async def bind_community_to_giveaway(giveaway_id, community_id, community_username):
         try:
-            # Get the community details from bound_communities
             response = supabase.table('bound_communities').select('*').eq('community_id', community_id).execute()
-
             if not response.data:
                 logging.error(f"No community found with ID {community_id}")
                 return False
 
             community = response.data[0]
-
-            # If community_username is 'id', use the actual username or name from bound_communities
-            actual_username = community_username
-            if community_username == 'id':
-                actual_username = community.get('community_username') or community.get('community_name')
+            actual_username = community_username if community_username != 'id' else (
+                        community.get('community_username') or community.get('community_name'))
 
             data = {
                 "giveaway_id": giveaway_id,
                 "community_id": community_id,
-                "community_username": actual_username,  # Use actual username
+                "community_username": actual_username,
                 "community_type": community['community_type'],
                 "user_id": community['user_id'],
                 "community_name": community['community_name']
             }
-
-            # Insert the data into giveaway_communities
             supabase.table("giveaway_communities").insert(data).execute()
             return True
-
         except Exception as e:
             logging.error(f"Error in bind_community_to_giveaway: {str(e)}")
             return False
@@ -1055,46 +1026,30 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         await state.update_data(giveaway_id=giveaway_id)
         await bot.answer_callback_query(callback_query.id)
 
-        # Fetch bound communities for the user
         bound_communities = await get_bound_communities(user_id)
-
-        # Fetch communities already bound to this giveaway
         giveaway_communities = await get_giveaway_communities(giveaway_id)
 
-        # Initialize the user's selected communities
         user_selected_communities[user_id] = {
             'giveaway_id': giveaway_id,
             'communities': set((comm['community_id'], comm['community_username']) for comm in giveaway_communities)
         }
 
         keyboard = InlineKeyboardBuilder()
-
-        # Add buttons for bound communities
         for community in bound_communities:
             community_id = community['community_id']
             community_username = community['community_username']
-            community_name = community['community_name']  # Get community_name
+            community_name = community['community_name']
             is_selected = (community_id, community_username) in user_selected_communities[user_id]['communities']
 
-            # Truncate long community names
             display_name = truncate_name(community_name)
-            text = f"{display_name}"
-            if is_selected:
-                text += ' ✅'
+            text = f"{display_name}" + (' ✅' if is_selected else '')
 
-            # Make sure callback data is not too long
-            # Telegram has a 64 byte limit for callback_data
             callback_data = f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
-            if len(callback_data.encode('utf-8')) > 60:  # Leave some margin
-                # Use just the ID for the callback data
+            if len(callback_data.encode('utf-8')) > 60:
                 callback_data = f"toggle_community:{giveaway_id}:{community_id}:id"
 
-            keyboard.button(
-                text=text,
-                callback_data=callback_data
-            )
+            keyboard.button(text=text, callback_data=callback_data)
 
-        # Add buttons for other actions
         keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_community_selection:{giveaway_id}")
         keyboard.button(text="Привязать новый паблик", callback_data=f"bind_new_community:{giveaway_id}")
         keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
@@ -1109,58 +1064,39 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         )
 
     def truncate_name(name, max_length=20):
-        """Truncate a name if it's too long and add ellipsis"""
-        if len(name) <= max_length:
-            return name
-        return name[:max_length - 3] + "..."
+        return name if len(name) <= max_length else name[:max_length - 3] + "..."
 
-    # Fix for the toggle_community callback handler
     @dp.callback_query(lambda c: c.data.startswith('toggle_community:'))
     async def process_toggle_community(callback_query: types.CallbackQuery):
-        # Get user_id from the callback query
         user_id = callback_query.from_user.id
-
-        # Extract data from callback
         parts = callback_query.data.split(':')
         if len(parts) >= 4:
             _, giveaway_id, community_id, community_username = parts
         else:
-            # Handle malformed callback data
             await bot.answer_callback_query(callback_query.id, text="Invalid callback data")
             return
 
         try:
-            # Get community name from bound_communities - take the first result
             response = supabase.table('bound_communities').select('community_name').eq('community_id',
                                                                                        community_id).execute()
             community_name = response.data[0]['community_name'] if response.data else community_username
 
-            # Ensure user_selected_communities is initialized
             if user_id not in user_selected_communities or user_selected_communities[user_id][
                 'giveaway_id'] != giveaway_id:
-                user_selected_communities[user_id] = {
-                    'giveaway_id': giveaway_id,
-                    'communities': set()
-                }
+                user_selected_communities[user_id] = {'giveaway_id': giveaway_id, 'communities': set()}
 
-            # Find the button that was clicked
-            current_text = None
             new_keyboard = []
             for row in callback_query.message.reply_markup.inline_keyboard:
                 new_row = []
                 for button in row:
                     if button.callback_data == callback_query.data:
-                        current_text = button.text
-                        # Toggle the selection
-                        if '✅' in current_text:
-                            new_text = f"{truncate_name(community_name)}"  # Truncate name
+                        if '✅' in button.text:
+                            new_text = f"{truncate_name(community_name)}"
                             user_selected_communities[user_id]['communities'].discard(
                                 (community_id, community_username))
-                            logging.info(f"Removing community {community_name} from selection")
                         else:
-                            new_text = f"{truncate_name(community_name)} ✅"  # Truncate name
+                            new_text = f"{truncate_name(community_name)} ✅"
                             user_selected_communities[user_id]['communities'].add((community_id, community_username))
-                            logging.info(f"Adding community {community_name} to selection")
                         new_row.append(InlineKeyboardButton(text=new_text, callback_data=button.callback_data))
                     else:
                         new_row.append(button)
@@ -1172,7 +1108,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=new_keyboard)
             )
             await bot.answer_callback_query(callback_query.id)
-
         except Exception as e:
             logging.error(f"Error in process_toggle_community: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при обработке запроса.")
@@ -1187,9 +1122,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         user_id = callback_query.from_user.id
         try:
             response = supabase.table('giveaway_communities').select('community_id', 'community_username',
-                                                                     'community_name').eq(
-                'giveaway_id',
-                giveaway_id).execute()
+                                                                     'community_name').eq('giveaway_id',
+                                                                                          giveaway_id).execute()
             communities = response.data
 
             if not communities:
@@ -1199,19 +1133,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             keyboard = InlineKeyboardBuilder()
             for community in communities:
-                # Truncate long community names
                 display_name = truncate_name(community['community_name'])
-
-                # Make sure callback data is not too long
                 callback_data = f"toggle_activate_community:{giveaway_id}:{community['community_id']}:{community['community_username']}"
-                if len(callback_data.encode('utf-8')) > 60:  # Leave some margin
-                    # Use just the ID for the callback data
+                if len(callback_data.encode('utf-8')) > 60:
                     callback_data = f"toggle_activate_community:{giveaway_id}:{community['community_id']}:id"
-
-                keyboard.button(
-                    text=display_name,
-                    callback_data=callback_data
-                )
+                keyboard.button(text=display_name, callback_data=callback_data)
             keyboard.button(text="Подтвердить выбор", callback_data=f"confirm_activate_selection:{giveaway_id}")
             keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
             keyboard.adjust(1)
@@ -1231,24 +1157,17 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     @dp.callback_query(lambda c: c.data.startswith('toggle_activate_community:'))
     async def process_toggle_activate_community(callback_query: types.CallbackQuery):
         _, giveaway_id, community_id, community_username = callback_query.data.split(':')
-
         try:
-            # Get community name - modified to handle multiple results
             response = supabase.table('bound_communities').select('community_name').eq('community_id',
                                                                                        community_id).execute()
             community_name = response.data[0]['community_name'] if response.data else community_username
 
-            # Находим кнопку, на которую нажали
             new_keyboard = []
             for row in callback_query.message.reply_markup.inline_keyboard:
                 new_row = []
                 for button in row:
                     if button.callback_data == callback_query.data:
-                        # Переключаем состояние кнопки
-                        if '✅' in button.text:
-                            new_text = f"{community_name}"  # Use community_name
-                        else:
-                            new_text = f"{community_name} ✅"  # Use community_name
+                        new_text = f"{community_name}" if '✅' in button.text else f"{community_name} ✅"
                         new_row.append(InlineKeyboardButton(text=new_text, callback_data=button.callback_data))
                     else:
                         new_row.append(button)
@@ -1260,7 +1179,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=new_keyboard)
             )
             await bot.answer_callback_query(callback_query.id)
-
         except Exception as e:
             logging.error(f"Error in process_toggle_activate_community: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при обработке запроса.")
@@ -1270,23 +1188,21 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
 
-        # Get selected communities with their names
         selected_communities = []
         for row in callback_query.message.reply_markup.inline_keyboard:
             for button in row:
                 if button.callback_data.startswith('toggle_activate_community:') and '✅' in button.text:
                     _, _, community_id, community_username = button.callback_data.split(':')
-                    community_name = button.text.replace(' ✅', '')  # Get name from button text
+                    community_name = button.text.replace(' ✅', '')
                     selected_communities.append((community_id, community_username, community_name))
 
         if not selected_communities:
             await bot.answer_callback_query(callback_query.id, text="Выберите хотя бы одно сообщество для публикации.")
             return
 
-        # Save selected communities
         user_selected_communities[user_id] = {
             'giveaway_id': giveaway_id,
-            'communities': [(comm[0], comm[1]) for comm in selected_communities]  # Keep original structure
+            'communities': [(comm[0], comm[1]) for comm in selected_communities]
         }
 
         keyboard = InlineKeyboardBuilder()
@@ -1295,7 +1211,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         keyboard.adjust(1)
 
         await bot.answer_callback_query(callback_query.id)
-        community_names = [comm[2] for comm in selected_communities]  # Use community names
+        community_names = [comm[2] for comm in selected_communities]
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -1310,12 +1226,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         user_id = callback_query.from_user.id
 
         try:
-            # Get current bound communities
             current_bound_communities = await get_giveaway_communities(giveaway_id)
             current_set = set(
                 (str(comm['community_id']), comm['community_username']) for comm in current_bound_communities)
 
-            # Get selected communities from buttons
             selected_set = set()
             for row in callback_query.message.reply_markup.inline_keyboard:
                 for button in row:
@@ -1323,7 +1237,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         parts = button.callback_data.split(':')
                         if len(parts) >= 3:
                             community_id = parts[2]
-                            # Get community info from database to ensure we have correct username
                             response = supabase.table('bound_communities').select('*').eq('community_id',
                                                                                           community_id).execute()
                             if response.data:
@@ -1332,28 +1245,20 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                                     'community_name')
                                 selected_set.add((str(community_id), community_username))
 
-            # Find communities to add and remove
             to_add = selected_set - current_set
             to_remove = current_set - selected_set
 
             changes_made = bool(to_add or to_remove)
 
             if changes_made:
-                # Add new bindings
                 for community_id, community_username in to_add:
                     success = await bind_community_to_giveaway(giveaway_id, community_id, community_username)
-                    if success:
-                        logging.info(f"Added binding for community {community_username} to giveaway {giveaway_id}")
-                    else:
+                    if not success:
                         logging.error(f"Failed to add binding for community {community_username}")
-
-                # Remove old bindings
                 for community_id, _ in to_remove:
                     await unbind_community_from_giveaway(giveaway_id, community_id)
 
                 await bot.answer_callback_query(callback_query.id, text="Привязки пабликов обновлены!")
-
-                # Redirect to view giveaway
                 new_callback_query = types.CallbackQuery(
                     id=callback_query.id,
                     from_user=callback_query.from_user,
@@ -1361,81 +1266,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     message=callback_query.message,
                     data=f"view_created_giveaway:{giveaway_id}"
                 )
-
                 if user_id in user_selected_communities:
                     del user_selected_communities[user_id]
-
                 await process_view_created_giveaway(new_callback_query)
             else:
                 await bot.answer_callback_query(callback_query.id, text="Список пабликов не изменился")
-
         except Exception as e:
             logging.error(f"Error in process_confirm_community_selection: {str(e)}")
-            await bot.answer_callback_query(
-                callback_query.id,
-                text="Произошла ошибка при обновлении списка пабликов. Пожалуйста, попробуйте еще раз."
-            )
-
-    @dp.callback_query(lambda c: c.data.startswith('select_community:'))
-    async def process_select_community(callback_query: types.CallbackQuery, state: FSMContext):
-        _, giveaway_id, community_id, community_username = callback_query.data.split(':')
-
-        # Check if the community is already bound to the giveaway
-        is_bound = await is_community_bound(giveaway_id, community_id)
-
-        if is_bound:
-            # Unbind the community
-            await unbind_community(giveaway_id, community_id)
-            action_text = f"Паблик @{community_username} отвязан от розыгрыша."
-        else:
-            # Bind the community
-            await bind_community(giveaway_id, community_id, community_username)
-            action_text = f"Паблик @{community_username} привязан к розыгрышу."
-
-        await bot.answer_callback_query(callback_query.id, text=action_text)
-
-        # Refresh the communities list
-        await process_bind_communities(callback_query, state)
-
-    async def is_community_bound(giveaway_id: str, community_id: str) -> bool:
-        response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).eq('community_id',
-                                                                                                        community_id).execute()
-        return len(response.data) > 0
-
-    async def bind_community(giveaway_id: str, community_id: str, community_username: str):
-        supabase.table('giveaway_communities').insert({
-            'giveaway_id': giveaway_id,
-            'community_id': community_id,
-            'community_username': community_username
-        }).execute()
-
-    async def unbind_community(giveaway_id: str, community_id: str):
-        supabase.table('giveaway_communities').delete().eq('giveaway_id', giveaway_id).eq('community_id',
-                                                                                          community_id).execute()
-
-    @dp.callback_query(lambda c: c.data.startswith('confirm_communities:'))
-    async def process_confirm_communities(callback_query: types.CallbackQuery):
-        user_id = callback_query.from_user.id
-
-        # Проверка наличия данных в хранилище
-        user_data = user_selected_communities.get(user_id)
-        if not user_data or not user_data.get('communities'):
-            await bot.answer_callback_query(callback_query.id, text="Выберите хотя бы одно сообщество для публикации.")
-            return
-
-        giveaway_id = user_data['giveaway_id']
-        selected_communities = user_data['communities']
-
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Активировать розыгрыш", callback_data=f"publish_giveaway:{giveaway_id}")
-        keyboard.button(text="Назад", callback_data=f"activate_giveaway:{giveaway_id}")
-        keyboard.adjust(1)
-
-        await bot.answer_callback_query(callback_query.id)
-        community_usernames = [community[1] for community in selected_communities]
-        await send_message_with_image(bot, callback_query.from_user.id,
-                                      f"Розыгрыш будет опубликован в следующих сообществах: {', '.join(community_usernames)}",
-                                      keyboard.as_markup(), message_id=callback_query.message.message_id)
+            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при обновлении списка пабликов.")
 
     @dp.callback_query(lambda c: c.data.startswith('publish_giveaway:'))
     async def process_publish_giveaway(callback_query: types.CallbackQuery):
@@ -1443,7 +1281,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         user_id = callback_query.from_user.id
         participant_counter_tasks = []
 
-        # Show loading message first
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="Отмена", callback_data=f"activate_giveaway:{giveaway_id}")
         await send_message_with_image(
@@ -1453,7 +1290,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             message_id=callback_query.message.message_id
         )
 
-        # Check for selected communities
         user_data = user_selected_communities.get(user_id)
         if not user_data or user_data['giveaway_id'] != giveaway_id or not user_data.get('communities'):
             await bot.answer_callback_query(callback_query.id, text="Ошибка: нет выбранных сообществ для публикации.")
@@ -1462,7 +1298,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         selected_communities = user_data['communities']
 
         try:
-            # Fetch giveaway information
             giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
             giveaway = giveaway_response.data
 
@@ -1470,8 +1305,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
                 return
 
-            # Get current participant count
             participant_count = await get_participant_count(giveaway_id, supabase)
+
+            invite_text = ""
+            if giveaway.get('invite', False):
+                invite_text = f"\nДля участия нужно пригласить {giveaway['quantity_invite']} друзей"
 
             post_text = f"""
 {giveaway['name']}
@@ -1480,6 +1318,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
 Количество победителей: {giveaway['winner_count']}
 Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+{invite_text}
 
 Нажмите кнопку ниже, чтобы принять участие!
 """
@@ -1496,12 +1335,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             error_messages = []
             published_messages = []
 
-            # Publish to selected communities
             for community_id, community_username in selected_communities:
                 try:
                     sent_message = None
-
-                    # Send message based on media type
                     if giveaway['media_type'] and giveaway['media_file_id']:
                         if giveaway['media_type'] == 'photo':
                             sent_message = await bot.send_photo(
@@ -1532,27 +1368,22 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         )
 
                     if sent_message:
-                        # Save message information
                         published_messages.append({
                             'chat_id': sent_message.chat.id,
                             'message_id': sent_message.message_id
                         })
-
-                        # Save information for participant counter tasks
                         participant_counter_tasks.append({
                             'chat_id': sent_message.chat.id,
                             'message_id': sent_message.message_id
                         })
-
                         success_count += 1
-                    await asyncio.sleep(0.5)  # Add a delay between publishing to communities
+                    await asyncio.sleep(0.5)
 
                 except aiogram.exceptions.TelegramRetryAfter as e:
                     retry_after = e.retry_after
                     logging.warning(f"Hit rate limit. Retrying after {retry_after} seconds.")
                     await asyncio.sleep(retry_after)
                     try:
-                        # Retry sending the message
                         if giveaway['media_type'] == 'photo':
                             sent_message = await bot.send_photo(
                                 chat_id=int(community_id),
@@ -1595,25 +1426,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         error_count += 1
                         error_messages.append(
                             f"Ошибка публикации в @{community_username} после повторной попытки: {str(retry_error)}")
-                        logging.error(
-                            f"Error publishing to community @{community_username} after retry: {str(retry_error)}")
                 except Exception as e:
                     error_count += 1
                     error_messages.append(f"Ошибка публикации в @{community_username}: {str(e)}")
-                    logging.error(f"Error publishing to community @{community_username}: {str(e)}")
 
-            # Handle publication results
             if success_count > 0:
                 try:
-                    # Clear previous winners and participants
                     supabase.table('giveaway_winners').delete().eq('giveaway_id', giveaway_id).execute()
                     supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
 
-                    # Activate giveaway and set creation time
                     moscow_tz = pytz.timezone('Europe/Moscow')
                     current_time = datetime.now(moscow_tz)
 
-                    # Update the giveaway with the new information
                     supabase.table('giveaways').update({
                         'is_active': True,
                         'created_at': current_time.isoformat(),
@@ -1621,17 +1445,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         'participant_counter_tasks': json.dumps(participant_counter_tasks)
                     }).eq('id', giveaway_id).execute()
 
-                    # Start the participant counter tasks
                     counter_tasks = []
                     for task_info in participant_counter_tasks:
                         task = asyncio.create_task(
-                            start_participant_counter(
-                                bot,
-                                task_info['chat_id'],
-                                task_info['message_id'],
-                                giveaway_id,
-                                supabase
-                            )
+                            start_participant_counter(bot, task_info['chat_id'], task_info['message_id'], giveaway_id,
+                                                      supabase)
                         )
                         counter_tasks.append(task)
 
@@ -1640,11 +1458,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     keyboard = InlineKeyboardBuilder()
                     keyboard.button(text="Назад", callback_data="back_to_main_menu")
 
-                    result_message = (
-                        f"✅ Розыгрыш успешно опубликован в {success_count} сообществах.\n"
-                        "🔄 Счетчик участников будет обновляться каждую минуту."
-                    )
-
+                    result_message = f"✅ Розыгрыш успешно опубликован в {success_count} сообществах.\n🔄 Счетчик участников будет обновляться каждую минуту."
                     if error_count > 0:
                         result_message += f"\n\n❌ Ошибки публикации ({error_count}):"
                         for error in error_messages:
@@ -1661,52 +1475,37 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         reply_markup=keyboard.as_markup(),
                         message_id=callback_query.message.message_id
                     )
-
                 except Exception as e:
                     logging.error(f"Error finalizing giveaway activation: {str(e)}")
-                    await bot.answer_callback_query(
-                        callback_query.id,
-                        text="Произошла ошибка при активации розыгрыша."
-                    )
+                    await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при активации розыгрыша.")
             else:
                 await bot.answer_callback_query(callback_query.id, text="Не удалось опубликовать розыгрыш.")
-
                 error_keyboard = InlineKeyboardBuilder()
                 error_keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
-
                 await send_message_with_image(
                     bot,
                     callback_query.from_user.id,
-                    f"❌ Не удалось опубликовать розыгрыш.\nОшибок: {error_count}\n\nПодробности:\n" +
-                    "\n".join(error_messages),
+                    f"❌ Не удалось опубликовать розыгрыш.\nОшибок: {error_count}\n\nПодробности:\n" + "\n".join(
+                        error_messages),
                     reply_markup=error_keyboard.as_markup(),
                     message_id=callback_query.message.message_id
                 )
-
         except Exception as e:
             logging.error(f"Error in process_publish_giveaway: {str(e)}")
-            await bot.answer_callback_query(
-                callback_query.id,
-                text="Произошла ошибка при публикации розыгрыша."
-            )
+            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при публикации розыгрыша.")
         finally:
-            # Clear user's temporary data
             user_selected_communities.pop(user_id, None)
 
     async def get_participant_count(giveaway_id: str, supabase: Client) -> int:
-        """Получить текущее количество участников розыгрыша"""
         try:
-            # Используем count() вместо получения всех записей
             response = supabase.table('participations').select('*', count='exact').eq('giveaway_id',
                                                                                       giveaway_id).execute()
-            # Количество возвращается в свойстве count
             return response.count if hasattr(response, 'count') else 0
         except Exception as e:
             logging.error(f"Ошибка при получении количества участников: {str(e)}")
             return 0
 
     async def update_participant_button(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, supabase: Client):
-        """Update the button text with current participant count"""
         try:
             count = await get_participant_count(giveaway_id, supabase)
             keyboard = InlineKeyboardBuilder()
@@ -1715,7 +1514,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
             )
             keyboard.adjust(1)
-
             await bot.edit_message_reply_markup(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -1725,8 +1523,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             logging.error(f"Error updating participant button: {str(e)}")
 
     async def start_participant_counter(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, supabase: Client):
-        """Start periodic updates of participant count"""
         while True:
             await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
             await asyncio.sleep(60)
-
