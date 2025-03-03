@@ -476,8 +476,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 bot,
                 message.chat.id,
                 "Розыгрыш создается...",
-                message_id=data.get('last_message_id'),
-                reply_markup=keyboard.as_markup()
+                message_id=data.get('last_message_id')
             )
 
             # Save giveaway
