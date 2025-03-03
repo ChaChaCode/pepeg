@@ -54,6 +54,7 @@ MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
 
+# States for the FSM
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_description = State()
@@ -580,7 +581,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message.chat.id,
                 "Обновление количества победителей...",
                 message_id=data.get('last_message_id'),
-                reply_markup=keyboard.as_markup()
             )
 
             # Get current winner count for comparison
@@ -952,7 +952,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message.chat.id,
                 "Обновление даты завершения...",
                 message_id=data.get('last_message_id'),
-                reply_markup=keyboard.as_markup()
             )
 
             # Update the end time
@@ -1451,7 +1450,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             bot,
             callback_query.from_user.id,
             "Розыгрыш публикуется...",
-            reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
 
@@ -1731,7 +1729,4 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         while True:
             await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
             await asyncio.sleep(60)
-
-
-
 
