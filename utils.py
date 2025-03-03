@@ -241,6 +241,7 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
                 text=f"Результаты",
                 url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}"
             ),
+            keyboard.button(text="В меню", callback_data="back_to_main_menu")
             await bot.send_message(
                 chat_id=winner['user_id'],
                 text=congrats_message,
