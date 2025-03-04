@@ -15,7 +15,11 @@ import asyncio
 import math
 import boto3
 from botocore.client import Config
-import io
+import requests
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Bot configuration and initialization
 BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
@@ -40,7 +44,7 @@ s3_client = boto3.client(
     's3',
     region_name=YANDEX_REGION,
     aws_access_key_id=YANDEX_ACCESS_KEY,
-    aws_secret_access_key=YANDEX_SECRET_KEY,  # Исправлено с aws_secret_key на aws_secret_access_key
+    aws_secret_access_key=YANDEX_SECRET_KEY,
     endpoint_url=YANDEX_ENDPOINT_URL,
     config=Config(signature_version='s3v4')
 )
@@ -48,14 +52,13 @@ s3_client = boto3.client(
 user_selected_communities = {}
 paid_users: Dict[int, str] = {}
 
-# Constants for validation
+# Constraints
 MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
 
 
-# States for the FSM
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
     waiting_for_description = State()
@@ -85,16 +88,40 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
 
-        s3_client.put_object(
-            Bucket=YANDEX_BUCKET_NAME,
-            Key=unique_filename,
-            Body=io.BytesIO(file_content),
-            ContentType="application/octet-stream",
-            ACL='public-read'
-        )
+        # Use requests library for direct upload instead of boto3 to avoid hash mismatch
+        try:
+            # Generate a presigned URL for upload
+            presigned_url = s3_client.generate_presigned_url(
+                'put_object',
+                Params={
+                    'Bucket': YANDEX_BUCKET_NAME,
+                    'Key': unique_filename,
+                    'ContentType': 'application/octet-stream'
+                },
+                ExpiresIn=3600
+            )
 
-        public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
-        return True, public_url
+            # Upload using requests
+            response = requests.put(
+                presigned_url,
+                data=file_content,  # Use the raw bytes directly
+                headers={'Content-Type': 'application/octet-stream'}
+            )
+
+            if response.status_code == 200:
+                # Generate public URL for the uploaded file
+                public_url = f"https://{YANDEX_BUCKET_NAME}.storage.yandexcloud.net/{unique_filename}"
+                logging.info(f"File uploaded successfully: {unique_filename}")
+                logging.info(f"Public URL: {public_url}")
+                return True, public_url
+            else:
+                logging.error(f"Failed to upload using presigned URL: {response.status_code} - {response.text}")
+                raise Exception(f"Failed to upload using presigned URL: {response.status_code}")
+
+        except Exception as upload_error:
+            logging.error(f"Upload error: {str(upload_error)}")
+            raise Exception(f"Failed to upload file: {str(upload_error)}")
+
     except Exception as e:
         error_msg = str(e)
         logging.error(f"Storage upload error: {error_msg}")
