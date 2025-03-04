@@ -188,7 +188,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         keyboard = InlineKeyboardMarkup(
             inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
         await send_message_with_image(bot, callback_query.from_user.id,
-                                      f"Напишите название розыгрыша (��аксимум {MAX_NAME_LENGTH} символов)",
+                                      f"Напишите название розыгрыша (максимум {MAX_NAME_LENGTH} символов)",
                                       reply_markup=keyboard, message_id=callback_query.message.message_id)
         await state.update_data(last_message_id=callback_query.message.message_id)
 
