@@ -7,6 +7,12 @@ from datetime import datetime, timedelta
 import logging
 from utils import send_message_with_image
 import math
+import re
+
+def strip_html_tags(text):
+    """Удаляет HTML-теги из текста, оставляя только видимую часть."""
+    clean_text = re.sub(r'<[^>]+>', '', text)
+    return clean_text
 
 def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
     @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
@@ -46,8 +52,13 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             # Add participation buttons (each in its own row)
             for participation in current_participations:
                 giveaway = participation['giveaways']
+                # Очищаем название от HTML-тегов для отображения в кнопке
+                clean_name = strip_html_tags(giveaway['name'])
+                # Ограничиваем длину текста кнопки до 64 символов (Telegram limit)
+                if len(clean_name) > 64:
+                    clean_name = clean_name[:61] + "..."
                 keyboard.row(types.InlineKeyboardButton(
-                    text=giveaway['name'],
+                    text=clean_name,
                     callback_data=f"giveaway_{giveaway['id']}"
                 ))
 
@@ -117,18 +128,23 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
                 return
 
-            giveaway_info = (f"Название: {giveaway['name']}\n"
-                             f"Описание: {giveaway['description']}\n"
-                             f"Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}")
+            # Формируем текст с сохранением HTML-форматирования
+            giveaway_info = f"""
+{giveaway['name']}
+
+{giveaway['description']}
+
+<b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+"""
 
             keyboard = InlineKeyboardBuilder()
-            keyboard = InlineKeyboardBuilder()
             keyboard.button(
-                text=f"Открыть",
+                text="Открыть",
                 url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
-            ),
+            )
             keyboard.button(text="Назад к списку", callback_data="my_participations")
             keyboard.adjust(1)
+
             try:
                 await bot.answer_callback_query(callback_query.id)
             except TelegramBadRequest as e:
@@ -143,21 +159,33 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         await bot.edit_message_media(
                             chat_id=callback_query.message.chat.id,
                             message_id=callback_query.message.message_id,
-                            media=types.InputMediaPhoto(media=giveaway['media_file_id'], caption=giveaway_info),
+                            media=types.InputMediaPhoto(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'
+                            ),
                             reply_markup=keyboard.as_markup()
                         )
                     elif giveaway['media_type'] == 'gif':
                         await bot.edit_message_media(
                             chat_id=callback_query.message.chat.id,
                             message_id=callback_query.message.message_id,
-                            media=types.InputMediaAnimation(media=giveaway['media_file_id'], caption=giveaway_info),
+                            media=types.InputMediaAnimation(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'
+                            ),
                             reply_markup=keyboard.as_markup()
                         )
                     elif giveaway['media_type'] == 'video':
                         await bot.edit_message_media(
                             chat_id=callback_query.message.chat.id,
                             message_id=callback_query.message.message_id,
-                            media=types.InputMediaVideo(media=giveaway['media_file_id'], caption=giveaway_info),
+                            media=types.InputMediaVideo(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'
+                            ),
                             reply_markup=keyboard.as_markup()
                         )
                 except TelegramBadRequest as e:
@@ -173,7 +201,8 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         callback_query.from_user.id,
                         giveaway_info,
                         reply_markup=keyboard.as_markup(),
-                        message_id=callback_query.message.message_id
+                        message_id=callback_query.message.message_id,
+                        parse_mode='HTML'
                     )
                 except TelegramBadRequest as e:
                     if "message to edit not found" in str(e):
@@ -192,22 +221,44 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             await bot.send_message(
                 chat_id=callback_query.from_user.id,
-                text="Произошла ошибка при получении информации о розыгрыше. Пожалуйста, попробуйте еще раз."
+                text="Произошла ошибка при получении информации о розыгрыше. Пожалуйста, попробуйте еще раз.",
+                parse_mode='HTML'
             )
 
     async def send_new_giveaway_message(chat_id, giveaway, g_info, keyboard):
         if giveaway['media_type'] and giveaway['media_file_id']:
             media_type = giveaway['media_type']
             if media_type == 'photo':
-                await bot.send_photo(chat_id, giveaway['media_file_id'], caption=g_info,
-                                     reply_markup=keyboard.as_markup())
+                await bot.send_photo(
+                    chat_id,
+                    giveaway['media_file_id'],
+                    caption=g_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
             elif media_type == 'gif':
-                await bot.send_animation(chat_id, giveaway['media_file_id'], caption=g_info,
-                                         reply_markup=keyboard.as_markup())
+                await bot.send_animation(
+                    chat_id,
+                    giveaway['media_file_id'],
+                    caption=g_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
             elif media_type == 'video':
-                await bot.send_video(chat_id, giveaway['media_file_id'], caption=g_info,
-                                     reply_markup=keyboard.as_markup())
+                await bot.send_video(
+                    chat_id,
+                    giveaway['media_file_id'],
+                    caption=g_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
         else:
-            await send_message_with_image(bot, chat_id, g_info, reply_markup=keyboard.as_markup())
+            await send_message_with_image(
+                bot,
+                chat_id,
+                g_info,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
+            )
 
     return send_new_giveaway_message
