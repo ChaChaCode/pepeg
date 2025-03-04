@@ -252,10 +252,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             # Формируем текст с сохранением HTML-форматирования
             giveaway_info = f"""
-{giveaway['name']}
-
-{giveaway['description']}
-
+{giveaway['name']}\n
+{giveaway['description']}\n
 <b>Количество победителей:</b> {giveaway['winner_count']}
 <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 {invite_info}
@@ -1441,16 +1439,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             # Формируем пост с сохранением HTML-форматирования
             post_text = f"""
-{giveaway['name']}
-
-{giveaway['description']}
-
+{giveaway['name']}\n
+{giveaway['description']}\n
 <b>Количество победителей:</b> {giveaway['winner_count']}
 <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
-{invite_text}
-
+{invite_text}\n
 Нажмите кнопку ниже, чтобы принять участие!
-    """
+"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
