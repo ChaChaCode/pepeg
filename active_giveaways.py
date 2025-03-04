@@ -13,6 +13,12 @@ import math
 import boto3
 from botocore.client import Config
 import requests
+import re
+
+def strip_html_tags(text):
+    """Удаляет HTML-теги из текста, оставляя только видимую часть."""
+    clean_text = re.sub(r'<[^>]+>', '', text)
+    return clean_text
 
 # Yandex Cloud S3 configuration
 YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
@@ -36,6 +42,20 @@ MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
+
+# Formatting instructions
+FORMATTING_GUIDE = """
+Поддерживаемые форматы текста:
+<blockquote expandable>
+- Жирный: <b>текст</b>
+- Курсив: <i>текст</i>
+- Подчёркнутый: <u>текст</u>
+- Зачёркнутый: <s>текст</s>
+- Цитата: текст
+- Моноширинный: текст
+- Скрытый (спойлер): <tg-spoiler>текст</tg-spoiler>
+- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a></blockquote>
+"""
 
 class EditGiveawayStates(StatesGroup):
     waiting_for_new_name_active = State()
@@ -126,8 +146,13 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 
             # Add giveaway buttons (each in its own row)
             for giveaway in current_giveaways:
+                # Очищаем название от HTML-тегов для отображения в кнопке
+                clean_name = strip_html_tags(giveaway['name'])
+                # Ограничиваем длину текста кнопки до 64 символов (Telegram limit)
+                if len(clean_name) > 64:
+                    clean_name = clean_name[:61] + "..."
                 keyboard.row(types.InlineKeyboardButton(
-                    text=giveaway['name'],
+                    text=clean_name,
                     callback_data=f"view_active_giveaway:{giveaway['id']}"
                 ))
 
@@ -209,24 +234,31 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                                                                                     giveaway_id).execute()
         participants_count = participants_response.data[0]['count']
 
+        invite_info = ""
+        if giveaway.get('invite', False):
+            invite_info = f"\nДля участия нужно пригласить: {giveaway['quantity_invite']} друзей"
+
+        # Формируем текст с сохранением HTML-форматирования
         giveaway_info = f"""
-Активный розыгрыш:
+<b>Активный розыгрыш:</b>
 
-Название: {giveaway['name']}
-Описание: {giveaway['description']}
+{giveaway['name']}
 
-Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
-Количество победителей: {giveaway['winner_count']}
-Участвуют: {participants_count}
-"""
+{giveaway['description']}
+
+<b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+<b>Количество победителей:</b> {giveaway['winner_count']}
+<b>Участвуют:</b> {participants_count}
+{invite_info}
+    """
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="Редактировать Пост", callback_data=f"edit_active_post:{giveaway_id}")
         keyboard.button(text="Принудительное завершение", callback_data=f"force_end_giveaway:{giveaway_id}")
         keyboard.button(
-            text=f"Открыть",
+            text="Открыть",
             url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
-        ),
+        )
         keyboard.button(text="◀️ Назад к списку", callback_data="active_giveaways")
         keyboard.adjust(1)
 
@@ -250,7 +282,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     await bot.edit_message_media(
                         chat_id=callback_query.message.chat.id,
                         message_id=callback_query.message.message_id,
-                        media=media_class(media=giveaway['media_file_id'], caption=giveaway_info),
+                        media=media_class(
+                            media=giveaway['media_file_id'],
+                            caption=giveaway_info,
+                            parse_mode='HTML'  # Добавляем поддержку HTML
+                        ),
                         reply_markup=keyboard.as_markup()
                     )
                 else:
@@ -261,7 +297,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     callback_query.from_user.id,
                     giveaway_info,
                     reply_markup=keyboard.as_markup(),
-                    message_id=callback_query.message.message_id
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML'  # Добавляем поддержку HTML
                 )
         except aiogram.exceptions.TelegramBadRequest as e:
             if "message to edit not found" in str(e):
@@ -292,17 +329,23 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1)
 
+        invite_info = ""
+        if giveaway.get('invite', False):
+            invite_info = f"\n👥 Требуется пригласить: {giveaway['quantity_invite']} друзей"
+
+        # Обновляем отображение с поддержкой HTML
         giveaway_info = f"""
-📊 Текущая информация о розыгрыше: 
+📊 <b>Текущая информация о розыгрыше:</b>
 
-📝  Название:  {giveaway['name']}
-📄  Описание:  {giveaway['description']}
+📝 <b>Название:</b> {giveaway['name']}
+📄 <b>Описание:</b> {giveaway['description']}
 
-🏆  Количество победителей:  {giveaway['winner_count']}
-🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+🏆 <b>Количество победителей:</b> {giveaway['winner_count']}
+🗓 <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 
-🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
-"""
+🖼 <b>Медиа:</b> {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
+{invite_info}
+    """
 
         try:
             if giveaway['media_type'] and giveaway['media_file_id']:
@@ -316,7 +359,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     await bot.edit_message_media(
                         chat_id=user_id,
                         message_id=message_id,
-                        media=media_class(media=giveaway['media_file_id'], caption=giveaway_info),
+                        media=media_class(
+                            media=giveaway['media_file_id'],
+                            caption=giveaway_info,
+                            parse_mode='HTML'  # Добавляем поддержку HTML
+                        ),
                         reply_markup=keyboard.as_markup()
                     )
                 else:
@@ -327,7 +374,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     user_id,
                     giveaway_info,
                     reply_markup=keyboard.as_markup(),
-                    message_id=message_id
+                    message_id=message_id,
+                    parse_mode='HTML'  # Добавляем поддержку HTML
                 )
         except aiogram.exceptions.TelegramBadRequest as e:
             if "message to edit not found" in str(e):
@@ -339,7 +387,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             logging.error(f"Error in _show_edit_menu_active: {str(e)}")
             await bot.send_message(
                 chat_id=user_id,
-                text="Произошла ошибка при отображении меню редактирования. Пожалуйста, попробуйте еще раз."
+                text="Произошла ошибка при отображении меню редактирования. Пожалуйста, попробуйте еще раз.",
+                parse_mode='HTML'
             )
 
     @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
@@ -357,111 +406,132 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                                       reply_markup=keyboard.as_markup())
 
     async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
+        # Этот метод уже обновлен в вашем коде с parse_mode='HTML', оставляем как есть
         if giveaway['media_type'] and giveaway['media_file_id']:
-            media_type = giveaway['media_type']
-            if media_type == 'photo':
-                await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info,
-                                     reply_markup=keyboard.as_markup())
-            elif media_type == 'gif':
-                await bot.send_animation(chat_id, giveaway['media_file_id'], caption=giveaway_info,
-                                         reply_markup=keyboard.as_markup())
-            elif media_type == 'video':
-                await bot.send_video(chat_id, giveaway['media_file_id'], caption=giveaway_info,
-                                     reply_markup=keyboard.as_markup())
+            if giveaway['media_type'] == 'photo':
+                await bot.send_photo(
+                    chat_id,
+                    giveaway['media_file_id'],
+                    caption=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
+            elif giveaway['media_type'] == 'gif':
+                await bot.send_animation(
+                    chat_id,
+                    animation=giveaway['media_file_id'],
+                    caption=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
+            elif giveaway['media_type'] == 'video':
+                await bot.send_video(
+                    chat_id,
+                    video=giveaway['media_file_id'],
+                    caption=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
         else:
-            await send_message_with_image(bot, chat_id, giveaway_info, reply_markup=keyboard.as_markup())
+            await send_message_with_image(
+                bot,
+                chat_id,
+                giveaway_info,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
+            )
 
     async def update_published_posts_active(giveaway_id: str, new_giveaway_data: dict):
-        try:
-            giveaway_response = supabase.table('giveaways').select('published_messages').eq('id',
-                                                                                            giveaway_id).single().execute()
-            published_messages = json.loads(giveaway_response.data['published_messages'])
+            try:
+                giveaway_response = supabase.table('giveaways').select('published_messages').eq('id',
+                                                                                                giveaway_id).single().execute()
+                published_messages = json.loads(giveaway_response.data['published_messages'])
 
-            for message in published_messages:
-                chat_id = message['chat_id']
-                message_id = message['message_id']
+                for message in published_messages:
+                    chat_id = message['chat_id']
+                    message_id = message['message_id']
 
-                new_post_text = f"""
-{new_giveaway_data['name']}
+                    new_post_text = f"""
+    {new_giveaway_data['name']}
 
-{new_giveaway_data['description']}
+    {new_giveaway_data['description']}
 
-Количество победителей: {new_giveaway_data['winner_count']}
-Дата завершения: {(datetime.fromisoformat(new_giveaway_data['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+    <b>Количество победителей:</b> {new_giveaway_data['winner_count']}
+    <b>Дата завершения:</b> {(datetime.fromisoformat(new_giveaway_data['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 
-Нажмите кнопку ниже, чтобы принять участие!
-"""
+    Нажмите кнопку ниже, чтобы принять участие!
+    """
 
-                participants_response = supabase.table('participations').select('count').eq('giveaway_id',
-                                                                                            giveaway_id).execute()
-                participants_count = participants_response.data[0]['count']
+                    participants_response = supabase.table('participations').select('count').eq('giveaway_id',
+                                                                                                giveaway_id).execute()
+                    participants_count = participants_response.data[0]['count']
 
-                keyboard = InlineKeyboardBuilder()
-                keyboard.button(
-                    text=f"Участвовать ({participants_count})",
-                    url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
-                )
+                    keyboard = InlineKeyboardBuilder()
+                    keyboard.button(
+                        text=f"Участвовать ({participants_count})",
+                        url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+                    )
 
-                try:
-                    if new_giveaway_data['media_type'] and new_giveaway_data['media_file_id']:
-                        media_types = {
-                            'photo': types.InputMediaPhoto,
-                            'gif': types.InputMediaAnimation,
-                            'video': types.InputMediaVideo
-                        }
-                        media_class = media_types.get(new_giveaway_data['media_type'])
-                        if media_class:
-                            await bot.edit_message_media(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                media=media_class(media=new_giveaway_data['media_file_id'], caption=new_post_text),
-                                reply_markup=keyboard.as_markup()
-                            )
-                        else:
-                            raise ValueError(f"Unknown media type: {new_giveaway_data['media_type']}")
-                    else:
-                        # If there's no media, we need to handle this case differently
-                        try:
-                            # First, try to edit the message text
-                            await bot.edit_message_text(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                text=new_post_text,
-                                reply_markup=keyboard.as_markup()
-                            )
-                        except aiogram.exceptions.TelegramBadRequest as e:
-                            if "there is no text in the message to edit" in str(e).lower():
-                                # If there's no text to edit, it means we're dealing with a media-only message
-                                # In this case, we need to send a new text message and delete the old media message
-                                new_message = await bot.send_message(
+                    try:
+                        if new_giveaway_data['media_type'] and new_giveaway_data['media_file_id']:
+                            media_types = {
+                                'photo': types.InputMediaPhoto,
+                                'gif': types.InputMediaAnimation,
+                                'video': types.InputMediaVideo
+                            }
+                            media_class = media_types.get(new_giveaway_data['media_type'])
+                            if media_class:
+                                await bot.edit_message_media(
                                     chat_id=chat_id,
-                                    text=new_post_text,
+                                    message_id=message_id,
+                                    media=media_class(
+                                        media=new_giveaway_data['media_file_id'],
+                                        caption=new_post_text,
+                                        parse_mode='HTML'  # Добавляем поддержку HTML
+                                    ),
                                     reply_markup=keyboard.as_markup()
                                 )
-
-                                # Try to delete the old message
-                                try:
-                                    await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                                except aiogram.exceptions.TelegramBadRequest:
-                                    logging.warning(f"Could not delete old message {message_id} in chat {chat_id}")
-
-                                # Update the message info in the database
-                                updated_messages = [msg for msg in published_messages if
-                                                    msg['message_id'] != message_id]
-                                updated_messages.append({
-                                    'chat_id': chat_id,
-                                    'message_id': new_message.message_id
-                                })
-                                supabase.table('giveaways').update({
-                                    'published_messages': json.dumps(updated_messages)
-                                }).eq('id', giveaway_id).execute()
                             else:
-                                raise
-                except Exception as e:
-                    logging.error(f"Error updating published message: {str(e)}")
+                                raise ValueError(f"Unknown media type: {new_giveaway_data['media_type']}")
+                        else:
+                            try:
+                                await bot.edit_message_text(
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    text=new_post_text,
+                                    reply_markup=keyboard.as_markup(),
+                                    parse_mode='HTML'  # Добавляем поддержку HTML
+                                )
+                            except aiogram.exceptions.TelegramBadRequest as e:
+                                if "there is no text in the message to edit" in str(e).lower():
+                                    new_message = await bot.send_message(
+                                        chat_id=chat_id,
+                                        text=new_post_text,
+                                        reply_markup=keyboard.as_markup(),
+                                        parse_mode='HTML'  # Добавляем поддержку HTML
+                                    )
 
-        except Exception as e:
-            logging.error(f"Error updating published posts: {str(e)}")
+                                    try:
+                                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                                    except aiogram.exceptions.TelegramBadRequest:
+                                        logging.warning(f"Could not delete old message {message_id} in chat {chat_id}")
+
+                                    updated_messages = [msg for msg in published_messages if
+                                                        msg['message_id'] != message_id]
+                                    updated_messages.append({
+                                        'chat_id': chat_id,
+                                        'message_id': new_message.message_id
+                                    })
+                                    supabase.table('giveaways').update({
+                                        'published_messages': json.dumps(updated_messages)
+                                    }).eq('id', giveaway_id).execute()
+                                else:
+                                    raise
+                    except Exception as e:
+                        logging.error(f"Error updating published message: {str(e)}")
+
+            except Exception as e:
+                logging.error(f"Error updating published posts: {str(e)}")
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name_active:'))
     async def process_edit_name_active(callback_query: types.CallbackQuery, state: FSMContext):
@@ -473,19 +543,22 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
 
+        message_text = f"Введите новое название розыгрыша (максимум {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"Введите новое название розыгрыша (максимум {MAX_NAME_LENGTH} символов): \n\nТекущее название будет заменено на введенный вами текст.",
+            message_text,
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
 
     @dp.message(EditGiveawayStates.waiting_for_new_name_active)
     async def process_new_name_active(message: types.Message, state: FSMContext):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
-        new_name = message.text
+        # Получаем HTML-форматированный текст
+        new_name = message.html_text if message.text else ""
 
         # Check name length
         if len(new_name) > MAX_NAME_LENGTH:
@@ -495,9 +568,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов. Пожалуйста, введите более короткое название.",
+                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов. Пожалуйста, введите более короткое название.\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
-                message_id=data['last_message_id']
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
             )
             return
 
@@ -511,10 +585,18 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             await update_published_posts_active(giveaway_id, giveaway_data)
         except Exception as e:
             logging.error(f"Error updating giveaway name: {str(e)}")
-            await message.reply("❌ Произошла ошибка при обновлении названия розыгрыша.")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "❌ Произошла ошибка при обновлении названия розыгрыша.",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
+            )
 
         await state.clear()
-
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name_active_active:'))
     async def process_edit_description_active(callback_query: types.CallbackQuery, state: FSMContext):
@@ -526,19 +608,22 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
 
+        message_text = f"Введите новое описание розыгрыша (максимум {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE}"
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"Введите новое описание розыгрыша (максимум {MAX_DESCRIPTION_LENGTH} символов): \n\nТекущее описание будет заменено на введенный вами текст.",
+            message_text,
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
 
     @dp.message(EditGiveawayStates.waiting_for_new_description_active)
     async def process_new_description_active(message: types.Message, state: FSMContext):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
-        new_description = message.text
+        # Получаем HTML-форматированный текст
+        new_description = message.html_text if message.text else ""
 
         # Check description length
         if len(new_description) > MAX_DESCRIPTION_LENGTH:
@@ -548,9 +633,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов. Пожалуйста, введите более короткое описание.",
+                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов. Пожалуйста, введите более короткое описание.\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
-                message_id=data['last_message_id']
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
             )
             return
 
@@ -564,7 +650,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             await update_published_posts_active(giveaway_id, giveaway_data)
         except Exception as e:
             logging.error(f"Error updating giveaway description: {str(e)}")
-            await message.reply("❌ Произошла ошибка при обновлении описания розыгрыша.")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "❌ Произошла ошибка при обновлении описания розыгрыша.",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
+            )
 
         await state.clear()
 
