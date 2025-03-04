@@ -16,13 +16,15 @@ import math
 import boto3
 from botocore.client import Config
 import requests
+import re
+from aiogram.types import CallbackQuery
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Bot configuration and initialization
-BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
+BOT_TOKEN = '7908502974:AAHypTBbfW-c9JR94HNYFLL9ZcN-2LaJFoU'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -57,7 +59,24 @@ MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
+FORMATTING_GUIDE = """
+Поддерживаемые форматы текста:
+<blockquote expandable>
+- Жирный: <b>текст</b>
+- Курсив: <i>текст</i>
+- Подчёркнутый: <u>текст</u>
+- Зачёркнутый: <s>текст</s>
+- Цитата: текст
+- Моноширинный: текст
+- Скрытый (спойлер): <tg-spoiler>текст</tg-spoiler>
+- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a></blockquote>
+"""
 
+def strip_html_tags(text):
+    """Удаляет HTML-теги из текста, оставляя только видимую часть."""
+    # Регулярное выражение для удаления всех HTML-тегов
+    clean_text = re.sub(r'<[^>]+>', '', text)
+    return clean_text
 
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
@@ -130,7 +149,7 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
 
 def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
-    async def process_created_giveaways(callback_query: types.CallbackQuery):
+    async def process_created_giveaways(callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = 1
@@ -153,8 +172,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             keyboard = InlineKeyboardBuilder()
             for giveaway in current_giveaways:
+                # Очищаем название от HTML-тегов для отображения в кнопке
+                clean_name = strip_html_tags(giveaway['name'])
+                # Ограничиваем длину текста кнопки, если нужно (например, до 64 символов)
+                if len(clean_name) > 64:
+                    clean_name = clean_name[:61] + "..."
                 keyboard.row(types.InlineKeyboardButton(
-                    text=giveaway['name'],
+                    text=clean_name,
                     callback_data=f"view_created_giveaway:{giveaway['id']}"
                 ))
 
@@ -226,13 +250,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             if giveaway.get('invite', False):
                 invite_info = f"\nТребуется пригласить: {giveaway['quantity_invite']} друзей"
 
+            # Формируем текст с сохранением HTML-форматирования
             giveaway_info = f"""
 {giveaway['name']}
 
 {giveaway['description']}
 
-Количество победителей: {giveaway['winner_count']}
-Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+<b>Количество победителей:</b> {giveaway['winner_count']}
+<b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 {invite_info}
 """
 
@@ -250,21 +275,33 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         await bot.edit_message_media(
                             chat_id=callback_query.message.chat.id,
                             message_id=callback_query.message.message_id,
-                            media=types.InputMediaPhoto(media=giveaway['media_file_id'], caption=giveaway_info),
+                            media=types.InputMediaPhoto(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'  # Добавляем поддержку HTML
+                            ),
                             reply_markup=keyboard.as_markup()
                         )
                     elif giveaway['media_type'] == 'gif':
                         await bot.edit_message_media(
                             chat_id=callback_query.message.chat.id,
                             message_id=callback_query.message.message_id,
-                            media=types.InputMediaAnimation(media=giveaway['media_file_id'], caption=giveaway_info),
+                            media=types.InputMediaAnimation(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'  # Добавляем поддержку HTML
+                            ),
                             reply_markup=keyboard.as_markup()
                         )
                     elif giveaway['media_type'] == 'video':
                         await bot.edit_message_media(
                             chat_id=callback_query.message.chat.id,
                             message_id=callback_query.message.message_id,
-                            media=types.InputMediaVideo(media=giveaway['media_file_id'], caption=giveaway_info),
+                            media=types.InputMediaVideo(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'  # Добавляем поддержку HTML
+                            ),
                             reply_markup=keyboard.as_markup()
                         )
                 except aiogram.exceptions.TelegramBadRequest as e:
@@ -281,7 +318,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         callback_query.from_user.id,
                         giveaway_info,
                         reply_markup=keyboard.as_markup(),
-                        message_id=callback_query.message.message_id
+                        message_id=callback_query.message.message_id,
+                        parse_mode='HTML'  # Добавляем поддержку HTML
                     )
                 except aiogram.exceptions.TelegramBadRequest as e:
                     if "message to edit not found" in str(e):
@@ -445,76 +483,91 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         await _show_edit_menu(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
 
     async def _show_edit_menu(user_id: int, giveaway_id: str, message_id: int = None):
-        response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-        if not response.data:
-            await bot.send_message(user_id, "Розыгрыш не найден.")
-            return
+            response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
+            if not response.data:
+                await bot.send_message(user_id, "Розыгрыш не найден.")
+                return
 
-        giveaway = response.data
+            giveaway = response.data
 
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="📝 Название", callback_data=f"edit_name:{giveaway_id}")
-        keyboard.button(text="📄 Описание", callback_data=f"edit_description:{giveaway_id}")
-        keyboard.button(text="🏆 Кол-во победителей", callback_data=f"edit_winner_count:{giveaway_id}")
-        keyboard.button(text="🗓 Дата завершения", callback_data=f"change_end_date:{giveaway_id}")
-        keyboard.button(text="🖼 Медиа", callback_data=f"manage_media:{giveaway_id}")
-        keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
-        keyboard.adjust(2, 2, 1, 1)
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="📝 Название", callback_data=f"edit_name:{giveaway_id}")
+            keyboard.button(text="📄 Описание", callback_data=f"edit_description:{giveaway_id}")
+            keyboard.button(text="🏆 Кол-во победителей", callback_data=f"edit_winner_count:{giveaway_id}")
+            keyboard.button(text="🗓 Дата завершения", callback_data=f"change_end_date:{giveaway_id}")
+            keyboard.button(text="🖼 Медиа", callback_data=f"manage_media:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+            keyboard.adjust(2, 2, 1, 1)
 
-        invite_info = ""
-        if giveaway.get('invite', False):
-            invite_info = f"\n👥 Требуется пригласить: {giveaway['quantity_invite']} друзей"
+            invite_info = ""
+            if giveaway.get('invite', False):
+                invite_info = f"\n👥 Требуется пригласить: {giveaway['quantity_invite']} друзей"
 
-        giveaway_info = f"""
-📊 Текущая информация о розыгрыше: 
+            # Обновляем отображение с поддержкой HTML
+            giveaway_info = f"""
+📊 <b>Текущая информация о розыгрыше:</b>
 
-📝  Название:  {giveaway['name']}
-📄  Описание:  {giveaway['description']}
+📝 <b>Название:</b> {giveaway['name']}
+📄 <b>Описание:</b> {giveaway['description']}
 
-🏆  Количество победителей:  {giveaway['winner_count']}
-🗓  Дата завершения:  {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
+🏆 <b>Количество победителей:</b> {giveaway['winner_count']}
+🗓 <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
 
-🖼  Медиа:  {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
+🖼 <b>Медиа:</b> {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
 {invite_info}
-"""
+    """
 
-        try:
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                if giveaway['media_type'] == 'photo':
-                    await bot.edit_message_media(
-                        chat_id=user_id,
+            try:
+                if giveaway['media_type'] and giveaway['media_file_id']:
+                    if giveaway['media_type'] == 'photo':
+                        await bot.edit_message_media(
+                            chat_id=user_id,
+                            message_id=message_id,
+                            media=types.InputMediaPhoto(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'  # Добавляем поддержку HTML
+                            ),
+                            reply_markup=keyboard.as_markup()
+                        )
+                    elif giveaway['media_type'] == 'gif':
+                        await bot.edit_message_media(
+                            chat_id=user_id,
+                            message_id=message_id,
+                            media=types.InputMediaAnimation(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'  # Добавляем поддержку HTML
+                            ),
+                            reply_markup=keyboard.as_markup()
+                        )
+                    elif giveaway['media_type'] == 'video':
+                        await bot.edit_message_media(
+                            chat_id=user_id,
+                            message_id=message_id,
+                            media=types.InputMediaVideo(
+                                media=giveaway['media_file_id'],
+                                caption=giveaway_info,
+                                parse_mode='HTML'  # Добавляем поддержку HTML
+                            ),
+                            reply_markup=keyboard.as_markup()
+                        )
+                else:
+                    await send_message_with_image(
+                        bot,
+                        user_id,
+                        giveaway_info,
+                        reply_markup=keyboard.as_markup(),
                         message_id=message_id,
-                        media=types.InputMediaPhoto(media=giveaway['media_file_id'], caption=giveaway_info),
-                        reply_markup=keyboard.as_markup()
+                        parse_mode='HTML'  # Добавляем поддержку HTML
                     )
-                elif giveaway['media_type'] == 'gif':
-                    await bot.edit_message_media(
-                        chat_id=user_id,
-                        message_id=message_id,
-                        media=types.InputMediaAnimation(media=giveaway['media_file_id'], caption=giveaway_info),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif giveaway['media_type'] == 'video':
-                    await bot.edit_message_media(
-                        chat_id=user_id,
-                        message_id=message_id,
-                        media=types.InputMediaVideo(media=giveaway['media_file_id'], caption=giveaway_info),
-                        reply_markup=keyboard.as_markup()
-                    )
-            else:
-                await send_message_with_image(
-                    bot,
-                    user_id,
-                    giveaway_info,
-                    reply_markup=keyboard.as_markup(),
-                    message_id=message_id
+            except Exception as e:
+                logging.error(f"Error in _show_edit_menu: {str(e)}")
+                await bot.send_message(
+                    chat_id=user_id,
+                    text="Произошла ошибка при отображении меню редактирования. Пожалуйста, попробуйте еще раз.",
+                    parse_mode='HTML'
                 )
-        except Exception as e:
-            logging.error(f"Error in _show_edit_menu: {str(e)}")
-            await bot.send_message(
-                chat_id=user_id,
-                text="Произошла ошибка при отображении меню редактирования. Пожалуйста, попробуйте еще раз."
-            )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name:'))
     async def process_edit_name(callback_query: types.CallbackQuery, state: FSMContext):
@@ -526,12 +579,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
+        message_text = f"Введите новое название розыгрыша (максимум {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"Введите новое название розыгрыша (максимум {MAX_NAME_LENGTH} символов): \n\nТекущее название будет заменено на введенный вами текст.",
+            message_text,
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_description:'))
@@ -544,12 +599,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
+        message_text = f"Введите новое описание розыгрыша (максимум {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE}"
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"Введите новое описание розыгрыша (максимум {MAX_DESCRIPTION_LENGTH} символов): \n\nТекущее описание будет заменено на введенный вами текст.",
+            message_text,
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_winner_count:'))
@@ -574,7 +631,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_new_name(message: types.Message, state: FSMContext):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
-        new_name = message.text
+        # Получаем HTML-форматированный текст
+        new_name = message.html_text if message.text else ""
 
         if len(new_name) > MAX_NAME_LENGTH:
             keyboard = InlineKeyboardBuilder()
@@ -583,9 +641,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов.",
+                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов. Пожалуйста, введите более короткое название.\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
-                message_id=data['last_message_id']
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
             )
             return
 
@@ -595,14 +654,24 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
         except Exception as e:
             logging.error(f"Error updating giveaway name: {str(e)}")
-            await message.reply("❌ Произошла ошибка при обновлении названия розыгрыша.")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "❌ Произошла ошибка при обновлении названия розыгрыша.",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
+            )
         await state.clear()
 
     @dp.message(GiveawayStates.waiting_for_edit_description)
     async def process_new_description(message: types.Message, state: FSMContext):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
-        new_description = message.text
+        # Получаем HTML-форматированный текст
+        new_description = message.html_text if message.text else ""
 
         if len(new_description) > MAX_DESCRIPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
@@ -611,9 +680,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов.",
+                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов. Пожалуйста, введите более короткое описание.\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
-                message_id=data['last_message_id']
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
             )
             return
 
@@ -623,7 +693,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
         except Exception as e:
             logging.error(f"Error updating giveaway description: {str(e)}")
-            await message.reply("❌ Произошла ошибка при обновлении описания розыгрыша.")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "❌ Произошла ошибка при обновлении описания розыгрыша.",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
+            )
         await state.clear()
 
     @dp.message(GiveawayStates.waiting_for_edit_winner_count)
@@ -706,16 +785,37 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
         if giveaway['media_type'] and giveaway['media_file_id']:
             if giveaway['media_type'] == 'photo':
-                await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info,
-                                     reply_markup=keyboard.as_markup())
+                await bot.send_photo(
+                    chat_id,
+                    giveaway['media_file_id'],
+                    caption=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'  # Добавляем поддержку HTML
+                )
             elif giveaway['media_type'] == 'gif':
-                await bot.send_animation(chat_id, animation=giveaway['media_file_id'], caption=giveaway_info,
-                                         reply_markup=keyboard.as_markup())
+                await bot.send_animation(
+                    chat_id,
+                    animation=giveaway['media_file_id'],
+                    caption=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'  # Добавляем поддержку HTML
+                )
             elif giveaway['media_type'] == 'video':
-                await bot.send_video(chat_id, video=giveaway['media_file_id'], caption=giveaway_info,
-                                     reply_markup=keyboard.as_markup())
+                await bot.send_video(
+                    chat_id,
+                    video=giveaway['media_file_id'],
+                    caption=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'  # Добавляем поддержку HTML
+                )
         else:
-            await send_message_with_image(bot, chat_id, giveaway_info, reply_markup=keyboard.as_markup())
+            await send_message_with_image(
+                bot,
+                chat_id,
+                giveaway_info,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'  # Добавляем поддержку HTML
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('manage_media:'))
     async def process_manage_media(callback_query: types.CallbackQuery, state: FSMContext):
@@ -1314,7 +1414,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             bot,
             callback_query.from_user.id,
             "Розыгрыш публикуется...",
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
 
         user_data = user_selected_communities.get(user_id)
@@ -1338,17 +1439,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             if giveaway.get('invite', False):
                 invite_text = f"\nДля участия нужно пригласить {giveaway['quantity_invite']} друзей"
 
+            # Формируем пост с сохранением HTML-форматирования
             post_text = f"""
 {giveaway['name']}
 
 {giveaway['description']}
 
-Количество победителей: {giveaway['winner_count']}
-Дата завершения: {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+<b>Количество победителей:</b> {giveaway['winner_count']}
+<b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 {invite_text}
 
 Нажмите кнопку ниже, чтобы принять участие!
-"""
+    """
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
@@ -1371,27 +1473,31 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                                 chat_id=int(community_id),
                                 photo=giveaway['media_file_id'],
                                 caption=post_text,
-                                reply_markup=keyboard.as_markup()
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'  # Добавляем поддержку HTML
                             )
                         elif giveaway['media_type'] == 'gif':
                             sent_message = await bot.send_animation(
                                 chat_id=int(community_id),
                                 animation=giveaway['media_file_id'],
                                 caption=post_text,
-                                reply_markup=keyboard.as_markup()
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'  # Добавляем поддержку HTML
                             )
                         elif giveaway['media_type'] == 'video':
                             sent_message = await bot.send_video(
                                 chat_id=int(community_id),
                                 video=giveaway['media_file_id'],
                                 caption=post_text,
-                                reply_markup=keyboard.as_markup()
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'  # Добавляем поддержку HTML
                             )
                     else:
                         sent_message = await bot.send_message(
                             chat_id=int(community_id),
                             text=post_text,
-                            reply_markup=keyboard.as_markup()
+                            reply_markup=keyboard.as_markup(),
+                            parse_mode='HTML'  # Добавляем поддержку HTML
                         )
 
                     if sent_message:
@@ -1416,27 +1522,31 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                                 chat_id=int(community_id),
                                 photo=giveaway['media_file_id'],
                                 caption=post_text,
-                                reply_markup=keyboard.as_markup()
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'  # Добавляем поддержку HTML
                             )
                         elif giveaway['media_type'] == 'gif':
                             sent_message = await bot.send_animation(
                                 chat_id=int(community_id),
                                 animation=giveaway['media_file_id'],
                                 caption=post_text,
-                                reply_markup=keyboard.as_markup()
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'  # Добавляем поддержку HTML
                             )
                         elif giveaway['media_type'] == 'video':
                             sent_message = await bot.send_video(
                                 chat_id=int(community_id),
                                 video=giveaway['media_file_id'],
                                 caption=post_text,
-                                reply_markup=keyboard.as_markup()
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'  # Добавляем поддержку HTML
                             )
                         else:
                             sent_message = await bot.send_message(
                                 chat_id=int(community_id),
                                 text=post_text,
-                                reply_markup=keyboard.as_markup()
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'  # Добавляем поддержку HTML
                             )
 
                         if sent_message:
@@ -1485,9 +1595,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     keyboard = InlineKeyboardBuilder()
                     keyboard.button(text="Назад", callback_data="back_to_main_menu")
 
-                    result_message = f"✅ Розыгрыш успешно опубликован в {success_count} сообществах.\n🔄 Счетчик участников будет обновляться каждую минуту."
+                    result_message = f"<b>✅ Розыгрыш успешно опубликован в {success_count} сообществах.</b>\n🔄 Счетчик участников будет обновляться каждую минуту."
                     if error_count > 0:
-                        result_message += f"\n\n❌ Ошибки публикации ({error_count}):"
+                        result_message += f"\n\n<b>❌ Ошибки публикации ({error_count}):</b>"
                         for error in error_messages:
                             if "Telegram server says - Forbidden: bot is not a member of the channel chat" in error:
                                 community = error.split('@')[1].split(':')[0]
@@ -1500,7 +1610,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         callback_query.from_user.id,
                         result_message,
                         reply_markup=keyboard.as_markup(),
-                        message_id=callback_query.message.message_id
+                        message_id=callback_query.message.message_id,
+                        parse_mode='HTML'  # Добавляем поддержку HTML для сообщения результата
                     )
                 except Exception as e:
                     logging.error(f"Error finalizing giveaway activation: {str(e)}")
@@ -1512,10 +1623,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await send_message_with_image(
                     bot,
                     callback_query.from_user.id,
-                    f"❌ Не удалось опубликовать розыгрыш.\nОшибок: {error_count}\n\nПодробности:\n" + "\n".join(
+                    f"<b>❌ Не удалось опубликовать розыгрыш.</b>\nОшибок: {error_count}\n\n<b>Подробности:</b>\n" + "\n".join(
                         error_messages),
                     reply_markup=error_keyboard.as_markup(),
-                    message_id=callback_query.message.message_id
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML'  # Добавляем поддержку HTML для сообщения об ошибке
                 )
         except Exception as e:
             logging.error(f"Error in process_publish_giveaway: {str(e)}")
