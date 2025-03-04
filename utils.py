@@ -90,6 +90,7 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
                     'giveaway_id': giveaway_id,
                     'user_id': winner['user_id'],
                     'username': winner['username'],
+                    'name': winner.get('name', ''),  # Add the name field
                     'place': index
                 }).execute()
 
@@ -258,13 +259,15 @@ async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], wi
             user = await bot.get_chat_member(winner['user_id'], winner['user_id'])
             winner_details.append({
                 'user_id': winner['user_id'],
-                'username': user.user.username or f"user{winner['user_id']}"
+                'username': user.user.username or f"user{winner['user_id']}",
+                'name': user.user.first_name  # Get the user's first name
             })
         except Exception as e:
             logging.error(f"Error fetching user details: {e}")
             winner_details.append({
                 'user_id': winner['user_id'],
-                'username': f"user{winner['user_id']}"
+                'username': f"user{winner['user_id']}",
+                'name': ""  # Empty string if we can't get the name
             })
     return winner_details
 
