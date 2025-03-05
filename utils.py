@@ -63,7 +63,8 @@ async def check_and_end_giveaways(bot: Bot, supabase: Client):
     while True:
         now = datetime.now(pytz.utc)
         try:
-            response = supabase.table('giveaways').select('*').eq('is_active', True).execute()
+            # Обновляем запрос: используем 'true' вместо True
+            response = supabase.table('giveaways').select('*').eq('is_active', 'true').execute()
             if response.data:
                 for giveaway in response.data:
                     end_time = datetime.fromisoformat(giveaway['end_time'])
@@ -99,7 +100,7 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
         winners = await select_random_winners(bot, valid_participants, min(len(valid_participants), giveaway['winner_count']))
 
         # Update giveaway status
-        await update_giveaway_status(supabase, giveaway_id, False)
+        await update_giveaway_status(supabase, giveaway_id, 'false')  # Используем 'false' вместо False
 
         # Save winners (if any)
         if winners:
@@ -118,7 +119,7 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
         # Create a new giveaway with the same details
         new_giveaway = giveaway.copy()
         new_giveaway.pop('id', None)
-        new_giveaway['is_active'] = False
+        new_giveaway['is_active'] = 'false'  # Используем 'false' вместо False
         new_giveaway['created_at'] = None
         new_giveaway['end_time'] = giveaway['end_time']
 
@@ -301,8 +302,9 @@ async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], wi
             })
     return winner_details
 
-async def update_giveaway_status(supabase: Client, giveaway_id: str, is_active: bool):
+async def update_giveaway_status(supabase: Client, giveaway_id: str, is_active: str):
     try:
+        # Используем строковое значение 'true' или 'false' вместо булевого
         supabase.table('giveaways').update({'is_active': is_active}).eq('id', giveaway_id).execute()
     except Exception as e:
         logging.error(f"Error updating giveaway status: {str(e)}")
