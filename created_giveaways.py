@@ -142,15 +142,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
     async def process_created_giveaways(callback_query: CallbackQuery):
-        """Показывает список созданных розыгрышей 📋"""
+        """Показывает список созданных розыгрышей с is_active = 'false' или 'waiting' 📋"""
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
 
         try:
-            response = supabase.table('giveaways').select('*').eq('user_id', user_id).eq('is_active', False).execute()
+            # Изменяем запрос, чтобы выбрать розыгрыши с is_active в ('false', 'waiting')
+            response = supabase.table('giveaways').select('*').eq('user_id', user_id).in_('is_active', ['false',
+                                                                                                        'waiting']).execute()
             if not response.data:
-                await bot.answer_callback_query(callback_query.id, text="📭 Пока нет розыгрышей? Создайте свой первый! 🚀")
+                await bot.answer_callback_query(callback_query.id,
+                                                text="📭 Пока нет розыгрышей? Создайте свой первый! 🚀")
                 return
 
             total_giveaways = len(response.data)
@@ -160,19 +163,24 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             keyboard = InlineKeyboardBuilder()
             for giveaway in current_giveaways:
-                clean_name = strip_html_tags(giveaway['name'])[:61] + "..." if len(giveaway['name']) > 64 else strip_html_tags(giveaway['name'])
+                clean_name = strip_html_tags(giveaway['name'])[:61] + "..." if len(
+                    giveaway['name']) > 64 else strip_html_tags(giveaway['name'])
+                # Можно добавить индикатор состояния в название, если хотите
+                status_indicator = "" if giveaway['is_active'] == 'waiting' else ""
                 keyboard.row(InlineKeyboardButton(
-                    text=f"{clean_name}",
+                    text=f"{status_indicator} {clean_name}",
                     callback_data=f"view_created_giveaway:{giveaway['id']}"
                 ))
 
             nav_buttons = []
             if current_page > 1:
-                nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"created_giveaways_page:{current_page - 1}"))
+                nav_buttons.append(
+                    InlineKeyboardButton(text="◀️", callback_data=f"created_giveaways_page:{current_page - 1}"))
             if total_pages > 1:
                 nav_buttons.append(InlineKeyboardButton(text=f"📄 {current_page}/{total_pages}", callback_data="ignore"))
             if current_page < total_pages:
-                nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"created_giveaways_page:{current_page + 1}"))
+                nav_buttons.append(
+                    InlineKeyboardButton(text="▶️", callback_data=f"created_giveaways_page:{current_page + 1}"))
 
             if nav_buttons:
                 keyboard.row(*nav_buttons)
@@ -182,7 +190,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await send_message_with_image(
                 bot,
                 user_id,
-                f"🎉 Выберите розыгрыш для просмотра! ",
+                f"🎉 Выберите розыгрыш для просмотра! (⏳ — ожидание, 📝 — неактивен)",
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id
             )
@@ -212,10 +220,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             keyboard.button(text="📩 Добавить приглашения", callback_data=f"add_invite_task:{giveaway_id}")
             keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_giveaway:{giveaway_id}")
+            keyboard.button(text="👀 Предпросмотр", callback_data=f"preview_giveaway:{giveaway_id}")  # Новая кнопка
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
-            invite_info = f"\n📩 Пригласите {giveaway['quantity_invite']} друга(зей) для участия!" if giveaway.get('invite', False) else ""
+            invite_info = f"\n📩 Пригласите {giveaway['quantity_invite']} друга(зей) для участия!" if giveaway.get(
+                'invite', False) else ""
             giveaway_info = f"""
 <b>{giveaway['name']}</b>
 
@@ -259,6 +269,81 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 callback_query.from_user.id,
                 "⚠️ Упс! Что-то пошло не так. Попробуйте снова! 😊"
             )
+
+    @dp.callback_query(lambda c: c.data.startswith('preview_giveaway:'))
+    async def process_preview_giveaway(callback_query: CallbackQuery):
+        """Показывает предпросмотр розыгрыша как при публикации и меняет is_active на 'waiting'"""
+        giveaway_id = callback_query.data.split(':')[1]
+        try:
+            # Получаем текущие данные розыгрыша
+            response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
+            if not response.data:
+                await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
+                return
+
+            giveaway = response.data
+
+            # Обновляем состояние is_active на 'waiting'
+            supabase.table('giveaways').update({'is_active': 'waiting'}).eq('id', giveaway_id).execute()
+            logger.info(f"Состояние is_active для розыгрыша {giveaway_id} изменено на 'waiting'")
+
+            # Получаем количество участников
+            participant_count = await get_participant_count(giveaway_id, supabase)
+
+            # Формируем текст предпросмотра
+            post_text = f"""
+<b>{giveaway['name']}</b>
+
+{giveaway['description']}
+
+🏆 <b>Победителей:</b> {giveaway['winner_count']}
+⏰ <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+"""
+
+            # Создаём клавиатуру для предпросмотра
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(
+                text=f"🎉 Участвовать ({participant_count})",
+                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+            )
+            keyboard.button(
+                text="◀️ Назад",
+                callback_data=f"view_created_giveaway:{giveaway_id}"
+            )
+            keyboard.adjust(1)
+
+            await bot.answer_callback_query(callback_query.id)
+
+            # Отображаем предпросмотр с учётом медиа
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                media_types = {
+                    'photo': types.InputMediaPhoto,
+                    'gif': types.InputMediaAnimation,
+                    'video': types.InputMediaVideo
+                }
+                await bot.edit_message_media(
+                    chat_id=callback_query.message.chat.id,
+                    message_id=callback_query.message.message_id,
+                    media=media_types[giveaway['media_type']](
+                        media=giveaway['media_file_id'],
+                        caption=post_text,
+                        parse_mode='HTML'
+                    ),
+                    reply_markup=keyboard.as_markup()
+                )
+            else:
+                await send_message_with_image(
+                    bot,
+                    callback_query.from_user.id,
+                    post_text,
+                    reply_markup=keyboard.as_markup(),
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML'
+                )
+
+        except Exception as e:
+            logger.error(f"🚫 Ошибка предпросмотра: {str(e)}")
+            await bot.answer_callback_query(callback_query.id, text="❌ Ошибка при предпросмотре 😔")
 
     @dp.callback_query(lambda c: c.data.startswith('add_invite_task:'))
     async def process_add_invite_task(callback_query: CallbackQuery):
@@ -1254,6 +1339,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             participant_count = await get_participant_count(giveaway_id, supabase)
             post_text = f"""
 <b>{giveaway['name']}</b>
+
 {giveaway['description']}
 
 🏆 <b>Победителей:</b> {giveaway['winner_count']}
@@ -1325,7 +1411,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     current_time = datetime.now(moscow_tz)
 
                     supabase.table('giveaways').update({
-                        'is_active': True,
+                        'is_active': 'true',
                         'created_at': current_time.isoformat(),
                         'published_messages': json.dumps(published_messages),
                         'participant_counter_tasks': json.dumps(participant_counter_tasks)
