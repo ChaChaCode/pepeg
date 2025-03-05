@@ -7,9 +7,12 @@ from aiogram.fsm.state import State, StatesGroup
 from supabase import create_client, Client
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image
-
 import json
 from postgrest import APIResponse
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
 bot = Bot(token=BOT_TOKEN)
@@ -23,6 +26,22 @@ supabase: Client = create_client(supabase_url, supabase_key)
 
 user_selected_communities = {}
 paid_users: Dict[int, str] = {}
+
+# Константа с руководством по форматированию
+FORMATTING_GUIDE = """
+Поддерживаемые форматы текста:
+<blockquote expandable>
+- Цитата
+- Жирный: <b>текст</b>
+- Курсив: <i>текст</i>
+- Подчёркнутый: <u>текст</u>
+- Зачёркнутый: <s>текст</s>
+- Моноширинный: <pre>текст</pre>
+- Скрытый: <tg-spoiler>текст</tg-spoiler>
+- Ссылка: <a href="https://example.com">текст</a>
+- Код: <code>текст</code>
+</blockquote>
+"""
 
 # States for the FSM
 class GiveawayStates(StatesGroup):
@@ -64,14 +83,15 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
         keyboard.adjust(1)
 
-        message_text = "Выберите место для редактирования поздравления или общее поздравление для всех победителей."
+        message_text = f"Выберите место для редактирования поздравления или общее поздравление для всех победителей."
 
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
             message_text,
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
 
     @dp.callback_query(lambda c: c.data.startswith('common_congrats:'))
@@ -85,7 +105,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             logging.info(f"Fetched congratulations: {json.dumps(response.data, default=str)}")
 
             if not response.data:
-                message_text = "В настоящее время поздравления не установлены."
+                message_text = f"В настоящее время поздравления не установлены."
             else:
                 congratulations = {item['place']: item['message'] for item in response.data if
                                    'message' in item and 'place' in item}
@@ -95,7 +115,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                     common_message = next(iter(congratulations.values()))
                     message_text = f"Текущее общее поздравление:\n\n{common_message}"
                 else:
-                    message_text = "В настоящее время общее поздравление не установлено. Поздравления различаются для разных мест."
+                    message_text = f"В настоящее время общее поздравление не установлено. Поздравления различаются для разных мест."
 
             logging.info(f"Final message_text: {message_text}")
 
@@ -109,7 +129,8 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 callback_query.from_user.id,
                 message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML'
             )
 
         except Exception as e:
@@ -166,11 +187,9 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         message_text = f"Напишите своё поздравление для победителя, занявшего {place} место."
         if existing_message:
             message_text += f"\n\nТекущее поздравление:\n{existing_message}"
-        else:
-            message_text += "\n\nТекущее поздравление отсутствует."
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
+        keyboard.button(text="Назад", callback_data=f"message_winners:{giveaway_id}")
 
         try:
             sent_message = await send_message_with_image(
@@ -178,7 +197,8 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 callback_query.from_user.id,
                 message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML'
             )
 
             if sent_message:
@@ -191,7 +211,8 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 sent_message = await bot.send_message(
                     callback_query.from_user.id,
                     message_text,
-                    reply_markup=keyboard.as_markup()
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
                 )
                 await state.update_data(original_message_id=sent_message.message_id)
             except Exception as e:
@@ -206,13 +227,15 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         place = data['place']
         original_message_id = data.get('original_message_id')
 
+        formatted_text = message.html_text if message.text else ""
+
         try:
             # Save the new congratulation message
             supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).eq('place', place).execute()
             supabase.table('congratulations').insert({
                 'giveaway_id': giveaway_id,
                 'place': place,
-                'message': message.text
+                'message': formatted_text
             }).execute()
 
             await state.clear()
@@ -221,36 +244,35 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             keyboard.button(text="Назад к выбору мест", callback_data=f"message_winners:{giveaway_id}")
             keyboard.adjust(1)
 
-            updated_text = f"Поздравление для {place} места обновлено:\n\n{message.text}"
+            updated_text = f"Поздравление для {place} места обновлено:\n\n{formatted_text}"
 
             if original_message_id:
                 try:
-                    # Try to edit the caption (for messages with images)
                     await bot.edit_message_caption(
                         chat_id=message.chat.id,
                         message_id=original_message_id,
                         caption=updated_text,
-                        reply_markup=keyboard.as_markup()
+                        reply_markup=keyboard.as_markup(),
+                        parse_mode='HTML'
                     )
                 except Exception as edit_error:
                     logging.error(f"Error editing message: {str(edit_error)}")
-                    # If editing fails, send a new message
                     await send_message_with_image(
                         bot,
                         message.chat.id,
                         updated_text,
-                        reply_markup=keyboard.as_markup()
+                        reply_markup=keyboard.as_markup(),
+                        parse_mode='HTML'
                     )
             else:
-                # If we don't have the original message ID, send a new message
                 await send_message_with_image(
                     bot,
                     message.chat.id,
                     updated_text,
-                    reply_markup=keyboard.as_markup()
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
                 )
 
-            # Delete the user's message
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
         except Exception as e:
@@ -268,7 +290,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             logging.info(f"Fetched congratulations: {json.dumps(response.data, default=str)}")
 
             if not response.data:
-                message_text = "В настоящее время поздравления не установлены."
+                message_text = f"В настоящее время поздравления не установлены."
             else:
                 congratulations = {item['place']: item['message'] for item in response.data if
                                    'message' in item and 'place' in item}
@@ -278,7 +300,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                     common_message = next(iter(congratulations.values()))
                     message_text = f"Текущее общее поздравление:\n\n{common_message}"
                 else:
-                    message_text = "В настоящее время общее поздравление не установлено. Поздравления различаются для разных мест."
+                    message_text = f"В настоящее время общее поздравление не установлено. Поздравления различаются для разных мест."
 
             logging.info(f"Final message_text: {message_text}")
 
@@ -291,7 +313,8 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 bot,
                 callback_query.from_user.id,
                 message_text,
-                reply_markup=keyboard.as_markup()
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
             )
 
         except Exception as e:
@@ -317,9 +340,9 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             await state.update_data(giveaway_id=giveaway_id)
             await state.set_state(GiveawayStates.waiting_for_common_congrats_message)
 
-            message_text = "Напишите общее поздравление для всех победителей."
+            message_text = f"Напишите общее поздравление для всех победителей."
             if existing_message:
-                message_text += f"\n\nТекущее общее поздравление:\n{existing_message}"
+                message_text += f"\nТекущее общее поздравление:\n{existing_message}"
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Отмена", callback_data=f"common_congrats:{giveaway_id}")
@@ -329,7 +352,8 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 callback_query.from_user.id,
                 message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML'
             )
 
             if sent_message:
@@ -347,6 +371,8 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         giveaway_id = data['giveaway_id']
         original_message_id = data.get('original_message_id')
 
+        formatted_text = message.html_text if message.text else ""
+
         try:
             giveaway_response = supabase.table('giveaways').select('winner_count').eq('id',
                                                                                       giveaway_id).single().execute()
@@ -359,7 +385,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 congratulations.append({
                     'giveaway_id': giveaway_id,
                     'place': place,
-                    'message': message.text
+                    'message': formatted_text
                 })
 
             supabase.table('congratulations').insert(congratulations).execute()
@@ -371,38 +397,38 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             keyboard.adjust(1)
 
             success_message = (
-                "Общее поздравление сохранено и применено ко всем местам в розыгрыше.\n"
-                f"Обновлено поздравлений: {winner_count} мест."
+                f"Общее поздравление сохранено и применено ко всем местам в розыгрыше.\n"
+                f"Обновлено поздравлений: {winner_count} мест.\n\n"
+                f"Текст:\n{formatted_text}"
             )
 
             if original_message_id:
                 try:
-                    # Попытка отредактировать подпись (для сообщений с изображениями)
                     await bot.edit_message_caption(
                         chat_id=message.chat.id,
                         message_id=original_message_id,
                         caption=success_message,
-                        reply_markup=keyboard.as_markup()
+                        reply_markup=keyboard.as_markup(),
+                        parse_mode='HTML'
                     )
                 except Exception as edit_error:
                     logging.error(f"Error editing message: {str(edit_error)}")
-                    # Если редактирование не удалось, отправляем новое сообщение
                     await send_message_with_image(
                         bot,
                         message.chat.id,
                         success_message,
-                        reply_markup=keyboard.as_markup()
+                        reply_markup=keyboard.as_markup(),
+                        parse_mode='HTML'
                     )
             else:
-                # Если у нас нет ID оригинального сообщения, отправляем новое сообщение
                 await send_message_with_image(
                     bot,
                     message.chat.id,
                     success_message,
-                    reply_markup=keyboard.as_markup()
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
                 )
 
-            # Удаляем сообщение пользователя
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
         except Exception as e:
