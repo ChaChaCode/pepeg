@@ -129,7 +129,7 @@ async def save_giveaway(supabase, user_id: int, name: str, description: str, end
         'description': description,
         'end_time': end_time_tz.isoformat(),
         'winner_count': winner_count,
-        'is_active': False,
+        'is_active': 'false',
         'media_type': media_type,
         'media_file_id': media_file_id
     }
