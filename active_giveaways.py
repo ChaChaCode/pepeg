@@ -14,20 +14,20 @@ import boto3
 from botocore.client import Config
 import requests
 import re
+from aiogram.types import CallbackQuery
 
-def strip_html_tags(text):
-    """Удаляет HTML-теги из текста, оставляя только видимую часть."""
-    clean_text = re.sub(r'<[^>]+>', '', text)
-    return clean_text
+# Настройка логирования 📝
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Yandex Cloud S3 configuration
+# Конфигурация Yandex Cloud S3 ☁️
 YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
 YANDEX_SECRET_KEY = 'YCPkR9H9Ucebg6L6eMGvtfKuFIcO_MK7gyiffY6H'
 YANDEX_BUCKET_NAME = 'raffle'
 YANDEX_ENDPOINT_URL = 'https://storage.yandexcloud.net'
 YANDEX_REGION = 'ru-central1'
 
-# Initialize S3 client for Yandex Cloud
+# Инициализация S3 клиента 📦
 s3_client = boto3.client(
     's3',
     region_name=YANDEX_REGION,
@@ -37,182 +37,128 @@ s3_client = boto3.client(
     config=Config(signature_version='s3v4')
 )
 
-# Constraints
+# Константы ⚙️
 MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
 
-# Formatting instructions
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
 <blockquote expandable>
+- Цитата
 - Жирный: <b>текст</b>
 - Курсив: <i>текст</i>
 - Подчёркнутый: <u>текст</u>
 - Зачёркнутый: <s>текст</s>
-- Цитата: текст
-- Моноширинный: текст
-- Скрытый (спойлер): <tg-spoiler>текст</tg-spoiler>
-- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a></blockquote>
+- Моноширинный
+- Скрытый: <tg-spoiler>текст</tg-spoiler>
+- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
+- Код: <code>текст</code>
+</blockquote>
 """
 
+def strip_html_tags(text: str) -> str:
+    """Удаляет HTML-теги из текста 🧹"""
+    return re.sub(r'<[^>]+>', '', text)
+
 class EditGiveawayStates(StatesGroup):
-    waiting_for_new_name_active = State()
-    waiting_for_new_description_active = State()
-    waiting_for_new_winner_count_active = State()
-    waiting_for_new_end_time_active = State()
-    waiting_for_new_media_active = State()
+    waiting_for_new_name_active = State()  # ✏️
+    waiting_for_new_description_active = State()  # 📜
+    waiting_for_new_winner_count_active = State()  # 🏆
+    waiting_for_new_end_time_active = State()  # ⏰
+    waiting_for_new_media_active = State()  # 🖼️
 
 async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
+    """Загружает файл в хранилище 📤"""
     try:
         file_size_mb = len(file_content) / (1024 * 1024)
         if file_size_mb > MAX_MEDIA_SIZE_MB:
-            return False, f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ"
+            return False, f"⚠️ Файл слишком большой! Максимум: {MAX_MEDIA_SIZE_MB} МБ 😔"
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
 
-        # Use requests library for direct upload instead of boto3 to avoid hash mismatch
-        try:
-            # Generate a presigned URL for upload
-            presigned_url = s3_client.generate_presigned_url(
-                'put_object',
-                Params={
-                    'Bucket': YANDEX_BUCKET_NAME,
-                    'Key': unique_filename,
-                    'ContentType': 'application/octet-stream'
-                },
-                ExpiresIn=3600
-            )
+        presigned_url = s3_client.generate_presigned_url(
+            'put_object',
+            Params={
+                'Bucket': YANDEX_BUCKET_NAME,
+                'Key': unique_filename,
+                'ContentType': 'application/octet-stream'
+            },
+            ExpiresIn=3600
+        )
 
-            # Upload using requests
-            response = requests.put(
-                presigned_url,
-                data=file_content,  # Use the raw bytes directly
-                headers={'Content-Type': 'application/octet-stream'}
-            )
+        response = requests.put(
+            presigned_url,
+            data=file_content,
+            headers={'Content-Type': 'application/octet-stream'}
+        )
 
-            if response.status_code == 200:
-                # Generate public URL for the uploaded file
-                public_url = f"https://{YANDEX_BUCKET_NAME}.storage.yandexcloud.net/{unique_filename}"
-                logging.info(f"File uploaded successfully: {unique_filename}")
-                logging.info(f"Public URL: {public_url}")
-                return True, public_url
-            else:
-                logging.error(f"Failed to upload using presigned URL: {response.status_code} - {response.text}")
-                raise Exception(f"Failed to upload using presigned URL: {response.status_code}")
-
-        except Exception as upload_error:
-            logging.error(f"Upload error: {str(upload_error)}")
-            raise Exception(f"Failed to upload file: {str(upload_error)}")
+        if response.status_code == 200:
+            public_url = f"https://{YANDEX_BUCKET_NAME}.storage.yandexcloud.net/{unique_filename}"
+            logger.info(f"✅ Файл загружен: {unique_filename}")
+            return True, public_url
+        else:
+            logger.error(f"❌ Ошибка загрузки: {response.status_code}")
+            raise Exception(f"Не удалось загрузить: {response.status_code}")
 
     except Exception as e:
-        error_msg = str(e)
-        logging.error(f"Storage upload error: {error_msg}")
-        return False, error_msg
+        logger.error(f"🚫 Ошибка: {str(e)}")
+        return False, f"❌ Ошибка загрузки: {str(e)}"
 
 def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
+    """Регистрирует обработчики для активных розыгрышей 🎁"""
+
     @dp.callback_query(lambda c: c.data == 'active_giveaways' or c.data.startswith('active_giveaways_page:'))
     async def process_active_giveaways(callback_query: types.CallbackQuery):
+        """Показывает список активных розыгрышей 📋"""
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
-        # Get page number from callback data
-        current_page = 1
-        if callback_query.data.startswith('active_giveaways_page:'):
-            current_page = int(callback_query.data.split(':')[1])
+        current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
 
         try:
-            # Get all active giveaways
-            response = supabase.table('giveaways').select('*').eq('is_active', True).eq('user_id', user_id).order(
-                'end_time').execute()
-
+            response = supabase.table('giveaways').select('*').eq('is_active', True).eq('user_id', user_id).order('end_time').execute()
             if not response.data:
-                await bot.answer_callback_query(callback_query.id, text="У вас нет активных розыгрышей.")
+                await bot.answer_callback_query(callback_query.id, text="📭 У вас нет активных розыгрышей! Создайте новый? 🚀")
                 return
 
             total_giveaways = len(response.data)
             total_pages = math.ceil(total_giveaways / ITEMS_PER_PAGE)
-
-            # Calculate slice indices for current page
             start_idx = (current_page - 1) * ITEMS_PER_PAGE
-            end_idx = start_idx + ITEMS_PER_PAGE
+            current_giveaways = response.data[start_idx:start_idx + ITEMS_PER_PAGE]
 
-            # Get giveaways for current page
-            current_giveaways = response.data[start_idx:end_idx]
-
-            # Generate keyboard with pagination
             keyboard = InlineKeyboardBuilder()
-
-            # Add giveaway buttons (each in its own row)
             for giveaway in current_giveaways:
-                # Очищаем название от HTML-тегов для отображения в кнопке
-                clean_name = strip_html_tags(giveaway['name'])
-                # Ограничиваем длину текста кнопки до 64 символов (Telegram limit)
-                if len(clean_name) > 64:
-                    clean_name = clean_name[:61] + "..."
+                clean_name = strip_html_tags(giveaway['name'])[:61] + "..." if len(giveaway['name']) > 64 else strip_html_tags(giveaway['name'])
                 keyboard.row(types.InlineKeyboardButton(
-                    text=clean_name,
+                    text=f"{clean_name}",
                     callback_data=f"view_active_giveaway:{giveaway['id']}"
                 ))
 
-            # Create navigation row
             nav_buttons = []
-
-            # Previous page button
             if current_page > 1:
-                nav_buttons.append(types.InlineKeyboardButton(
-                    text="←",
-                    callback_data=f"active_giveaways_page:{current_page - 1}"
-                ))
-
-            # Page indicator - only show if there's more than one page
+                nav_buttons.append(types.InlineKeyboardButton(text="◀️", callback_data=f"active_giveaways_page:{current_page - 1}"))
             if total_pages > 1:
-                nav_buttons.append(types.InlineKeyboardButton(
-                    text=f"{current_page}/{total_pages}",
-                    callback_data="ignore"
-                ))
-
-            # Next page button
+                nav_buttons.append(types.InlineKeyboardButton(text=f"📄 {current_page}/{total_pages}", callback_data="ignore"))
             if current_page < total_pages:
-                nav_buttons.append(types.InlineKeyboardButton(
-                    text="→",
-                    callback_data=f"active_giveaways_page:{current_page + 1}"
-                ))
+                nav_buttons.append(types.InlineKeyboardButton(text="▶️", callback_data=f"active_giveaways_page:{current_page + 1}"))
 
-            # Add navigation buttons in one row if there are any
             if nav_buttons:
                 keyboard.row(*nav_buttons)
-
-            # Add back button in its own row
-            keyboard.row(types.InlineKeyboardButton(
-                text="◀️ Назад",
-                callback_data="back_to_main_menu"
-            ))
+            keyboard.row(types.InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main_menu"))
 
             await bot.answer_callback_query(callback_query.id)
-
-            # Update message with pagination info
-            message_text = "Выберите активный розыгрыш"
-            if total_pages > 1:
-                message_text += f" (Страница {current_page} из {total_pages}):"
-            else:
-                message_text += ":"
-
             await send_message_with_image(
                 bot,
-                callback_query.from_user.id,
-                message_text,
+                user_id,
+                f"🎊 Выберите активный розыгрыш для просмотра!",
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id
             )
-
         except Exception as e:
-            logging.error(f"Error in process_active_giveaways: {str(e)}")
-            await bot.answer_callback_query(
-                callback_query.id,
-                text="Произошла ошибка при получении активных розыгрышей."
-            )
+            logger.error(f"🚫 Ошибка: {str(e)}")
+            await bot.answer_callback_query(callback_query.id, text="❌ Упс! Ошибка загрузки розыгрышей 😔")
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: types.CallbackQuery):
@@ -220,57 +166,38 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 
     @dp.callback_query(lambda c: c.data.startswith('view_active_giveaway:'))
     async def process_view_active_giveaway(callback_query: types.CallbackQuery):
+        """Просмотр активного розыгрыша 👀"""
         giveaway_id = callback_query.data.split(':')[1]
         response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
 
         if not response.data:
-            await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
+            await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
             return
 
         giveaway = response.data
-
-        # Получение количества участников
-        participants_response = supabase.table('participations').select('count').eq('giveaway_id',
-                                                                                    giveaway_id).execute()
+        participants_response = supabase.table('participations').select('count').eq('giveaway_id', giveaway_id).execute()
         participants_count = participants_response.data[0]['count']
 
-        invite_info = ""
-        if giveaway.get('invite', False):
-            invite_info = f"\nДля участия нужно пригласить: {giveaway['quantity_invite']} друзей"
-
-        # Формируем текст с сохранением HTML-форматирования
         giveaway_info = f"""
-<b>Активный розыгрыш:</b>
+🎉 <b>Активный розыгрыш:</b>
 
-{giveaway['name']}
-
+<b>{giveaway['name']}</b>
 {giveaway['description']}
 
-<b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
-<b>Количество победителей:</b> {giveaway['winner_count']}
-<b>Участвуют:</b> {participants_count}
-{invite_info}
-    """
+⏰ <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+🏆 <b>Победителей:</b> {giveaway['winner_count']}
+👥 <b>Участников:</b> {participants_count}
+"""
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Редактировать Пост", callback_data=f"edit_active_post:{giveaway_id}")
-        keyboard.button(text="Принудительное завершение", callback_data=f"force_end_giveaway:{giveaway_id}")
-        keyboard.button(
-            text="Открыть",
-            url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
-        )
-        keyboard.button(text="◀️ Назад к списку", callback_data="active_giveaways")
+        keyboard.button(text="✏️ Редактировать", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="⏹️ Завершить", callback_data=f"confirm_force_end_giveaway:{giveaway_id}")
+        keyboard.button(text="🔗 Открыть", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data="active_giveaways")
         keyboard.adjust(1)
 
         try:
             await bot.answer_callback_query(callback_query.id)
-        except aiogram.exceptions.TelegramBadRequest as e:
-            if "query is too old" in str(e):
-                logging.warning(f"Callback query is too old: {e}")
-            else:
-                raise
-
-        try:
             if giveaway['media_type'] and giveaway['media_file_id']:
                 media_types = {
                     'photo': types.InputMediaPhoto,
@@ -282,15 +209,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     await bot.edit_message_media(
                         chat_id=callback_query.message.chat.id,
                         message_id=callback_query.message.message_id,
-                        media=media_class(
-                            media=giveaway['media_file_id'],
-                            caption=giveaway_info,
-                            parse_mode='HTML'  # Добавляем поддержку HTML
-                        ),
+                        media=media_class(media=giveaway['media_file_id'], caption=giveaway_info, parse_mode='HTML'),
                         reply_markup=keyboard.as_markup()
                     )
                 else:
-                    raise ValueError(f"Unknown media type: {giveaway['media_type']}")
+                    raise ValueError(f"Неизвестный тип медиа: {giveaway['media_type']}")
             else:
                 await send_message_with_image(
                     bot,
@@ -298,54 +221,97 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     giveaway_info,
                     reply_markup=keyboard.as_markup(),
                     message_id=callback_query.message.message_id,
-                    parse_mode='HTML'  # Добавляем поддержку HTML
+                    parse_mode='HTML'
                 )
         except aiogram.exceptions.TelegramBadRequest as e:
             if "message to edit not found" in str(e):
-                logging.warning(f"Message to edit not found: {e}")
+                logger.warning(f"Сообщение не найдено: {e}")
                 await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
             else:
                 raise
 
+    @dp.callback_query(lambda c: c.data.startswith('confirm_force_end_giveaway:'))
+    async def process_confirm_force_end_giveaway(callback_query: types.CallbackQuery):
+        """Запрос подтверждения для завершения розыгрыша ⏹️"""
+        giveaway_id = callback_query.data.split(':')[1]
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="✅ Да", callback_data=f"force_end_giveaway:{giveaway_id}")
+        keyboard.button(text="❌ Нет", callback_data=f"view_active_giveaway:{giveaway_id}")
+        keyboard.adjust(2)
+
+        await bot.answer_callback_query(callback_query.id)
+        await send_message_with_image(
+            bot,
+            chat_id=callback_query.from_user.id,
+            message_id=callback_query.message.message_id,
+            text="⏹️ Вы уверены, что хотите завершить розыгрыш? Это действие нельзя отменить! 😮",
+            reply_markup=keyboard.as_markup()
+        )
+
+    @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
+    async def process_force_end_giveaway(callback_query: types.CallbackQuery):
+        """Принудительное завершение розыгрыша после подтверждения ⏹️"""
+        giveaway_id = callback_query.data.split(':')[1]
+        await bot.answer_callback_query(callback_query.id, text="⏳ Завершаем розыгрыш...")
+
+        try:
+            await end_giveaway(bot=bot, giveaway_id=giveaway_id, supabase=supabase)
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="В меню", callback_data="back_to_main_menu")
+            await send_message_with_image(
+                bot,
+                chat_id=callback_query.from_user.id,
+                message_id=callback_query.message.message_id,
+                text="✅ Розыгрыш завершён! Результаты уже в сообществах 🎉",
+                reply_markup=keyboard.as_markup()
+            )
+        except Exception as e:
+            logger.error(f"🚫 Ошибка завершения розыгрыша: {str(e)}")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data="active_giveaways")
+            await send_message_with_image(
+                bot,
+                chat_id=callback_query.from_user.id,
+                message_id=callback_query.message.message_id,
+                text="❌ Упс! Не удалось завершить розыгрыш 😔 Попробуйте снова!",
+                reply_markup=keyboard.as_markup()
+            )
+
     @dp.callback_query(lambda c: c.data.startswith('edit_active_post:'))
-    async def process_edit_active_post(callback_query: types.CallbackQuery):
+    async def process_edit_active_post(callback_query: CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
         await _show_edit_menu_active(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
 
     async def _show_edit_menu_active(user_id: int, giveaway_id: str, message_id: int = None):
+        """Показывает меню редактирования активного розыгрыша ✏️"""
         response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
         if not response.data:
-            await bot.send_message(user_id, "Розыгрыш не найден.")
+            await bot.send_message(user_id, "🔍 Розыгрыш не найден 😕")
             return
 
         giveaway = response.data
-
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="📝 Название", callback_data=f"edit_name_active:{giveaway_id}")
         keyboard.button(text="📄 Описание", callback_data=f"edit_name_active_active:{giveaway_id}")
-        keyboard.button(text="🏆 Кол-во победителей", callback_data=f"edit_winner_count_active:{giveaway_id}")
-        keyboard.button(text="🗓 Дата завершения", callback_data=f"change_end_date_active:{giveaway_id}")
-        keyboard.button(text="🖼 Медиа", callback_data=f"view_manage_media:{giveaway_id}")
+        keyboard.button(text="🏆 Победители", callback_data=f"edit_winner_count_active:{giveaway_id}")
+        keyboard.button(text="⏰ Дата", callback_data=f"change_end_date_active:{giveaway_id}")
+        keyboard.button(text="🖼️ Медиа", callback_data=f"view_manage_media:{giveaway_id}")
         keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1)
 
-        invite_info = ""
-        if giveaway.get('invite', False):
-            invite_info = f"\n👥 Требуется пригласить: {giveaway['quantity_invite']} друзей"
-
-        # Обновляем отображение с поддержкой HTML
+        invite_info = f"\n👥 Приглашайте {giveaway['quantity_invite']} друзей!" if giveaway.get('invite', False) else ""
         giveaway_info = f"""
-📊 <b>Текущая информация о розыгрыше:</b>
+📊 <b>Ваш активный розыгрыш:</b>
 
-📝 <b>Название:</b> {giveaway['name']}
-📄 <b>Описание:</b> {giveaway['description']}
+<b>Название:</b> {giveaway['name']}
+<b>Описание:</b> {giveaway['description']}
 
-🏆 <b>Количество победителей:</b> {giveaway['winner_count']}
-🗓 <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} по МСК
-
-🖼 <b>Медиа:</b> {'Прикреплено' if giveaway['media_type'] else 'Отсутствует'}
+🏆 <b>Победителей:</b> {giveaway['winner_count']}
+⏰ <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+🖼️ <b>Медиа:</b> {'✅ Есть' if giveaway['media_type'] else '❌ Нет'}
 {invite_info}
-    """
+✨ Что хотите изменить?
+"""
 
         try:
             if giveaway['media_type'] and giveaway['media_file_id']:
@@ -359,15 +325,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     await bot.edit_message_media(
                         chat_id=user_id,
                         message_id=message_id,
-                        media=media_class(
-                            media=giveaway['media_file_id'],
-                            caption=giveaway_info,
-                            parse_mode='HTML'  # Добавляем поддержку HTML
-                        ),
+                        media=media_class(media=giveaway['media_file_id'], caption=giveaway_info, parse_mode='HTML'),
                         reply_markup=keyboard.as_markup()
                     )
                 else:
-                    raise ValueError(f"Unknown media type: {giveaway['media_type']}")
+                    raise ValueError(f"Неизвестный тип медиа: {giveaway['media_type']}")
             else:
                 await send_message_with_image(
                     bot,
@@ -375,166 +337,100 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                     giveaway_info,
                     reply_markup=keyboard.as_markup(),
                     message_id=message_id,
-                    parse_mode='HTML'  # Добавляем поддержку HTML
+                    parse_mode='HTML'
                 )
         except aiogram.exceptions.TelegramBadRequest as e:
             if "message to edit not found" in str(e):
-                logging.warning(f"Message to edit not found: {e}")
+                logger.warning(f"Сообщение не найдено: {e}")
                 await send_new_giveaway_message(user_id, giveaway, giveaway_info, keyboard)
             else:
                 raise
         except Exception as e:
-            logging.error(f"Error in _show_edit_menu_active: {str(e)}")
-            await bot.send_message(
-                chat_id=user_id,
-                text="Произошла ошибка при отображении меню редактирования. Пожалуйста, попробуйте еще раз.",
-                parse_mode='HTML'
-            )
-
-    @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
-    async def process_force_end_giveaway(callback_query: types.CallbackQuery):
-        giveaway_id = callback_query.data.split(':')[1]
-        await bot.answer_callback_query(callback_query.id, text="Завершение розыгрыша...")
-
-        await end_giveaway(bot=bot, giveaway_id=giveaway_id, supabase=supabase)
-
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Назад", callback_data="back_to_main_menu")
-        await send_message_with_image(bot, chat_id=callback_query.from_user.id,
-                                      message_id=callback_query.message.message_id,
-                                      text="Розыгрыш успешно завершен. Результаты опубликованы в связанных сообществах.",
-                                      reply_markup=keyboard.as_markup())
+            logger.error(f"🚫 Ошибка: {str(e)}")
+            await bot.send_message(user_id, "❌ Упс! Ошибка загрузки меню 😔 Попробуйте снова!", parse_mode='HTML')
 
     async def send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard):
-        # Этот метод уже обновлен в вашем коде с parse_mode='HTML', оставляем как есть
+        """Отправляет новое сообщение о розыгрыше 📬"""
         if giveaway['media_type'] and giveaway['media_file_id']:
             if giveaway['media_type'] == 'photo':
-                await bot.send_photo(
-                    chat_id,
-                    giveaway['media_file_id'],
-                    caption=giveaway_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
+                await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup(), parse_mode='HTML')
             elif giveaway['media_type'] == 'gif':
-                await bot.send_animation(
-                    chat_id,
-                    animation=giveaway['media_file_id'],
-                    caption=giveaway_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
+                await bot.send_animation(chat_id, animation=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup(), parse_mode='HTML')
             elif giveaway['media_type'] == 'video':
-                await bot.send_video(
-                    chat_id,
-                    video=giveaway['media_file_id'],
-                    caption=giveaway_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
+                await bot.send_video(chat_id, video=giveaway['media_file_id'], caption=giveaway_info, reply_markup=keyboard.as_markup(), parse_mode='HTML')
         else:
-            await send_message_with_image(
-                bot,
-                chat_id,
-                giveaway_info,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
-            )
+            await send_message_with_image(bot, chat_id, giveaway_info, reply_markup=keyboard.as_markup(), parse_mode='HTML')
 
     async def update_published_posts_active(giveaway_id: str, new_giveaway_data: dict):
-            try:
-                giveaway_response = supabase.table('giveaways').select('published_messages').eq('id',
-                                                                                                giveaway_id).single().execute()
-                published_messages = json.loads(giveaway_response.data['published_messages'])
+        """Обновляет опубликованные посты активного розыгрыша 📢"""
+        try:
+            giveaway_response = supabase.table('giveaways').select('published_messages').eq('id', giveaway_id).single().execute()
+            published_messages = json.loads(giveaway_response.data['published_messages'])
 
-                for message in published_messages:
-                    chat_id = message['chat_id']
-                    message_id = message['message_id']
+            for message in published_messages:
+                chat_id = message['chat_id']
+                message_id = message['message_id']
 
-                    new_post_text = f"""
-    {new_giveaway_data['name']}
+                participants_response = supabase.table('participations').select('count').eq('giveaway_id', giveaway_id).execute()
+                participants_count = participants_response.data[0]['count']
 
-    {new_giveaway_data['description']}
+                new_post_text = f"""
+<b>{new_giveaway_data['name']}</b>
+{new_giveaway_data['description']}
 
-    <b>Количество победителей:</b> {new_giveaway_data['winner_count']}
-    <b>Дата завершения:</b> {(datetime.fromisoformat(new_giveaway_data['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+🏆 <b>Победителей:</b> {new_giveaway_data['winner_count']}
+⏰ <b>Конец:</b> {(datetime.fromisoformat(new_giveaway_data['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+✨ Жми, чтобы участвовать!
+"""
 
-    Нажмите кнопку ниже, чтобы принять участие!
-    """
+                keyboard = InlineKeyboardBuilder()
+                keyboard.button(text=f"🎉 Участвовать ({participants_count})", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}")
 
-                    participants_response = supabase.table('participations').select('count').eq('giveaway_id',
-                                                                                                giveaway_id).execute()
-                    participants_count = participants_response.data[0]['count']
-
-                    keyboard = InlineKeyboardBuilder()
-                    keyboard.button(
-                        text=f"Участвовать ({participants_count})",
-                        url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
-                    )
-
-                    try:
-                        if new_giveaway_data['media_type'] and new_giveaway_data['media_file_id']:
-                            media_types = {
-                                'photo': types.InputMediaPhoto,
-                                'gif': types.InputMediaAnimation,
-                                'video': types.InputMediaVideo
-                            }
-                            media_class = media_types.get(new_giveaway_data['media_type'])
-                            if media_class:
-                                await bot.edit_message_media(
-                                    chat_id=chat_id,
-                                    message_id=message_id,
-                                    media=media_class(
-                                        media=new_giveaway_data['media_file_id'],
-                                        caption=new_post_text,
-                                        parse_mode='HTML'  # Добавляем поддержку HTML
-                                    ),
-                                    reply_markup=keyboard.as_markup()
-                                )
-                            else:
-                                raise ValueError(f"Unknown media type: {new_giveaway_data['media_type']}")
+                try:
+                    if new_giveaway_data['media_type'] and new_giveaway_data['media_file_id']:
+                        media_types = {
+                            'photo': types.InputMediaPhoto,
+                            'gif': types.InputMediaAnimation,
+                            'video': types.InputMediaVideo
+                        }
+                        media_class = media_types.get(new_giveaway_data['media_type'])
+                        if media_class:
+                            await bot.edit_message_media(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                media=media_class(media=new_giveaway_data['media_file_id'], caption=new_post_text, parse_mode='HTML'),
+                                reply_markup=keyboard.as_markup()
+                            )
                         else:
-                            try:
-                                await bot.edit_message_text(
-                                    chat_id=chat_id,
-                                    message_id=message_id,
-                                    text=new_post_text,
-                                    reply_markup=keyboard.as_markup(),
-                                    parse_mode='HTML'  # Добавляем поддержку HTML
-                                )
-                            except aiogram.exceptions.TelegramBadRequest as e:
-                                if "there is no text in the message to edit" in str(e).lower():
-                                    new_message = await bot.send_message(
-                                        chat_id=chat_id,
-                                        text=new_post_text,
-                                        reply_markup=keyboard.as_markup(),
-                                        parse_mode='HTML'  # Добавляем поддержку HTML
-                                    )
-
-                                    try:
-                                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                                    except aiogram.exceptions.TelegramBadRequest:
-                                        logging.warning(f"Could not delete old message {message_id} in chat {chat_id}")
-
-                                    updated_messages = [msg for msg in published_messages if
-                                                        msg['message_id'] != message_id]
-                                    updated_messages.append({
-                                        'chat_id': chat_id,
-                                        'message_id': new_message.message_id
-                                    })
-                                    supabase.table('giveaways').update({
-                                        'published_messages': json.dumps(updated_messages)
-                                    }).eq('id', giveaway_id).execute()
-                                else:
-                                    raise
-                    except Exception as e:
-                        logging.error(f"Error updating published message: {str(e)}")
-
-            except Exception as e:
-                logging.error(f"Error updating published posts: {str(e)}")
+                            raise ValueError(f"Неизвестный тип медиа: {new_giveaway_data['media_type']}")
+                    else:
+                        try:
+                            await bot.edit_message_text(
+                                chat_id=chat_id,
+                                message_id=message_id,
+                                text=new_post_text,
+                                reply_markup=keyboard.as_markup(),
+                                parse_mode='HTML'
+                            )
+                        except aiogram.exceptions.TelegramBadRequest as e:
+                            if "there is no text in the message to edit" in str(e).lower():
+                                new_message = await bot.send_message(chat_id, text=new_post_text, reply_markup=keyboard.as_markup(), parse_mode='HTML')
+                                try:
+                                    await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                                except aiogram.exceptions.TelegramBadRequest:
+                                    logger.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}")
+                                updated_messages = [msg for msg in published_messages if msg['message_id'] != message_id]
+                                updated_messages.append({'chat_id': chat_id, 'message_id': new_message.message_id})
+                                supabase.table('giveaways').update({'published_messages': json.dumps(updated_messages)}).eq('id', giveaway_id).execute()
+                            else:
+                                raise
+                except Exception as e:
+                    logger.error(f"🚫 Ошибка обновления поста: {str(e)}")
+        except Exception as e:
+            logger.error(f"🚫 Ошибка обновления постов: {str(e)}")
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name_active:'))
-    async def process_edit_name_active(callback_query: types.CallbackQuery, state: FSMContext):
+    async def process_edit_name_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_name_active)
@@ -543,11 +439,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
 
-        message_text = f"Введите новое название розыгрыша (максимум {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            message_text,
+            f"✏️ Введите новое название (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML'
@@ -557,10 +452,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
     async def process_new_name_active(message: types.Message, state: FSMContext):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
-        # Получаем HTML-форматированный текст
         new_name = message.html_text if message.text else ""
 
-        # Check name length
         if len(new_name) > MAX_NAME_LENGTH:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
@@ -568,7 +461,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Название слишком длинное. Максимальная длина: {MAX_NAME_LENGTH} символов. Текущая длина: {len(new_name)} символов. Пожалуйста, введите более короткое название.\n{FORMATTING_GUIDE}",
+                f"⚠️ Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {len(new_name)}. Сократите! 😊\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -579,27 +472,24 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             supabase.table('giveaways').update({'name': new_name}).eq('id', giveaway_id).execute()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
-
-            # Update published posts
             giveaway_data = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute().data
             await update_published_posts_active(giveaway_id, giveaway_data)
         except Exception as e:
-            logging.error(f"Error updating giveaway name: {str(e)}")
+            logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Произошла ошибка при обновлении названия розыгрыша.",
+                "❌ Ой! Не удалось обновить название 😔",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
             )
-
         await state.clear()
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name_active_active:'))
-    async def process_edit_description_active(callback_query: types.CallbackQuery, state: FSMContext):
+    async def process_edit_description_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_description_active)
@@ -608,11 +498,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
 
-        message_text = f"Введите новое описание розыгрыша (максимум {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE}"
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            message_text,
+            f"📝 Введите новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE}",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML'
@@ -622,10 +511,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
     async def process_new_description_active(message: types.Message, state: FSMContext):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
-        # Получаем HTML-форматированный текст
         new_description = message.html_text if message.text else ""
 
-        # Check description length
         if len(new_description) > MAX_DESCRIPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
@@ -633,7 +520,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"Описание слишком длинное. Максимальная длина: {MAX_DESCRIPTION_LENGTH} символов. Текущая длина: {len(new_description)} символов. Пожалуйста, введите более короткое описание.\n{FORMATTING_GUIDE}",
+                f"⚠️ Описание длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {len(new_description)}. Сократите! 😊\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -644,27 +531,24 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             supabase.table('giveaways').update({'description': new_description}).eq('id', giveaway_id).execute()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
-
-            # Update published posts
             giveaway_data = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute().data
             await update_published_posts_active(giveaway_id, giveaway_data)
         except Exception as e:
-            logging.error(f"Error updating giveaway description: {str(e)}")
+            logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Произошла ошибка при обновлении описания розыгрыша.",
+                "❌ Ой! Не удалось обновить описание 😔",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
             )
-
         await state.clear()
 
     @dp.callback_query(lambda c: c.data.startswith('edit_winner_count_active:'))
-    async def process_edit_winner_count_active(callback_query: types.CallbackQuery, state: FSMContext):
+    async def process_edit_winner_count_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_winner_count_active)
@@ -676,117 +560,99 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"Введите новое количество победителей (максимум {MAX_WINNERS} победителей): \n\nВведите положительное целое число.",
+            f"🏆 Сколько будет победителей? Максимум {MAX_WINNERS}! Введите число 😊",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
 
     @dp.message(EditGiveawayStates.waiting_for_new_winner_count_active)
     async def process_new_winner_count_active(message: types.Message, state: FSMContext):
-        # Delete user's message first
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
 
         try:
-            # Show loading message
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "Обновление количества победителей...",
+                "⏳ Обновляем количество победителей...",
                 message_id=data.get('last_message_id'),
             )
 
             new_winner_count = int(message.text)
             if new_winner_count <= 0:
-                raise ValueError("Количество победителей должно быть положительным числом.")
+                raise ValueError("Количество должно быть положительным")
 
-            # Check winner count limit
             if new_winner_count > MAX_WINNERS:
-                keyboard = InlineKeyboardBuilder()
-                keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    f"Слишком много победителей. Максимальное количество: {MAX_WINNERS}. Пожалуйста, введите меньшее число.",
+                    f"⚠️ Слишком много! Максимум {MAX_WINNERS} победителей 😊",
                     message_id=data.get('last_message_id'),
                     reply_markup=keyboard.as_markup()
                 )
                 return
 
-            # Get current winner count for comparison
-            current_winner_count_response = supabase.table('giveaways').select('winner_count').eq('id',
-                                                                                                  giveaway_id).single().execute()
+            current_winner_count_response = supabase.table('giveaways').select('winner_count').eq('id', giveaway_id).single().execute()
             current_winner_count = current_winner_count_response.data['winner_count']
 
-            # Update winner count
             supabase.table('giveaways').update({'winner_count': new_winner_count}).eq('id', giveaway_id).execute()
 
-            # Handle congratulations messages
             if new_winner_count > current_winner_count:
                 for place in range(current_winner_count + 1, new_winner_count + 1):
                     supabase.table('congratulations').insert({
                         'giveaway_id': giveaway_id,
                         'place': place,
-                        'message': f"Поздравляем! Вы заняли {place} место в розыгрыше!"
+                        'message': f"🎉 Поздравляем! Вы заняли {place} место!"
                     }).execute()
             elif new_winner_count < current_winner_count:
-                supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).gte('place',
-                                                                                              new_winner_count + 1).execute()
+                supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).gte('place', new_winner_count + 1).execute()
 
-            # Update published posts
             giveaway_data = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute().data
             await update_published_posts_active(giveaway_id, giveaway_data)
-
-            # Show success by updating menu
             await state.clear()
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
 
         except ValueError:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Ошибка\n\nПожалуйста, введите положительное целое число для количества победителей.",
+                "⚠️ Введите положительное число! Например, 3 😊",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
-            # Don't clear state to allow retry
-
         except Exception as e:
+            logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-            logging.error(f"Error updating winner count: {str(e)}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Произошла ошибка при обновлении количества победителей. Пожалуйста, попробуйте еще раз.",
+                "❌ Ой! Не удалось обновить победителей 😔",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
 
     @dp.callback_query(lambda c: c.data.startswith('change_end_date_active:'))
-    async def process_change_end_date_active(callback_query: types.CallbackQuery, state: FSMContext):
+    async def process_change_end_date_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_end_time_active)
         await callback_query.answer()
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
-Укажите новую дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
+⏰ Укажите новую дату окончания в формате ДД.ММ.ГГГГ ЧЧ:ММ
 
-Текущая дата и время:
-<code>{current_time}</code>
+📅 Сейчас в Москве: <code>{current_time}</code>
 """
-
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -798,25 +664,22 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 
     @dp.message(EditGiveawayStates.waiting_for_new_end_time_active)
     async def process_new_end_time_active(message: types.Message, state: FSMContext):
-        # Delete user's message first
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
 
-        if message.text.lower() == '◀️ Назад':
+        if message.text.lower() == 'отмена':
             await state.clear()
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
             return
 
         try:
-            # Show loading message
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "Обновление даты завершения...",
+                "⏳ Обновляем дату...",
                 message_id=data.get('last_message_id'),
             )
 
@@ -824,73 +687,61 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             moscow_tz = pytz.timezone('Europe/Moscow')
             new_end_time_tz = moscow_tz.localize(new_end_time)
 
-            # Update the end time
-            supabase.table('giveaways').update({'end_time': new_end_time_tz.isoformat()}).eq('id',
-                                                                                             giveaway_id).execute()
-
-            # Update published posts
+            supabase.table('giveaways').update({'end_time': new_end_time_tz.isoformat()}).eq('id', giveaway_id).execute()
             giveaway_data = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute().data
             await update_published_posts_active(giveaway_id, giveaway_data)
-
-            # Show success by updating menu
             await state.clear()
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
 
         except ValueError:
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Назад", callback_data="_show_edit_menu_active")
-            error_message = f"""
-❌ Неверный формат даты.
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            html_message = f"""
+⚠️ Неверный формат! Используйте ДД.ММ.ГГГГ ЧЧ:ММ
 
-Пожалуйста, введите дату завершения розыгрыша в формате ДД.ММ.ГГГГ ЧЧ:ММ
-текущая дата и время: 
-<code>{current_time}</code>
+📅 Сейчас в Москве: <code>{current_time}</code>
 """
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                error_message,
+                html_message,
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
             )
-            # Don't clear state to allow retry
-
         except Exception as e:
-            logging.error(f"Error updating end time: {str(e)}")
+            logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Произошла ошибка при обновлении даты завершения розыгрыша. Пожалуйста, попробуйте еще раз.",
+                "❌ Ой! Не удалось обновить дату 😔",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
-            # Don't clear state to allow retry
 
     @dp.callback_query(lambda c: c.data.startswith('view_manage_media:'))
-    async def process_view_manage_media_active(callback_query: types.CallbackQuery, state: FSMContext):
+    async def process_view_manage_media_active(callback_query: CallbackQuery, state: FSMContext):
+        """Управление медиа активного розыгрыша 🖼️"""
         giveaway_id = callback_query.data.split(':')[1]
         giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
         giveaway = giveaway_response.data
 
         if giveaway['media_type']:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Изменить медиа файл", callback_data=f"change_media_active:{giveaway_id}")
-            keyboard.button(text="Удалить медиа файл", callback_data=f"delete_media_active:{giveaway_id}")
+            keyboard.button(text="✏️ Изменить медиа", callback_data=f"change_media_active:{giveaway_id}")
+            keyboard.button(text="🗑️ Удалить медиа", callback_data=f"delete_media_active:{giveaway_id}")
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             keyboard.adjust(1)
-
-            text = "Выберите действие, которое хотите сделать:"
+            text = "🖼️ Что сделать с медиа?"
         else:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Да", callback_data=f"add_media_active:{giveaway_id}")
+            keyboard.button(text="✅ Добавить", callback_data=f"add_media_active:{giveaway_id}")
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             keyboard.adjust(2)
-
-            text = f"Хотите добавить фото, GIF или видео? (максимальный размер файла: {MAX_MEDIA_SIZE_MB} МБ)"
+            text = f"🖼️ Добавить фото, GIF или видео? Максимум {MAX_MEDIA_SIZE_MB} МБ! 📎"
 
         await send_message_with_image(
             bot,
@@ -899,149 +750,113 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
-
         await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('add_media_active:') or c.data.startswith('change_media_active:'))
-    async def process_add_or_change_media_active(callback_query: types.CallbackQuery, state: FSMContext):
+    async def process_add_or_change_media_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_media_active)
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"view_manage_media:{giveaway_id}")
 
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"Пожалуйста, отправьте фото, GIF или видео (максимальный размер файла: {MAX_MEDIA_SIZE_MB} МБ).",
+            f"📸 Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)! 😊",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
-
         await bot.answer_callback_query(callback_query.id)
 
     @dp.message(EditGiveawayStates.waiting_for_new_media_active)
     async def process_new_media_active(message: types.Message, state: FSMContext):
-        # Delete user's message first
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
 
         try:
-            # Show loading message
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "Загрузка...",
+                "⏳ Загружаем медиа...",
                 message_id=data.get('last_message_id'),
             )
 
-            # Process media file
             if message.photo:
                 file_id = message.photo[-1].file_id
                 media_type = 'photo'
                 file_ext = 'jpg'
             elif message.animation:
                 file_id = message.animation.file_id
-                media_type = 'gif'  # Keep the media type as 'gif' for identification
-                file_ext = 'gif'  # Use gif extension
+                media_type = 'gif'
+                file_ext = 'gif'
             elif message.video:
                 file_id = message.video.file_id
                 media_type = 'video'
                 file_ext = 'mp4'
             else:
-                # Update message with error
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    "Пожалуйста, отправьте фото, GIF или видео.",
+                    "⚠️ Отправьте фото, GIF или видео! 😊",
                     message_id=data.get('last_message_id'),
                     reply_markup=keyboard.as_markup()
                 )
                 return
 
-            # Get file from Telegram
             file = await bot.get_file(file_id)
             file_content = await bot.download_file(file.file_path)
-
-            # Check file size
             file_size_mb = file.file_size / (1024 * 1024)
+
             if file_size_mb > MAX_MEDIA_SIZE_MB:
                 await send_message_with_image(
                     bot,
                     message.from_user.id,
-                    f"Файл слишком большой. Максимальный размер: {MAX_MEDIA_SIZE_MB} МБ. Текущий размер: {file_size_mb:.2f} МБ. Пожалуйста, отправьте файл меньшего размера.",
+                    f"⚠️ Файл большой! Максимум {MAX_MEDIA_SIZE_MB} МБ, сейчас {file_size_mb:.2f} МБ 😔",
                     reply_markup=keyboard.as_markup(),
                     message_id=data.get('last_message_id')
                 )
                 return
 
-            # Generate unique filename
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
             filename = f"{timestamp}_{message.message_id}.{file_ext}"
-
-            # Upload to Yandex Cloud Storage
             success, result = await upload_to_storage(file_content.read(), filename)
 
             if not success:
-                raise Exception(f"Failed to upload to storage: {result}")
+                raise Exception(result)
 
-            # Update database with new media info
-            supabase.table('giveaways').update({
-                'media_type': media_type,
-                'media_file_id': result
-            }).eq('id', giveaway_id).execute()
-
-            # Show success message and update menu
+            supabase.table('giveaways').update({'media_type': media_type, 'media_file_id': result}).eq('id', giveaway_id).execute()
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
-
-            # Update published posts
-            giveaway_data = supabase.table('giveaways').select('*').eq('id', giveaway_id).execute()
-            if giveaway_data.data:
-                await update_published_posts_active(giveaway_id, giveaway_data.data[0])
-
+            giveaway_data = supabase.table('giveaways').select('*').eq('id', giveaway_id).execute().data[0]
+            await update_published_posts_active(giveaway_id, giveaway_data)
             await state.clear()
 
         except Exception as e:
-            logging.error(f"Error updating media: {str(e)}")
+            logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Произошла ошибка при обновлении медиа файла. Пожалуйста, попробуйте еще раз.",
+                "❌ Ой! Не удалось загрузить медиа 😔",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup()
             )
 
     @dp.callback_query(lambda c: c.data.startswith('delete_media_active:'))
-    async def process_delete_media_active(callback_query: types.CallbackQuery, state: FSMContext):
+    async def process_delete_media_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
-
         try:
-            # Обновляем данные розыгрыша в базе данных
-            supabase.table('giveaways').update({
-                'media_type': None,
-                'media_file_id': None
-            }).eq('id', giveaway_id).execute()
-
-            # Получаем обновленные данные розыгрыша
+            supabase.table('giveaways').update({'media_type': None, 'media_file_id': None}).eq('id', giveaway_id).execute()
             giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
             giveaway_data = giveaway_response.data
-
-            # Обновляем меню редактирования
             await _show_edit_menu_active(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
-
-            # Обновляем опубликованные посты
             await update_published_posts_active(giveaway_id, giveaway_data)
-
-            await bot.answer_callback_query(callback_query.id, text="Медиа файл успешно удален.")
+            await bot.answer_callback_query(callback_query.id, text="✅ Медиа удалено! ✨")
         except Exception as e:
-            logging.error(f"Error deleting media: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при удалении медиа файла.")
-
+            logger.error(f"🚫 Ошибка: {str(e)}")
+            await bot.answer_callback_query(callback_query.id, text="❌ Не удалось удалить медиа 😔")
