@@ -192,8 +192,6 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
 
 <b>{giveaway['name']}</b>
 
-{giveaway['description']}
-
 <b>Победители:</b> {winners_list}
 
 <i>Поздравляем победителей!</i>
