@@ -40,6 +40,8 @@ register_my_participations_handlers(dp, bot, supabase)
 register_congratulations_messages(dp, bot, supabase)
 register_new_public(dp, bot, supabase)
 
+
+# Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
@@ -50,13 +52,65 @@ async def cmd_start(message: types.Message):
     ])
     await send_message_with_image(bot, message.chat.id, "Выберите действие:", reply_markup=keyboard)
 
+
+# Обработчик команды /help
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    help_text = (
+        "<b>Как создать розыгрыш</b>\n"
+        "<blockquote expandable>Первое, что вам нужно сделать, — это нажать в главном меню кнопку «Создать розыгрыш». После этого вам потребуется пошагово ввести:\n"
+        "1. Название розыгрыша\n"
+        "2. Описание\n"
+        "3. Медиафайл (если он необходим)\n"
+        "4. Дату завершения\n"
+        "5. Количество победителей</blockquote>\n\n"
+
+        "<b>Как опубликовать созданный розыгрыш</b>\n"
+        "<blockquote expandable>Чтобы опубликовать розыгрыш, сначала привяжите каналы или группы. Для этого:\n"
+        "1. Перейдите в ваш созданный розыгрыш\n"
+        "2. Нажмите кнопку «Привязать сообщества»\n"
+        "3. Нажмите «+ Новый паблик»\n"
+        "4. Добавьте бота в ваш канал или группу с правами администратора\n"
+        "5. Бот уведомит вас о успешной привязке\n"
+        "После привязки сообщества в разделе созданного розыгрыша нажмите кнопку «Опубликовать розыгрыш» и выберите привязанные сообщества, в которых хотите разместить розыгрыш.</blockquote>\n\n"
+
+        "<b>Дополнительные функции</b>\n"
+        "<blockquote expandable>В созданном розыгрыше вы можете:\n"
+        "- Редактировать название, описание, медиафайл и количество победителей\n"
+        "- Изменить сообщение для победителей\n"
+        "- Добавить задание «Пригласить друга» в условия участия</blockquote>\n\n"
+
+        "<b>Что можно делать, когда розыгрыш опубликован</b>\n"
+        "<blockquote expandable>В главном меню перейдите в раздел «Активные розыгрыши», выберите нужный розыгрыш. В нем вы можете:\n"
+        "- Полностью редактировать розыгрыш (все изменения отразятся в опубликованных постах)\n"
+        "- Принудительно завершить розыгрыш</blockquote>\n\n"
+
+        "<b>Что будет, когда розыгрыш завершится</b>\n"
+        "<blockquote expandable>После окончания времени розыгрыша бот автоматически:\n"
+        "- Рандомно определит победителей\n"
+        "- Опубликует в привязанных сообществах пост о завершении с указанием победителей и кнопкой «Результаты» (при нажатии пользователи увидят график участия)\n"
+        "- Отправит победителям сообщение, заданное вами ранее</blockquote>"
+    )
+
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="Создать розыгрыш", callback_data="create_giveaway")
+    keyboard.button(text="В меню", callback_data="back_to_main_menu")
+    keyboard.adjust(1)
+
+    await bot.send_message(
+        chat_id=message.chat.id,
+        text=help_text,
+        parse_mode="HTML",
+        reply_markup=keyboard.as_markup()
+    )
+
+
+# Обработчик возврата в главное меню
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
-    # Clear the state
     await state.clear()
     await bot.answer_callback_query(callback_query.id)
 
-    # Send a message to show the main menu
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="Создать розыгрыш", callback_data="create_giveaway")
     keyboard.button(text="Созданные розыгрыши", callback_data="created_giveaways")
@@ -78,6 +132,7 @@ async def periodic_username_check():
         await check_usernames(bot, supabase)
         await asyncio.sleep(60)  # Проверка каждую минуту
 
+
 # Главная функция запуска бота
 async def main():
     check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
@@ -88,6 +143,7 @@ async def main():
     finally:
         check_task.cancel()
         username_check_task.cancel()
+
 
 if __name__ == '__main__':
     asyncio.run(main())
