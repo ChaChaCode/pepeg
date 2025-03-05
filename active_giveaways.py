@@ -118,7 +118,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
 
         try:
-            response = supabase.table('giveaways').select('*').eq('is_active', True).eq('user_id', user_id).order('end_time').execute()
+            response = supabase.table('giveaways').select('*').eq('is_active', 'true').eq('user_id', user_id).order('end_time').execute()
             if not response.data:
                 await bot.answer_callback_query(callback_query.id, text="📭 У вас нет активных розыгрышей! Создайте новый? 🚀")
                 return
