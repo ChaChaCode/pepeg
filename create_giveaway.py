@@ -44,7 +44,7 @@ s3_client = boto3.client(
 )
 
 # Константы ⚙️
-MAX_NAME_LENGTH = 50
+MAX_NAME_LENGTH = 100
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 5
 MAX_WINNERS = 50
@@ -70,6 +70,7 @@ FORMATTING_GUIDE = """
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
+- Кастомные эмодзи
 </blockquote>
 """
 
@@ -162,7 +163,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"✏️ Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}",
+            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}",
             reply_markup=keyboard,
             message_id=callback_query.message.message_id,
             parse_mode='HTML'
@@ -181,7 +182,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"⚠️ Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {len(formatted_text)}. Сократите! 😊\n{FORMATTING_GUIDE}",
+                f"⚠️ Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {len(formatted_text)}. Сократите!\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard,
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -196,7 +197,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         await send_message_with_image(
             bot,
             message.chat.id,
-            f"📝 Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE}",
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE}",
             reply_markup=keyboard,
             message_id=data['last_message_id'],
             parse_mode='HTML'
@@ -214,7 +215,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"⚠️ Описание длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {len(formatted_text)}. Сократите! 😊\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Описание длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {len(formatted_text)}. Сократите!\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard,
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -233,7 +234,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         await send_message_with_image(
             bot,
             message.chat.id,
-            f"🖼️ Хотите добавить фото, GIF или видео? (до {MAX_MEDIA_SIZE_MB} МБ) 📎",
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите добавить фото, GIF или видео? (до {MAX_MEDIA_SIZE_MB} МБ) 📎",
             reply_markup=keyboard.as_markup(),
             message_id=data['last_message_id'],
             parse_mode='HTML'
@@ -253,7 +254,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
-                f"📸 Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)! 😊",
+                f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!",
                 reply_markup=keyboard,
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML'
@@ -270,7 +271,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
-                f"🖼️ Хотите добавить фото, GIF или видео? (до {MAX_MEDIA_SIZE_MB} МБ) 📎",
+                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите добавить фото, GIF или видео? (до {MAX_MEDIA_SIZE_MB} МБ) 📎",
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML'
@@ -286,7 +287,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "⏳ Загружаем ваше медиа...",
+                "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Загружаем ваше медиа...",
                 reply_markup=keyboard,
                 message_id=last_message_id,
                 parse_mode='HTML'
@@ -308,7 +309,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    "⚠️ Отправьте фото, GIF или видео! 😊",
+                    "<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Отправьте фото, GIF или видео!",
                     reply_markup=keyboard,
                     message_id=last_message_id,
                     parse_mode='HTML'
@@ -323,7 +324,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    f"⚠️ Файл большой! Максимум {MAX_MEDIA_SIZE_MB} МБ, сейчас {file_size_mb:.2f} МБ 😔",
+                    f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл большой! Максимум {MAX_MEDIA_SIZE_MB} МБ, сейчас {file_size_mb:.2f} МБ 😔",
                     reply_markup=keyboard,
                     message_id=last_message_id,
                     parse_mode='HTML'
@@ -349,7 +350,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "❌ Ой! Не удалось загрузить медиа 😔 Попробуйте ещё раз!",
+                "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой! Не удалось загрузить медиа 😔 Попробуйте ещё раз!",
                 reply_markup=keyboard,
                 message_id=data.get('last_message_id'),
                 parse_mode='HTML'
@@ -362,9 +363,9 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         keyboard.button(text="В меню", callback_data="back_to_main_menu")
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
-⏰ Когда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>
+Когда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>
 
-📅 Сейчас в Москве: <code>{current_time}</code>
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
         await send_message_with_image(
             bot,
@@ -389,7 +390,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"🏆 Сколько будет победителей? Максимум {MAX_WINNERS}! 😊",
+                f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
@@ -401,9 +402,9 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             html_message = f"""
-⚠️ Неверный формат! Используйте <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>
+<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неверный формат! Используйте <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>
 
-📅 Сейчас в Москве: <code>{current_time}</code>
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>
 """
             await send_message_with_image(
                 bot,
@@ -482,15 +483,16 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Редактировать", callback_data=f"edit_post:{giveaway_id}")
             keyboard.button(text="👥 Привязать сообщества", callback_data=f"bind_communities:{giveaway_id}")
-            keyboard.button(text="🚀 Опубликовать", callback_data=f"activate_giveaway:{giveaway_id}")
+            keyboard.button(text="📢 Опубликовать", callback_data=f"activate_giveaway:{giveaway_id}")
             keyboard.button(text="📩 Добавить приглашения", callback_data=f"add_invite_task:{giveaway_id}")
             keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
+            keyboard.button(text="👀 Предпросмотр", callback_data=f"preview_giveaway:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_giveaway:{giveaway_id}")
-            keyboard.button(text="🔙 Назад", callback_data="created_giveaways")
+            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
             # Include invite info if applicable
-            invite_info = f"\n📩 Приглашайте {giveaway['quantity_invite']} друзей для участия!" if giveaway.get('invite',
+            invite_info = f"\n<tg-emoji emoji-id='5352899869369446268'>😊</tg-emoji> Приглашайте {giveaway['quantity_invite']} друзей для участия!" if giveaway.get('invite',
                                                                                                                False) else ""
 
             # Format the giveaway message
@@ -498,10 +500,11 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 '%d.%m.%Y %H:%M')
             giveaway_info = f"""
 <b>{giveaway['name']}</b>
+
 {giveaway['description']}
 
-🏆 <b>Победителей:</b> {giveaway['winner_count']}
-⏰ <b>Конец:</b> {end_time_msk} (МСК)
+<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {end_time_msk} (МСК)
 {invite_info}
 """
 
@@ -511,13 +514,13 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         except Exception as e:
             logger.error(f"🚫 Ошибка отображения розыгрыша: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="🔙 Назад", callback_data="created_giveaways")
+            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             # Fallback to editing the message with an error if possible
             if message_id:
                 await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
-                    text="❌ Ошибка загрузки розыгрыша 😔\n⚠️ Упс! Что-то пошло не так. Попробуйте снова! 😊",
+                    text="❌ Ошибка загрузки розыгрыша 😔\n⚠️ Упс! Что-то пошло не так. Попробуйте снова!",
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML'
                 )
@@ -525,7 +528,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 await send_message_with_image(
                     bot,
                     chat_id,
-                    "❌ Ошибка загрузки розыгрыша 😔\n⚠️ Упс! Что-то пошло не так. Попробуйте снова! 😊",
+                    "❌ Ошибка загрузки розыгрыша 😔\n⚠️ Упс! Что-то пошло не так. Попробуйте снова!",
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML'
                 )
@@ -545,7 +548,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    f"⚠️ Слишком много! Максимум {MAX_WINNERS} победителей 😊",
+                    f"⚠️ Слишком много! Максимум {MAX_WINNERS} победителей",
                     message_id=data.get('last_message_id'),
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML'
@@ -559,7 +562,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "⏳ Создаём ваш розыгрыш...",
+                "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Создаём ваш розыгрыш...",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
@@ -602,7 +605,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "⚠️ Введите положительное число! Например, 3 😊",
+                "⚠️ Введите положительное число! Например, 3",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
