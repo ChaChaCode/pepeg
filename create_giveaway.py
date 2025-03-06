@@ -79,7 +79,7 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
     try:
         file_size_mb = len(file_content) / (1024 * 1024)
         if file_size_mb > MAX_MEDIA_SIZE_MB:
-            return False, f"⚠️ Файл слишком большой! Максимум: {MAX_MEDIA_SIZE_MB} МБ 😔"
+            return False, f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой! Максимум: {MAX_MEDIA_SIZE_MB} МБ 😔"
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
@@ -182,7 +182,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"⚠️ Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {len(formatted_text)}. Сократите!\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {len(formatted_text)}. Сократите!\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard,
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -548,7 +548,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
                 await send_message_with_image(
                     bot,
                     message.chat.id,
-                    f"⚠️ Слишком много! Максимум {MAX_WINNERS} победителей",
+                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Слишком много! Максимум {MAX_WINNERS} победителей",
                     message_id=data.get('last_message_id'),
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML'
@@ -605,7 +605,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                "⚠️ Введите положительное число! Например, 3",
+                "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число! Например, 3",
                 message_id=data.get('last_message_id'),
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
