@@ -14,8 +14,6 @@ from postgrest import APIResponse
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = '7924714999:AAFUbKWC--s-ff2DKe6g5Sk1C2Z7yl7hh0c'
-bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
@@ -36,10 +34,11 @@ FORMATTING_GUIDE = """
 - Курсив: <i>текст</i>
 - Подчёркнутый: <u>текст</u>
 - Зачёркнутый: <s>текст</s>
-- Моноширинный: <pre>текст</pre>
+- Моноширинный
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
-- Ссылка: <a href="https://example.com">текст</a>
+- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
+- Кастомные эмодзи
 </blockquote>
 """
 
@@ -83,7 +82,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         keyboard.button(text="Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
         keyboard.adjust(1)
 
-        message_text = f"Выберите место для редактирования поздравления или общее поздравление для всех победителей."
+        message_text = f"<tg-emoji emoji-id='5467538555158943525'>💭</tg-emoji> Выберите место для редактирования поздравления или общее поздравление для всех победителей."
 
         await send_message_with_image(
             bot,
@@ -184,7 +183,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         await state.update_data(giveaway_id=giveaway_id, place=place)
         await state.set_state(GiveawayStates.waiting_for_congrats_message)
 
-        message_text = f"Напишите своё поздравление для победителя, занявшего {place} место."
+        message_text = f"<tg-emoji emoji-id='5253742260054409879'>✉️</tg-emoji> Напишите своё поздравление для победителя, занявшего {place} место."
         if existing_message:
             message_text += f"\n\nТекущее поздравление:\n{existing_message}"
 
