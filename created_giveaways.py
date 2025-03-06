@@ -1312,7 +1312,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         )
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_community_selection:'))
-    async def process_confirm_community_selection(callback_query: CallbackQuery):
+    async def process_confirm_community_selection(callback_query: CallbackQuery, state: FSMContext):  # Добавляем state
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
 
@@ -1350,6 +1350,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     await unbind_community_from_giveaway(giveaway_id, community_id)
 
                 await bot.answer_callback_query(callback_query.id, text="✅ Сообщества обновлены!")
+            else:
+                await bot.answer_callback_query(callback_query.id, text="✅ Выбор сохранен")
 
             # Перенаправление в любом случае
             new_callback_query = types.CallbackQuery(
@@ -1361,7 +1363,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             )
             if user_id in user_selected_communities:
                 del user_selected_communities[user_id]
-            await process_view_created_giveaway(new_callback_query)
+            await process_view_created_giveaway(new_callback_query, state)  # Передаем state
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
@@ -1529,12 +1531,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         )
                         counter_tasks.append(task)
 
-                    await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Розыгрыш запущен! 🎉")
+                    await bot.answer_callback_query(callback_query.id, text="✅ Розыгрыш запущен! 🎉")
 
                     keyboard = InlineKeyboardBuilder()
                     keyboard.button(text="🏠 Назад", callback_data="back_to_main_menu")
 
-                    result_message = f"<b><tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Успешно опубликовано в {success_count} сообществах!</b>\n🔄 Участники будут обновляться каждую минуту."
+                    result_message = f"<b><tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Успешно опубликовано в {success_count} сообществах!</b>\n<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> Участники будут обновляться каждую минуту."
                     if error_count > 0:
                         result_message += f"\n\n<b><tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибок: {error_count}</b>"
                         for error in error_messages:
