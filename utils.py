@@ -28,10 +28,11 @@ FORMATTING_GUIDE = """
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
 - Ссылка: <a href="https://example.com">текст</a>
 - Код: <code>текст</code>
+- Кастомные эмодзи
 </blockquote>
 """
 
-async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None, parse_mode: str = 'HTML') -> Message | None:
+async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None, parse_mode: str = 'HTML', entities=None) -> Message | None:
     image_path = 'image/pepes.png'  # Replace with your image path
     image = FSInputFile(image_path)
 
@@ -41,20 +42,45 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
             return await bot.edit_message_media(
                 chat_id=chat_id,
                 message_id=message_id,
-                media=types.InputMediaPhoto(media=image, caption=text, parse_mode=parse_mode),
+                media=types.InputMediaPhoto(
+                    media=image,
+                    caption=text,
+                    parse_mode=parse_mode,
+                    caption_entities=entities
+                ),
                 reply_markup=reply_markup
             )
         else:
             # Send new message
-            return await bot.send_photo(chat_id=chat_id, photo=image, caption=text, reply_markup=reply_markup, parse_mode=parse_mode)
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=image,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                caption_entities=entities
+            )
     except Exception as e:
         logging.error(f"Error in send_message_with_image: {str(e)}")
         # If sending/editing with image fails, try sending/editing just the text
         try:
             if message_id:
-                return await bot.edit_message_text(chat_id=chat_id, message_id=message_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+                return await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    entities=entities
+                )
             else:
-                return await bot.send_message(chat_id=chat_id, text=text, reply_markup=reply_markup, parse_mode=parse_mode)
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    entities=entities
+                )
         except Exception as text_e:
             logging.error(f"Error sending/editing text message: {str(text_e)}")
         return None
