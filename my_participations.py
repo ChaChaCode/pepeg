@@ -92,7 +92,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             # Add back button in its own row
             keyboard.row(types.InlineKeyboardButton(
-                text="Назад",
+                text="◀️ Назад",
                 callback_data="back_to_main_menu"
             ))
 
@@ -142,7 +142,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 text="Открыть",
                 url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
             )
-            keyboard.button(text="Назад к списку", callback_data="my_participations")
+            keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
             keyboard.adjust(1)
 
             try:
