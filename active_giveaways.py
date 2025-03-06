@@ -252,7 +252,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
     async def process_force_end_giveaway(callback_query: types.CallbackQuery):
         """Принудительное завершение розыгрыша после подтверждения ⏹️"""
         giveaway_id = callback_query.data.split(':')[1]
-        await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Завершаем розыгрыш...")
+        await bot.answer_callback_query(callback_query.id, text="Завершаем розыгрыш...")
 
         try:
             await end_giveaway(bot=bot, giveaway_id=giveaway_id, supabase=supabase)
