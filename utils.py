@@ -215,21 +215,20 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
     if winners:
         winners_list = ', '.join([f"<a href='tg://user?id={w['user_id']}'>@{w['username']}</a>" for w in winners])
         result_message = f"""
-<b>🎉 Розыгрыш завершен! 🎉</b>
+<b><tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> Розыгрыш завершен! <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
 <b>{giveaway['name']}</b>
 
-<b>Победители:</b> {winners_list}
+<b>Победители:</b> 
+<blockquote expandable>{winners_list}</blockquote>
 
 <i>Поздравляем победителей!</i>
 """
     else:
         result_message = f"""
-<b>🎉 Розыгрыш завершен! 🎉</b>
+<b><tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> Розыгрыш завершен! <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
 <b>{giveaway['name']}</b>
-
-{giveaway['description']}
 
 К сожалению, в этом розыгрыше не было участников.
 """
