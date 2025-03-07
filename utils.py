@@ -32,7 +32,9 @@ FORMATTING_GUIDE = """
 </blockquote>
 """
 
-async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None, parse_mode: str = 'HTML', entities=None) -> Message | None:
+
+async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
+                                  parse_mode: str = 'HTML', entities=None) -> Message | None:
     image_path = 'image/pepes.png'  # Replace with your image path
     image = FSInputFile(image_path)
 
@@ -85,6 +87,7 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
             logging.error(f"Error sending/editing text message: {str(text_e)}")
         return None
 
+
 async def check_and_end_giveaways(bot: Bot, supabase: Client):
     while True:
         now = datetime.now(pytz.utc)
@@ -106,6 +109,7 @@ async def check_and_end_giveaways(bot: Bot, supabase: Client):
 
         await asyncio.sleep(30)  # Check every 30 seconds
 
+
 async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
     try:
         # Fetch giveaway details
@@ -123,7 +127,8 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
         valid_participants = await recheck_participants(bot, supabase, giveaway_id, participants)
 
         # Select winners from valid participants
-        winners = await select_random_winners(bot, valid_participants, min(len(valid_participants), giveaway['winner_count']))
+        winners = await select_random_winners(bot, valid_participants,
+                                              min(len(valid_participants), giveaway['winner_count']))
 
         # Update giveaway status
         await update_giveaway_status(supabase, giveaway_id, 'false')  # Используем 'false' вместо False
@@ -179,7 +184,9 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
     except Exception as e:
         logging.error(f"Error in end_giveaway: {str(e)}")
 
-async def recheck_participants(bot: Bot, supabase: Client, giveaway_id: str, participants: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+async def recheck_participants(bot: Bot, supabase: Client, giveaway_id: str, participants: List[Dict[str, Any]]) -> \
+List[Dict[str, Any]]:
     valid_participants = []
     giveaway_communities = await get_giveaway_communities(supabase, giveaway_id)
 
@@ -190,11 +197,13 @@ async def recheck_participants(bot: Bot, supabase: Client, giveaway_id: str, par
         for community in giveaway_communities:
             try:
                 member = await bot.get_chat_member(chat_id=community['community_id'], user_id=user_id)
-                if member.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+                if member.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR,
+                                         ChatMemberStatus.CREATOR]:
                     is_valid = False
                     break
             except Exception as e:
-                logging.error(f"Error checking membership for user {user_id} in community {community['community_id']}: {str(e)}")
+                logging.error(
+                    f"Error checking membership for user {user_id} in community {community['community_id']}: {str(e)}")
                 is_valid = False
                 break
 
@@ -205,7 +214,9 @@ async def recheck_participants(bot: Bot, supabase: Client, giveaway_id: str, par
 
     return valid_participants
 
-async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveaway: Dict[str, Any], winners: List[Dict[str, Any]]):
+
+async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveaway: Dict[str, Any],
+                                             winners: List[Dict[str, Any]]):
     response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway['id']).execute()
     if not response.data:
         logging.error(f"Error fetching communities: No communities found")
@@ -213,14 +224,30 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
     communities = response.data
 
     if winners:
-        winners_list = ', '.join([f"<a href='tg://user?id={w['user_id']}'>@{w['username']}</a>" for w in winners])
+        # Format winners with medals for top 3 places
+        winners_formatted = []
+        for idx, winner in enumerate(winners, start=1):
+            medal = ""
+            if idx == 1:
+                medal = "<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> "
+            elif idx == 2:
+                medal = "<tg-emoji emoji-id='5447203607294265305'>🥈</tg-emoji> "
+            elif idx == 3:
+                medal = "<tg-emoji emoji-id='5453902265922376865'>🥉</tg-emoji> "
+
+            winners_formatted.append(
+                f"{medal}{idx}. <a href='tg://user?id={winner['user_id']}'>@{winner['username']}</a>")
+
+        winners_list = '\n'.join(winners_formatted)
         result_message = f"""
 <b><tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> Розыгрыш завершен! <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
 <b>{giveaway['name']}</b>
 
 <b>Победители:</b> 
-<blockquote expandable>{winners_list}</blockquote>
+<blockquote expandable>
+{winners_list}
+</blockquote>
 
 <i>Поздравляем победителей!</i>
 """
@@ -286,12 +313,14 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
         except Exception as e:
             logging.error(f"Error publishing results in community @{community['community_id']}: {e}")
 
-    congrats_response = supabase.table('congratulations').select('place', 'message').eq('giveaway_id', giveaway['id']).execute()
+    congrats_response = supabase.table('congratulations').select('place', 'message').eq('giveaway_id',
+                                                                                        giveaway['id']).execute()
     congrats_messages = {item['place']: item['message'] for item in congrats_response.data}
 
     for index, winner in enumerate(winners, start=1):
         try:
-            congrats_message = congrats_messages.get(index, f"<b>Поздравляем!</b> Вы выиграли в розыгрыше \"<i>{giveaway['name']}</i>\"!")
+            congrats_message = congrats_messages.get(index,
+                                                     f"<b>Поздравляем!</b> Вы выиграли в розыгрыше \"<i>{giveaway['name']}</i>\"!")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text="Результаты",
@@ -307,7 +336,9 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
         except Exception as e:
             logging.error(f"Error notifying winner {winner['user_id']}: {e}")
 
-async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], winner_count: int) -> List[Dict[str, Any]]:
+
+async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], winner_count: int) -> List[
+    Dict[str, Any]]:
     winners = random.sample(participants, min(winner_count, len(participants)))
     winner_details = []
     for winner in winners:
@@ -327,6 +358,7 @@ async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], wi
             })
     return winner_details
 
+
 async def update_giveaway_status(supabase: Client, giveaway_id: str, is_active: str):
     try:
         # Используем строковое значение 'true' или 'false' вместо булевого
@@ -334,9 +366,11 @@ async def update_giveaway_status(supabase: Client, giveaway_id: str, is_active: 
     except Exception as e:
         logging.error(f"Error updating giveaway status: {str(e)}")
 
+
 async def get_giveaway_communities(supabase: Client, giveaway_id: str) -> List[Dict[str, Any]]:
     response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway_id).execute()
     return response.data if response.data else []
+
 
 async def check_usernames(bot: Bot, supabase: Client):
     try:
