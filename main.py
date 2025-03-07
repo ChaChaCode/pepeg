@@ -132,54 +132,54 @@ async def periodic_username_check():
         await asyncio.sleep(60)  # Проверка каждую минуту
 
 # Обработчик для получения ID кастомных эмодзи
-@dp.message()
-async def handle_custom_emoji(message: types.Message):
+#@dp.message()
+#async def handle_custom_emoji(message: types.Message):
     # Проверяем наличие кастомных эмодзи
-    found_emoji = False
+    #   found_emoji = False
 
     # Проверка через entities
-    if message.entities:
-        for entity in message.entities:
-            if entity.type == "custom_emoji":
-                found_emoji = True
-                emoji_id = entity.custom_emoji_id
-                start_pos = entity.offset
-                end_pos = entity.offset + entity.length
-                emoji_text = message.text[start_pos:end_pos]
+        #    if message.entities:
+        #for entity in message.entities:
+        #    if entity.type == "custom_emoji":
+        #        found_emoji = True
+        #        emoji_id = entity.custom_emoji_id
+        #        start_pos = entity.offset
+        #        end_pos = entity.offset + entity.length
+        #        emoji_text = message.text[start_pos:end_pos]
 
-                emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+        #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
 
                 # Отправляем как текст, который можно скопировать
-                await message.reply(
-                    f"```\n{emoji_format}\n```",
-                    parse_mode="MarkdownV2"
-                )
+        #        await message.reply(
+        #            f"```\n{emoji_format}\n```",
+        #            parse_mode="MarkdownV2"
+        #        )
 
     # Если в сообщении есть HTML-разметка эмодзи
-    if "<tg-emoji" in message.text and not found_emoji:
-        import re
-        emoji_matches = re.findall(r'<tg-emoji emoji-id=[\'"](\d+)[\'"]>(.+?)</tg-emoji>', message.text)
+    #if "<tg-emoji" in message.text and not found_emoji:
+    #    import re
+    #    emoji_matches = re.findall(r'<tg-emoji emoji-id=[\'"](\d+)[\'"]>(.+?)</tg-emoji>', message.text)
 
-        if emoji_matches:
-            for emoji_id, emoji_text in emoji_matches:
-                emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+    #    if emoji_matches:
+    #        for emoji_id, emoji_text in emoji_matches:
+    #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
 
                 # Экранируем специальные символы для MarkdownV2
-                escaped_format = emoji_format.replace("<", "\\<").replace(">", "\\>").replace("'", "\\'")
+    #            escaped_format = emoji_format.replace("<", "\\<").replace(">", "\\>").replace("'", "\\'")
 
-                await message.reply(
-                    f"```\n{escaped_format}\n```",
-                    parse_mode="MarkdownV2"
-                )
-                found_emoji = True
+    #            await message.reply(
+    #                f"```\n{escaped_format}\n```",
+    #                parse_mode="MarkdownV2"
+    #            )
+    #            found_emoji = True
 
     # Если это просто обычное эмодзи без ID, но пользователь хочет получить формат
-    if not found_emoji and any(ord(c) > 127 for c in message.text) and len(message.text.strip()) <= 5:
+    #if not found_emoji and any(ord(c) > 127 for c in message.text) and len(message.text.strip()) <= 5:
         # Предполагаем, что это эмодзи, и пользователь хочет получить формат
-        await message.reply(
-            "Это обычное эмодзи, а не кастомное. У него нет ID в Telegram.",
-            parse_mode="HTML"
-        )
+    #    await message.reply(
+    #        "Это обычное эмодзи, а не кастомное. У него нет ID в Telegram.",
+    #        parse_mode="HTML"
+    #    )
 
 # Главная функция запуска бота
 async def main():
