@@ -176,8 +176,36 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
             return
 
         giveaway = response.data
-        participants_response = supabase.table('participations').select('count').eq('giveaway_id', giveaway_id).execute()
+        participants_response = supabase.table('participations').select('count').eq('giveaway_id',
+                                                                                    giveaway_id).execute()
         participants_count = participants_response.data[0]['count']
+
+        # Получаем информацию о публикациях из published_messages
+        published_messages = json.loads(giveaway.get('published_messages', '[]'))
+        channel_info = ""
+        if published_messages:
+            channel_links = []
+            # Используем set для уникальности chat_id
+            unique_chat_ids = set(msg['chat_id'] for msg in published_messages)
+
+            for chat_id in unique_chat_ids:
+                try:
+                    chat = await bot.get_chat(chat_id)
+                    channel_name = chat.title
+                    # Если есть invite_link у чата, используем его, иначе формируем базовую ссылку
+                    invite_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(chat_id).replace('-100', '')}"
+                    channel_links.append(f"<a href=\"{invite_link}\">{channel_name}</a>")
+                except Exception as e:
+                    logger.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
+                    channel_links.append("Неизвестный канал")
+
+            if channel_links:
+                # Объединяем все ссылки через запятую
+                channel_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Розыгрыш опубликован в:</b> {', '.join(channel_links)}"
+            else:
+                channel_info = "\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Розыгрыш опубликован в каналах</b>"
+        else:
+            channel_info = "\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Розыгрыш ещё не опубликован</b>"
 
         giveaway_info = f"""
 <b>{giveaway['name']}</b>
@@ -187,10 +215,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
 <tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
 <tg-emoji emoji-id='5449683594425410231'>🔼</tg-emoji> <b>Участников:</b> {participants_count}
+{channel_info}
 """
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="✏️ Редактировать", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners_active:{giveaway_id}")
         keyboard.button(text="⏹️ Завершить", callback_data=f"confirm_force_end_giveaway:{giveaway_id}")
         keyboard.button(text="🔗 Открыть", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}")
         keyboard.button(text="◀️ Назад", callback_data="active_giveaways")
