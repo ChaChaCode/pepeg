@@ -12,6 +12,7 @@ from create_giveaway import register_create_giveaway_handlers
 from created_giveaways import register_created_giveaways_handlers
 from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
+from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
 
@@ -38,6 +39,7 @@ register_create_giveaway_handlers(dp, bot, supabase)
 register_created_giveaways_handlers(dp, bot, supabase)
 register_my_participations_handlers(dp, bot, supabase)
 register_congratulations_messages(dp, bot, supabase)
+register_congratulations_messages_active(dp, bot, supabase)
 register_new_public(dp, bot, supabase)
 
 
