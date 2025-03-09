@@ -48,7 +48,7 @@ register_new_public(dp, bot, supabase)
 async def cmd_start(message: types.Message):
     keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
         [types.InlineKeyboardButton(text="🎁 Создать розыгрыш", callback_data="create_giveaway")],
-        [types.InlineKeyboardButton(text="📋 Созданные розыгрыши", callback_data="created_giveaways")],
+        [types.InlineKeyboardButton(text="📋 Мои розыгрыши", callback_data="created_giveaways")],
         [types.InlineKeyboardButton(text="🔥 Активные розыгрыши", callback_data="active_giveaways")],
         [types.InlineKeyboardButton(text="🎯 Мои участия", callback_data="my_participations")],
     ])
@@ -114,7 +114,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
-    keyboard.button(text="📋 Созданные розыгрыши", callback_data="created_giveaways")
+    keyboard.button(text="📋 Мои розыгрыши", callback_data="created_giveaways")
     keyboard.button(text="🔥 Активные розыгрыши", callback_data="active_giveaways")
     keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
     keyboard.adjust(1)
