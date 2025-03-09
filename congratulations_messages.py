@@ -25,7 +25,6 @@ supabase: Client = create_client(supabase_url, supabase_key)
 user_selected_communities = {}
 paid_users: Dict[int, str] = {}
 
-# Константа с руководством по форматированию
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
 <blockquote expandable>
@@ -38,7 +37,7 @@ FORMATTING_GUIDE = """
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
-- Кастомные эмодзи
+- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
 </blockquote>
 """
 
