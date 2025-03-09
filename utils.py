@@ -15,7 +15,6 @@ import pytz
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Константа с руководством по форматированию
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
 <blockquote expandable>
@@ -24,11 +23,11 @@ FORMATTING_GUIDE = """
 - Курсив: <i>текст</i>
 - Подчёркнутый: <u>текст</u>
 - Зачёркнутый: <s>текст</s>
-- Моноширинный: <pre>текст</pre>
+- Моноширинный
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
-- Ссылка: <a href="https://example.com">текст</a>
+- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
-- Кастомные эмодзи
+- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
 </blockquote>
 """
 
@@ -240,7 +239,7 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
 
         winners_list = '\n'.join(winners_formatted)
         result_message = f"""
-<b><tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> Розыгрыш завершен! <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
+<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
 <b>{giveaway['name']}</b>
 
@@ -248,12 +247,10 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
 <blockquote expandable>
 {winners_list}
 </blockquote>
-
-<i>Поздравляем победителей!</i>
 """
     else:
         result_message = f"""
-<b><tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> Розыгрыш завершен! <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
+<b>Розыгрыш завершен</b>
 
 <b>{giveaway['name']}</b>
 
@@ -262,8 +259,7 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
 
     if winners and len(winners) < giveaway['winner_count']:
         result_message += f"""
-<u>Внимание:</u> Количество участников ({len(winners)}) было меньше, чем количество призовых мест ({giveaway['winner_count']}).
-<tg-spoiler>Не все призовые места были распределены.</tg-spoiler>
+Не все призовые места были распределены.
 """
 
     keyboard = InlineKeyboardBuilder()
