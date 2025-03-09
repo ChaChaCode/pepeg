@@ -17,13 +17,19 @@ from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
 from fastapi import FastAPI, Request, HTTPException
 import uvicorn
+from dotenv import load_dotenv
+import os
+from fastapi.middleware.cors import CORSMiddleware
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
+# Загрузка переменных из .env
+load_dotenv()
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg")
+API_KEY = os.getenv("API_KEY", "snapisecretcodez117799")
+
 # Инициализация бота и диспетчера
-BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
-API_KEY = "snapisecretcodez117799"  # Установите свой секретный ключ для защиты
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -47,6 +53,15 @@ register_new_public(dp, bot, supabase)
 
 # Инициализация FastAPI
 app = FastAPI()
+
+# Разрешить запросы с вашего фронтенда
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Эндпоинт для получения токена
 @app.get("/api/bot-token")
@@ -143,26 +158,21 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
-        await asyncio.sleep(60)  # Проверка каждую минуту
+        await asyncio.sleep(60)
 
-# Запуск FastAPI в отдельном потоке
 async def run_fastapi():
-    config = uvicorn.Config(app, host="0.0.0.0", port=8000, log_level="info")
+    config = uvicorn.Config(app, host="0.0.0.0", port=49534, log_level="info")
     server = uvicorn.Server(config)
     await server.serve()
 
-# Главная функция запуска бота и FastAPI
 async def main():
-    # Создаём задачи для периодических проверок
     check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
     username_check_task = asyncio.create_task(periodic_username_check())
     fastapi_task = asyncio.create_task(run_fastapi())
 
     try:
-        # Запускаем polling бота
         await dp.start_polling(bot)
     finally:
-        # Отменяем задачи при завершении
         check_task.cancel()
         username_check_task.cancel()
         fastapi_task.cancel()
