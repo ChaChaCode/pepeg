@@ -70,6 +70,7 @@ FORMATTING_GUIDE = """
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
+- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
 </blockquote>
 """
 
