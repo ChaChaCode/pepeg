@@ -15,21 +15,20 @@ from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
-from aiohttp import web
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
 # Инициализация бота и диспетчера
-BOT_TOKEN = "7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg"  # Фиксированный токен бота
+BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 # Конфигурация Supabase
-SUPABASE_URL = "https://olbnxtiigxqcpailyecq.supabase.co"  # Фиксированный URL Supabase
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY"  # Фиксированный ключ Supabase
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
+supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
+supabase: Client = create_client(supabase_url, supabase_key)
 
 user_selected_communities = {}
 paid_users = {}
@@ -43,6 +42,7 @@ register_congratulations_messages(dp, bot, supabase)
 register_congratulations_messages_active(dp, bot, supabase)
 register_new_public(dp, bot, supabase)
 
+
 # Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -54,7 +54,6 @@ async def cmd_start(message: types.Message):
     ])
     await send_message_with_image(bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", reply_markup=keyboard)
 
-# Обработчик команды /help
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     try:
@@ -128,99 +127,73 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
-# Функция проверки initData (для безопасности API)
-import hmac
-import hashlib
-from urllib.parse import parse_qs
-
-def verify_telegram_init_data(init_data: str, bot_token: str) -> bool:
-    """
-    Проверяет подлинность initData от Telegram Web Apps.
-    """
-    parsed_data = parse_qs(init_data)
-    if "hash" not in parsed_data:
-        return False
-    
-    data_check_string = "\n".join(f"{key}={parsed_data[key][0]}" for key in sorted(parsed_data.keys()) if key != "hash")
-    secret_key = hmac.new("WebAppData".encode(), bot_token.encode(), hashlib.sha256).digest()
-    calculated_hash = hmac.new(secret_key, data_check_string.encode(), hashlib.sha256).hexdigest()
-    
-    return calculated_hash == parsed_data["hash"][0]
-
-# API для фронтенда
-async def check_subscription(request):
-    data = await request.json()
-    channel_id = data.get("channelId")
-    user_id = data.get("userId")
-    init_data = data.get("initData")
-
-    if not channel_id or not user_id or not init_data:
-        return web.json_response({"error": "channelId, userId, and initData are required"}, status=400)
-
-    if not verify_telegram_init_data(init_data, BOT_TOKEN):
-        return web.json_response({"error": "Invalid initData"}, status=403)
-
-    try:
-        chat_member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-        is_subscribed = chat_member.status in ["creator", "administrator", "member"]
-        return web.json_response({"isSubscribed": is_subscribed, "error": None})
-    except Exception as e:
-        logging.error(f"Ошибка при проверке подписки: {e}")
-        return web.json_response({"isSubscribed": False, "error": str(e)}, status=500)
-
-async def get_invite_link(request):
-    data = await request.json()
-    channel_id = data.get("channelId")
-    init_data = data.get("initData")
-
-    if not channel_id or not init_data:
-        return web.json_response({"error": "channelId and initData are required"}, status=400)
-
-    if not verify_telegram_init_data(init_data, BOT_TOKEN):
-        return web.json_response({"error": "Invalid initData"}, status=403)
-
-    try:
-        chat = await bot.get_chat(chat_id=channel_id)
-        if hasattr(chat, "invite_link") and chat.invite_link:
-            return web.json_response({"inviteLink": chat.invite_link, "error": None})
-
-        invite_link = await bot.export_chat_invite_link(chat_id=channel_id)
-        return web.json_response({"inviteLink": invite_link, "error": None})
-    except Exception as e:
-        logging.error(f"Ошибка при получении инвайт-ссылки: {e}")
-        return web.json_response({"inviteLink": None, "error": str(e)}, status=500)
-
-# Обработчик Webhook
-async def handle_webhook(request):
-    update = types.Update(**(await request.json()))
-    await dp.feed_update(bot, update)
-    return web.Response()
-
-# Настройка веб-сервера
-app = web.Application()
-app.router.add_post("/api/check-subscription", check_subscription)
-app.router.add_post("/api/get-invite-link", get_invite_link)
-app.router.add_post("/webhook", handle_webhook)  # Добавляем маршрут для Webhook
 
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
-        await asyncio.sleep(60)
+        await asyncio.sleep(60)  # Проверка каждую минуту
 
-async def set_webhook():
-    webhook_url = "https://vite-react-raffle.vercel.app/webhook"  # Убедитесь, что путь соответствует маршруту
-    await bot.set_webhook(webhook_url)
-    logging.info(f"Webhook установлен на {webhook_url}")
+# Обработчик для получения ID кастомных эмодзи
+#@dp.message()
+#async def handle_custom_emoji(message: types.Message):
+    # Проверяем наличие кастомных эмодзи
+    #   found_emoji = False
 
-async def on_startup():
-    await set_webhook()
-    asyncio.create_task(check_and_end_giveaways(bot, supabase))
-    asyncio.create_task(periodic_username_check())
+    # Проверка через entities
+        #    if message.entities:
+        #for entity in message.entities:
+        #    if entity.type == "custom_emoji":
+        #        found_emoji = True
+        #        emoji_id = entity.custom_emoji_id
+        #        start_pos = entity.offset
+        #        end_pos = entity.offset + entity.length
+        #        emoji_text = message.text[start_pos:end_pos]
 
+        #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+
+                # Отправляем как текст, который можно скопировать
+        #        await message.reply(
+        #            f"```\n{emoji_format}\n```",
+        #            parse_mode="MarkdownV2"
+        #        )
+
+    # Если в сообщении есть HTML-разметка эмодзи
+    #if "<tg-emoji" in message.text and not found_emoji:
+    #    import re
+    #    emoji_matches = re.findall(r'<tg-emoji emoji-id=[\'"](\d+)[\'"]>(.+?)</tg-emoji>', message.text)
+
+    #    if emoji_matches:
+    #        for emoji_id, emoji_text in emoji_matches:
+    #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+
+                # Экранируем специальные символы для MarkdownV2
+    #            escaped_format = emoji_format.replace("<", "\\<").replace(">", "\\>").replace("'", "\\'")
+
+    #            await message.reply(
+    #                f"```\n{escaped_format}\n```",
+    #                parse_mode="MarkdownV2"
+    #            )
+    #            found_emoji = True
+
+    # Если это просто обычное эмодзи без ID, но пользователь хочет получить формат
+    #if not found_emoji and any(ord(c) > 127 for c in message.text) and len(message.text.strip()) <= 5:
+        # Предполагаем, что это эмодзи, и пользователь хочет получить формат
+    #    await message.reply(
+    #        "Это обычное эмодзи, а не кастомное. У него нет ID в Telegram.",
+    #        parse_mode="HTML"
+    #    )
+
+# Главная функция запуска бота
 async def main():
-    # Запускаем задачи и веб-сервер
-    app.on_startup.append(lambda _: on_startup())
-    await web.run_app(app, host="0.0.0.0", port=5000)  # Запускаем только веб-сервер
+    check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
+    username_check_task = asyncio.create_task(periodic_username_check())
 
-if __name__ == "__main__":
+    try:
+        await dp.start_polling(bot)
+    finally:
+        check_task.cancel()
+        username_check_task.cancel()
+
+
+if __name__ == '__main__':
     asyncio.run(main())
