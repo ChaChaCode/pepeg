@@ -30,7 +30,7 @@ app = FastAPI()
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://vite-react-raffle.vercel.app", "http://localhost:5173", "http://localhost", "http://127.0.0.1:5173", "https://snapi.site"],
+    allow_origins=["https://vite-react-raffle.vercel.app", "http://localhost", "http://127.0.0.1:5174", "https://snapi.site"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
