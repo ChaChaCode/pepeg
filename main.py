@@ -170,35 +170,40 @@ async def main():
     # Настройка Hypercorn
     config = Config()
     config.bind = ["0.0.0.0:8000"]
-
-    # Создаем сервер Hypercorn
-    shutdown_event = asyncio.Event()
-    api_task = asyncio.create_task(serve(app, config, shutdown_event=shutdown_event))
+    api_task = asyncio.create_task(serve(app, config))
 
     # Обработка сигналов для graceful shutdown
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+
     def signal_handler():
         logging.info("Получен сигнал завершения, инициируем shutdown...")
-        shutdown_event.set()
+        stop_event.set()
 
-    loop = asyncio.get_running_loop()
     for sig in (signal.SIGINT, signal.SIGTERM):
         loop.add_signal_handler(sig, signal_handler)
 
     try:
-        await asyncio.gather(polling_task, api_task)
+        # Ожидаем выполнения задач или сигнала завершения
+        await asyncio.gather(polling_task, api_task, return_exceptions=True)
+        await stop_event.wait()  # Ждем сигнала завершения
     except asyncio.CancelledError:
         logging.info("Программа завершена через CancelledError")
     finally:
         # Корректное завершение всех задач
+        logging.info("Завершаем все задачи...")
         check_task.cancel()
         username_check_task.cancel()
         polling_task.cancel()
-        shutdown_event.set()  # Сигнализируем Hypercorn о завершении
+        api_task.cancel()
+
+        # Ожидаем завершения задач
         await asyncio.gather(
             check_task, username_check_task, polling_task, api_task,
             return_exceptions=True
         )
         await bot.session.close()  # Закрываем сессию бота
+        logging.info("Все задачи завершены, сессия бота закрыта")
 
 if __name__ == "__main__":
     try:
