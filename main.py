@@ -185,15 +185,27 @@ async def periodic_username_check():
 
 # Главная функция запуска бота
 async def main():
+    # Проверяем текущую информацию о webhook
+    webhook_info = await bot.get_webhook_info()
+    logging.info(f"Текущая информация о webhook: {webhook_info}")
+
+    # Если webhook установлен (url не пустой), удаляем его
+    if webhook_info.url:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logging.info("Webhook был установлен и успешно удален")
+    else:
+        logging.info("Webhook не установлен")
+
+    # Создаем задачи для периодических проверок
     check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
     username_check_task = asyncio.create_task(periodic_username_check())
 
     try:
+        # Запускаем polling
         await dp.start_polling(bot)
     finally:
         check_task.cancel()
         username_check_task.cancel()
-
 
 if __name__ == '__main__':
     asyncio.run(main())
