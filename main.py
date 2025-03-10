@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 from supabase import create_client, Client
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
 from active_giveaways import register_active_giveaways_handlers
@@ -35,6 +35,7 @@ user_selected_communities = {}
 paid_users = {}
 
 # Регистрация обработчиков из других модулей
+# Примечание: эти функции нужно будет обновить для работы с aiogram v3
 register_active_giveaways_handlers(dp, bot, supabase)
 register_create_giveaway_handlers(dp, bot, supabase)
 register_created_giveaways_handlers(dp, bot, supabase)
@@ -77,17 +78,18 @@ app = web.Application()
 app.add_routes([web.post('/getInviteLink', handle_invite_link_request)])
 
 # Обработчик команды /start
-@dp.message_handler(Command("start"))
+@dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
-        [types.InlineKeyboardButton(text="🎁 Создать розыгрыш", callback_data="create_giveaway")],
-        [types.InlineKeyboardButton(text="📋 Мои розыгрыши", callback_data="created_giveaways")],
-        [types.InlineKeyboardButton(text="🔥 Активные розыгрыши", callback_data="active_giveaways")],
-        [types.InlineKeyboardButton(text="🎯 Мои участия", callback_data="my_participations")],
-    ])
-    await send_message_with_image(bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", reply_markup=keyboard)
+    builder = InlineKeyboardBuilder()
+    builder.add(InlineKeyboardButton(text="🎁 Создать розыгрыш", callback_data="create_giveaway"))
+    builder.add(InlineKeyboardButton(text="📋 Мои розыгрыши", callback_data="created_giveaways"))
+    builder.add(InlineKeyboardButton(text="🔥 Активные розыгрыши", callback_data="active_giveaways"))
+    builder.add(InlineKeyboardButton(text="🎯 Мои участия", callback_data="my_participations"))
+    builder.adjust(1)
+    
+    await send_message_with_image(bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", reply_markup=builder.as_markup())
 
-@dp.message_handler(Command("help"))
+@dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     try:
         help_text = (
@@ -181,7 +183,7 @@ async def main():
 
     try:
         # Запуск бота
-        await dp.start_polling(bot)
+        await dp.start_polling()
     finally:
         # Очистка при завершении
         check_task.cancel()
