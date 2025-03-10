@@ -24,6 +24,7 @@ logging.basicConfig(level=logging.INFO)
 BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
+# В aiogram v3 бот регистрируется при создании диспетчера
 dp = Dispatcher(storage=storage)
 
 # Конфигурация Supabase
@@ -182,8 +183,8 @@ async def main():
     logging.info("HTTP-сервер запущен на порту 3000")
 
     try:
-        # Запуск бота
-        await dp.start_polling()
+        # В aiogram v3 нужно явно указать бота при запуске поллинга
+        await dp.start_polling(bot)
     finally:
         # Очистка при завершении
         check_task.cancel()
@@ -192,3 +193,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
