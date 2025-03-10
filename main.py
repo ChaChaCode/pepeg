@@ -8,8 +8,8 @@ from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 import aiohttp
-from fastapi.responses import JSONResponse
 
 # Импорты из ваших модулей (предполагаю, что они существуют)
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
@@ -26,6 +26,15 @@ logging.basicConfig(level=logging.INFO)
 
 # Инициализация FastAPI
 app = FastAPI()
+
+# Настройка CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost", "http://127.0.0.1:5173"],  # Разрешите ваш локальный клиент
+    allow_credentials=True,
+    allow_methods=["*"],  # Разрешить все методы (GET, POST, etc.)
+    allow_headers=["*"],  # Разрешить все заголовки
+)
 
 # Инициализация бота и диспетчера
 BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
