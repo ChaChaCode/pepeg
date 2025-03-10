@@ -53,10 +53,7 @@ app = FastAPI()
 # Добавляем CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",              # Для локальной разработки
-        "https://vite-react-raffle.vercel.app" # Для продакшен-домена
-    ],  # Добавлена запятая
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
