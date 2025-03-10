@@ -35,21 +35,19 @@ supabase: Client = create_client(supabase_url, supabase_key)
 # Инициализация FastAPI
 app = FastAPI()
 
+# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://vite-react-raffle.vercel.app",  # Домен фронтенда
-        "https://snapi.site"                      # Домен бэкенда (если нужен)
-    ],
+    allow_origins=["https://vite-react-raffle.vercel.app"],  # Только фронтенд
     allow_credentials=True,
-    allow_methods=["*"],  # Разрешить все методы (GET, POST, OPTIONS и т.д.)
-    allow_headers=["*"],  # Разрешить все заголовки
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["*"],
 )
 
 user_selected_communities = {}
 paid_users = {}
 
-# Регистрация обработчиков из других модулей
+# Регистрация обработчиков
 register_active_giveaways_handlers(dp, bot, supabase)
 register_create_giveaway_handlers(dp, bot, supabase)
 register_created_giveaways_handlers(dp, bot, supabase)
@@ -128,7 +126,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
-# API-эндпоинт для проверки подписки с CORS
+# API-эндпоинт для проверки подписки
 @app.post("/check_subscription")
 async def api_check_subscription(request: Request):
     data = await request.json()
@@ -140,19 +138,22 @@ async def api_check_subscription(request: Request):
     result = await check_subscription(chat_id, user_id)
     return {"is_subscribed": result}
 
+# Явная обработка OPTIONS для preflight-запроса
+@app.options("/check_subscription")
+async def options_check_subscription():
+    return {}
+
 # Периодическая проверка usernames
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
-        await asyncio.sleep(60)  # Проверка каждую минуту
+        await asyncio.sleep(60)
 
 # Главная функция
 async def main():
-    # Запуск периодических задач
     check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
     username_check_task = asyncio.create_task(periodic_username_check())
 
-    # Запуск FastAPI и aiogram в одном цикле
     from uvicorn import Config, Server
     config = Config(app=app, host="0.0.0.0", port=8000, loop="asyncio")
     server = Server(config)
@@ -160,13 +161,14 @@ async def main():
     try:
         logging.info("Бот и сервер запускаются...")
         await asyncio.gather(
-            dp.start_polling(bot),  # Запуск бота через polling
-            server.serve()          # Запуск FastAPI-сервера
+            dp.start_polling(bot),
+            server.serve()
         )
     finally:
+        await bot.session.close()  # Закрываем сессию бота
         check_task.cancel()
         username_check_task.cancel()
         logging.info("Бот и сервер остановлены.")
 
 if __name__ == "__main__":
-    asyncio.run(main())  # Запуск асинхронных задач
+    asyncio.run(main())
