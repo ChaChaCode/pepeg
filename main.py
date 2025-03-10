@@ -11,7 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import aiohttp
 
-# Импорты из ваших модулей (предполагаю, что они существуют)
+# Импорты из ваших модулей
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -30,10 +30,10 @@ app = FastAPI()
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost", "http://127.0.0.1:5173"],  # Разрешите ваш локальный клиент
+    allow_origins=["http://localhost:5173", "http://localhost", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["*"],  # Разрешить все методы (GET, POST, etc.)
-    allow_headers=["*"],  # Разрешить все заголовки
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Инициализация бота и диспетчера
@@ -152,13 +152,15 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 # API эндпоинты для React-клиента
 @app.get("/api/get-invite-link")
 async def get_invite_link(chat_id: int):
+    logging.info(f"Received request for invite link with chat_id: {chat_id}")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             # Проверка существующей ссылки
             chat_response = await session.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id={chat_id}")
             chat_data = await chat_response.json()
 
             if chat_data.get('ok') and chat_data['result'].get('invite_link'):
+                logging.info(f"Returning existing invite link for chat_id: {chat_id}")
                 return {"inviteLink": chat_data['result']['invite_link']}
 
             # Создание новой ссылки
@@ -166,10 +168,12 @@ async def get_invite_link(chat_id: int):
             invite_data = await invite_response.json()
 
             if invite_data.get('ok'):
+                logging.info(f"Created new invite link for chat_id: {chat_id}")
                 return {"inviteLink": invite_data['result']}
+            logging.error(f"Failed to create invite link for chat_id: {chat_id}, error: {invite_data.get('description')}")
             raise HTTPException(status_code=400, detail=invite_data.get('description', 'Failed to create invite link'))
     except Exception as e:
-        logging.error(f"Ошибка в get_invite_link: {e}")
+        logging.error(f"Error in get_invite_link for chat_id {chat_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/check-subscription")
@@ -180,18 +184,21 @@ async def check_subscription(data: dict):
     if not chat_id or not user_id:
         raise HTTPException(status_code=400, detail="chat_id and user_id are required")
 
+    logging.info(f"Checking subscription for chat_id: {chat_id}, user_id: {user_id}")
     try:
-        async with aiohttp.ClientSession() as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
             response = await session.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getChatMember?chat_id={chat_id}&user_id={user_id}")
             response_data = await response.json()
 
             if not response_data.get('ok'):
+                logging.error(f"Failed to check subscription: {response_data.get('description')}")
                 raise HTTPException(status_code=400, detail=response_data.get('description', 'Failed to check subscription'))
 
             is_subscribed = response_data['result']['status'] in ["creator", "administrator", "member"]
+            logging.info(f"Subscription status for user_id {user_id} in chat_id {chat_id}: {is_subscribed}")
             return {"isSubscribed": is_subscribed}
     except Exception as e:
-        logging.error(f"Ошибка в check_subscription: {e}")
+        logging.error(f"Error in check_subscription: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 # Фоновая задача для проверки юзернеймов
@@ -213,7 +220,7 @@ async def main():
     try:
         # Запуск FastAPI и aiogram
         import uvicorn
-        config = uvicorn.Config(app, host="0.0.0.0", port=3001)
+        config = uvicorn.Config(app, host="0.0.0.0", port=3001, workers=2)  # Добавляем несколько воркеров
         server = uvicorn.Server(config)
         await asyncio.gather(dp.start_polling(bot), server.serve())
     except Exception as e:
