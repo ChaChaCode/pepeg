@@ -6,6 +6,12 @@ from aiogram.filters import Command
 from supabase import create_client, Client
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
+from fastapi import FastAPI, HTTPException
+import aiohttp
+from fastapi.responses import JSONResponse
+
+# Импорты из ваших модулей (предполагаю, что они существуют)
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -14,10 +20,12 @@ from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
-from aiogram.fsm.context import FSMContext
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
+
+# Инициализация FastAPI
+app = FastAPI()
 
 # Инициализация бота и диспетчера
 BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
@@ -42,7 +50,6 @@ register_congratulations_messages(dp, bot, supabase)
 register_congratulations_messages_active(dp, bot, supabase)
 register_new_public(dp, bot, supabase)
 
-
 # Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -52,8 +59,14 @@ async def cmd_start(message: types.Message):
         [types.InlineKeyboardButton(text="🔥 Активные розыгрыши", callback_data="active_giveaways")],
         [types.InlineKeyboardButton(text="🎯 Мои участия", callback_data="my_participations")],
     ])
-    await send_message_with_image(bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", reply_markup=keyboard)
+    await send_message_with_image(
+        bot, 
+        message.chat.id, 
+        "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", 
+        reply_markup=keyboard
+    )
 
+# Обработчик команды /help
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     try:
@@ -127,73 +140,77 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
+# API эндпоинты для React-клиента
+@app.get("/api/get-invite-link")
+async def get_invite_link(chat_id: int):
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Проверка существующей ссылки
+            chat_response = await session.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id={chat_id}")
+            chat_data = await chat_response.json()
 
+            if chat_data.get('ok') and chat_data['result'].get('invite_link'):
+                return {"inviteLink": chat_data['result']['invite_link']}
+
+            # Создание новой ссылки
+            invite_response = await session.get(f"https://api.telegram.org/bot{BOT_TOKEN}/exportChatInviteLink?chat_id={chat_id}")
+            invite_data = await invite_response.json()
+
+            if invite_data.get('ok'):
+                return {"inviteLink": invite_data['result']}
+            raise HTTPException(status_code=400, detail=invite_data.get('description', 'Failed to create invite link'))
+    except Exception as e:
+        logging.error(f"Ошибка в get_invite_link: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/check-subscription")
+async def check_subscription(data: dict):
+    chat_id = data.get('chat_id')
+    user_id = data.get('user_id')
+
+    if not chat_id or not user_id:
+        raise HTTPException(status_code=400, detail="chat_id and user_id are required")
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            response = await session.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getChatMember?chat_id={chat_id}&user_id={user_id}")
+            response_data = await response.json()
+
+            if not response_data.get('ok'):
+                raise HTTPException(status_code=400, detail=response_data.get('description', 'Failed to check subscription'))
+
+            is_subscribed = response_data['result']['status'] in ["creator", "administrator", "member"]
+            return {"isSubscribed": is_subscribed}
+    except Exception as e:
+        logging.error(f"Ошибка в check_subscription: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Фоновая задача для проверки юзернеймов
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
         await asyncio.sleep(60)  # Проверка каждую минуту
 
-# Обработчик для получения ID кастомных эмодзи
-#@dp.message()
-#async def handle_custom_emoji(message: types.Message):
-    # Проверяем наличие кастомных эмодзи
-    #   found_emoji = False
+# Фоновая задача для завершения розыгрышей и проверки юзернеймов
+async def periodic_tasks():
+    while True:
+        await check_and_end_giveaways(bot, supabase)
+        await check_usernames(bot, supabase)
+        await asyncio.sleep(60)
 
-    # Проверка через entities
-        #    if message.entities:
-        #for entity in message.entities:
-        #    if entity.type == "custom_emoji":
-        #        found_emoji = True
-        #        emoji_id = entity.custom_emoji_id
-        #        start_pos = entity.offset
-        #        end_pos = entity.offset + entity.length
-        #        emoji_text = message.text[start_pos:end_pos]
-
-        #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
-
-                # Отправляем как текст, который можно скопировать
-        #        await message.reply(
-        #            f"```\n{emoji_format}\n```",
-        #            parse_mode="MarkdownV2"
-        #        )
-
-    # Если в сообщении есть HTML-разметка эмодзи
-    #if "<tg-emoji" in message.text and not found_emoji:
-    #    import re
-    #    emoji_matches = re.findall(r'<tg-emoji emoji-id=[\'"](\d+)[\'"]>(.+?)</tg-emoji>', message.text)
-
-    #    if emoji_matches:
-    #        for emoji_id, emoji_text in emoji_matches:
-    #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
-
-                # Экранируем специальные символы для MarkdownV2
-    #            escaped_format = emoji_format.replace("<", "\\<").replace(">", "\\>").replace("'", "\\'")
-
-    #            await message.reply(
-    #                f"```\n{escaped_format}\n```",
-    #                parse_mode="MarkdownV2"
-    #            )
-    #            found_emoji = True
-
-    # Если это просто обычное эмодзи без ID, но пользователь хочет получить формат
-    #if not found_emoji and any(ord(c) > 127 for c in message.text) and len(message.text.strip()) <= 5:
-        # Предполагаем, что это эмодзи, и пользователь хочет получить формат
-    #    await message.reply(
-    #        "Это обычное эмодзи, а не кастомное. У него нет ID в Telegram.",
-    #        parse_mode="HTML"
-    #    )
-
-# Главная функция запуска бота
+# Главная функция запуска бота и API
 async def main():
-    check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
-    username_check_task = asyncio.create_task(periodic_username_check())
-
+    check_task = asyncio.create_task(periodic_tasks())
     try:
-        await dp.start_polling(bot)
+        # Запуск FastAPI и aiogram
+        import uvicorn
+        config = uvicorn.Config(app, host="0.0.0.0", port=3001)
+        server = uvicorn.Server(config)
+        await asyncio.gather(dp.start_polling(bot), server.serve())
+    except Exception as e:
+        logging.error(f"Ошибка в main: {e}")
     finally:
         check_task.cancel()
-        username_check_task.cancel()
-
 
 if __name__ == '__main__':
     asyncio.run(main())
