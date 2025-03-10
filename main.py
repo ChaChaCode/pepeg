@@ -30,7 +30,7 @@ app = FastAPI()
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://vite-react-raffle.vercel.app", "http://localhost:5173", "http://localhost", "http://127.0.0.1:5173"],
+    allow_origins=["https://vite-react-raffle.vercel.app", "http://localhost:5173", "http://localhost", "http://127.0.0.1:5173", "https://snapi.site"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -149,7 +149,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
-# API эндпоинты для React-клиента
+# API эндпоинты для React-клиента на домене snapi.site
 @app.get("/api/get-invite-link")
 async def get_invite_link(chat_id: int):
     logging.info(f"Received request for invite link with chat_id: {chat_id}")
@@ -221,6 +221,7 @@ async def main():
         import uvicorn
         config = uvicorn.Config(app, host="0.0.0.0", port=3001, workers=2)
         server = uvicorn.Server(config)
+        logging.info("Запуск бота и API на домене snapi.site")
         await asyncio.gather(dp.start_polling(bot), server.serve())
     except Exception as e:
         logging.error(f"Ошибка в main: {e}")
@@ -229,3 +230,4 @@ async def main():
 
 if __name__ == '__main__':
     asyncio.run(main())
+
