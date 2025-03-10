@@ -71,7 +71,7 @@ async def check_subscription(request: SubscriptionRequest):
 @app.get("/api/get-invite-link/{chat_id}")
 async def get_invite_link(chat_id: int):
     try:
-        # Получаем ссылку на приглашение
+        # Проверяем, существует ли чат и есть ли у бота права администратора
         chat = await bot.get_chat(chat_id)
         if chat.invite_link:
             return {"inviteLink": chat.invite_link, "error": None}
@@ -81,6 +81,9 @@ async def get_invite_link(chat_id: int):
             return {"inviteLink": invite_link, "error": None}
     except Exception as e:
         logging.error(f"Ошибка при получении ссылки на приглашение: {e}")
+        # Если бот не имеет прав или чат не существует, возвращаем ошибку
+        if "403" in str(e) or "400" in str(e):
+            return {"inviteLink": None, "error": "Бот не имеет прав администратора или чат не существует"}
         return {"inviteLink": None, "error": str(e)}
 
 # Обработчик команды /start
