@@ -148,17 +148,15 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> bool:
     return calculated_hash == parsed_data["hash"][0]
 
 # API для фронтенда
-# 1. Проверка подписки на канал
 async def check_subscription(request):
     data = await request.json()
     channel_id = data.get("channelId")
     user_id = data.get("userId")
-    init_data = data.get("initData")  # Получаем initData от фронтенда
+    init_data = data.get("initData")
 
     if not channel_id or not user_id or not init_data:
         return web.json_response({"error": "channelId, userId, and initData are required"}, status=400)
 
-    # Проверка подлинности initData
     if not verify_telegram_init_data(init_data, BOT_TOKEN):
         return web.json_response({"error": "Invalid initData"}, status=403)
 
@@ -170,59 +168,59 @@ async def check_subscription(request):
         logging.error(f"Ошибка при проверке подписки: {e}")
         return web.json_response({"isSubscribed": False, "error": str(e)}, status=500)
 
-# 2. Получение инвайт-ссылки для канала
 async def get_invite_link(request):
     data = await request.json()
     channel_id = data.get("channelId")
-    init_data = data.get("initData")  # Получаем initData от фронтенда
+    init_data = data.get("initData")
 
     if not channel_id or not init_data:
         return web.json_response({"error": "channelId and initData are required"}, status=400)
 
-    # Проверка подлинности initData
     if not verify_telegram_init_data(init_data, BOT_TOKEN):
         return web.json_response({"error": "Invalid initData"}, status=403)
 
     try:
-        # Проверяем, есть ли уже инвайт-ссылка
         chat = await bot.get_chat(chat_id=channel_id)
         if hasattr(chat, "invite_link") and chat.invite_link:
             return web.json_response({"inviteLink": chat.invite_link, "error": None})
 
-        # Если инвайт-ссылки нет, создаём новую
         invite_link = await bot.export_chat_invite_link(chat_id=channel_id)
         return web.json_response({"inviteLink": invite_link, "error": None})
     except Exception as e:
         logging.error(f"Ошибка при получении инвайт-ссылки: {e}")
         return web.json_response({"inviteLink": None, "error": str(e)}, status=500)
 
-# Настройка веб-сервера для API
+# Обработчик Webhook
+async def handle_webhook(request):
+    update = types.Update(**(await request.json()))
+    await dp.feed_update(bot, update)
+    return web.Response()
+
+# Настройка веб-сервера
 app = web.Application()
 app.router.add_post("/api/check-subscription", check_subscription)
 app.router.add_post("/api/get-invite-link", get_invite_link)
+app.router.add_post("/webhook", handle_webhook)  # Добавляем маршрут для Webhook
 
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
-        await asyncio.sleep(60)  # Проверка каждую минуту
+        await asyncio.sleep(60)
 
 async def set_webhook():
-    webhook_url = "https://vite-react-raffle.vercel.app/"  # Фиксированный URL Webhook (замените на ваш реальный URL)
+    webhook_url = "https://vite-react-raffle.vercel.app/webhook"  # Убедитесь, что путь соответствует маршруту
     await bot.set_webhook(webhook_url)
     logging.info(f"Webhook установлен на {webhook_url}")
 
+async def on_startup():
+    await set_webhook()
+    asyncio.create_task(check_and_end_giveaways(bot, supabase))
+    asyncio.create_task(periodic_username_check())
+
 async def main():
-    await set_webhook()  # Устанавливаем Webhook при запуске
-    check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
-    username_check_task = asyncio.create_task(periodic_username_check())
-    web_task = asyncio.create_task(web.run_app(app, port=5000))
+    # Запускаем задачи и веб-сервер
+    app.on_startup.append(lambda _: on_startup())
+    await web.run_app(app, host="0.0.0.0", port=5000)  # Запускаем только веб-сервер
 
-    try:
-        await dp.start_polling(bot)
-    finally:
-        check_task.cancel()
-        username_check_task.cancel()
-        web_task.cancel()
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     asyncio.run(main())
