@@ -54,12 +54,13 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "http://localhost:5173",            
-        "https://vite-react-raffle.vercel.app"
-    ]
+        "http://localhost:5173",              # Для локальной разработки
+        "https://vite-react-raffle.vercel.app" # Для продакшен-домена
+    ],  # Добавлена запятая
     allow_credentials=True,
-    allow_methods=["*"],  
-    allow_headers=["*"], 
+    allow_methods=["*"],
+    allow_headers=["*"],
+)  # Закрывающая скобка для add_middleware
 
 # Модель для запроса проверки подписки
 class SubscriptionRequest(BaseModel):
