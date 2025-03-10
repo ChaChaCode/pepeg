@@ -35,10 +35,12 @@ supabase: Client = create_client(supabase_url, supabase_key)
 # Инициализация FastAPI
 app = FastAPI()
 
-# Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://vite-react-raffle.vercel.app, https://snapi.site"],  # Разрешённый домен фронтенда
+    allow_origins=[
+        "https://vite-react-raffle.vercel.app",  # Домен фронтенда
+        "https://snapi.site"                      # Домен бэкенда (если нужен)
+    ],
     allow_credentials=True,
     allow_methods=["*"],  # Разрешить все методы (GET, POST, OPTIONS и т.д.)
     allow_headers=["*"],  # Разрешить все заголовки
