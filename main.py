@@ -15,21 +15,12 @@ from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
-from fastapi import FastAPI, Request, HTTPException
-import uvicorn
-from dotenv import load_dotenv
-import os
-from fastapi.middleware.cors import CORSMiddleware
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Загрузка переменных из .env
-load_dotenv()
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg")
-API_KEY = os.getenv("API_KEY", "snapisecretcodez117799")
-
 # Инициализация бота и диспетчера
+BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -51,25 +42,6 @@ register_congratulations_messages(dp, bot, supabase)
 register_congratulations_messages_active(dp, bot, supabase)
 register_new_public(dp, bot, supabase)
 
-# Инициализация FastAPI
-app = FastAPI()
-
-# Настройка CORS
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5175", "http://207dd17b7bb2.vps.myjino.ru"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Эндпоинт для получения токена
-@app.get("/api/bot-token")
-async def get_bot_token(request: Request):
-    client_api_key = request.headers.get("x-api-key")
-    if client_api_key != API_KEY:
-        raise HTTPException(status_code=403, detail="Forbidden")
-    return {"botToken": BOT_TOKEN}
 
 # Обработчик команды /start
 @dp.message(Command("start"))
@@ -155,29 +127,73 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
+
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
         await asyncio.sleep(60)  # Проверка каждую минуту
 
-# Добавляем функцию для запуска FastAPI
-async def run_fastapi():
-    config = uvicorn.Config(app, host="0.0.0.0", port=49534, log_level="info")
-    server = uvicorn.Server(config)
-    await server.serve()
+# Обработчик для получения ID кастомных эмодзи
+#@dp.message()
+#async def handle_custom_emoji(message: types.Message):
+    # Проверяем наличие кастомных эмодзи
+    #   found_emoji = False
+
+    # Проверка через entities
+        #    if message.entities:
+        #for entity in message.entities:
+        #    if entity.type == "custom_emoji":
+        #        found_emoji = True
+        #        emoji_id = entity.custom_emoji_id
+        #        start_pos = entity.offset
+        #        end_pos = entity.offset + entity.length
+        #        emoji_text = message.text[start_pos:end_pos]
+
+        #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+
+                # Отправляем как текст, который можно скопировать
+        #        await message.reply(
+        #            f"```\n{emoji_format}\n```",
+        #            parse_mode="MarkdownV2"
+        #        )
+
+    # Если в сообщении есть HTML-разметка эмодзи
+    #if "<tg-emoji" in message.text and not found_emoji:
+    #    import re
+    #    emoji_matches = re.findall(r'<tg-emoji emoji-id=[\'"](\d+)[\'"]>(.+?)</tg-emoji>', message.text)
+
+    #    if emoji_matches:
+    #        for emoji_id, emoji_text in emoji_matches:
+    #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+
+                # Экранируем специальные символы для MarkdownV2
+    #            escaped_format = emoji_format.replace("<", "\\<").replace(">", "\\>").replace("'", "\\'")
+
+    #            await message.reply(
+    #                f"```\n{escaped_format}\n```",
+    #                parse_mode="MarkdownV2"
+    #            )
+    #            found_emoji = True
+
+    # Если это просто обычное эмодзи без ID, но пользователь хочет получить формат
+    #if not found_emoji and any(ord(c) > 127 for c in message.text) and len(message.text.strip()) <= 5:
+        # Предполагаем, что это эмодзи, и пользователь хочет получить формат
+    #    await message.reply(
+    #        "Это обычное эмодзи, а не кастомное. У него нет ID в Telegram.",
+    #        parse_mode="HTML"
+    #    )
 
 # Главная функция запуска бота
 async def main():
     check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
     username_check_task = asyncio.create_task(periodic_username_check())
-    fastapi_task = asyncio.create_task(run_fastapi())  # Добавляем запуск FastAPI
 
     try:
         await dp.start_polling(bot)
     finally:
         check_task.cancel()
         username_check_task.cancel()
-        fastapi_task.cancel()
+
 
 if __name__ == '__main__':
     asyncio.run(main())
