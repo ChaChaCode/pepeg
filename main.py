@@ -154,28 +154,37 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 async def get_invite_link(chat_id: int):
     logging.info(f"Received request for invite link with chat_id: {chat_id}")
     try:
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-    chat_response = await session.get(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id={chat_id}",
-        allow_redirects=True  # Разрешить редиректы
-    )
-    chat_data = await chat_response.json()
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(connect=5, sock_read=10)) as session:
+            # Проверка существующей ссылки
+            chat_response = await session.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id={chat_id}",
+                allow_redirects=True
+            )
+            if chat_response.status != 200:
+                logging.error(f"Telegram API getChat failed: {await chat_response.text()}")
+                raise HTTPException(status_code=500, detail="Failed to fetch chat info")
+            chat_data = await chat_response.json()
 
-    if chat_data.get('ok') and chat_data['result'].get('invite_link'):
-        logging.info(f"Returning existing invite link for chat_id: {chat_id}")
-        return {"inviteLink": chat_data['result']['invite_link']}
+            if chat_data.get('ok') and chat_data['result'].get('invite_link'):
+                logging.info(f"Returning existing invite link for chat_id: {chat_id}")
+                return {"inviteLink": chat_data['result']['invite_link']}
 
-    invite_response = await session.get(
-        f"https://api.telegram.org/bot{BOT_TOKEN}/exportChatInviteLink?chat_id={chat_id}",
-        allow_redirects=True  # Разрешить редиректы
-    )
-    invite_data = await invite_response.json()
+            # Создание новой ссылки
+            invite_response = await session.get(
+                f"https://api.telegram.org/bot{BOT_TOKEN}/exportChatInviteLink?chat_id={chat_id}",
+                allow_redirects=True
+            )
+            if invite_response.status != 200:
+                logging.error(f"Telegram API exportChatInviteLink failed: {await invite_response.text()}")
+                raise HTTPException(status_code=500, detail="Failed to generate invite link")
+            invite_data = await invite_response.json()
 
             if invite_data.get('ok'):
                 logging.info(f"Created new invite link for chat_id: {chat_id}")
                 return {"inviteLink": invite_data['result']}
-            logging.error(f"Failed to create invite link for chat_id: {chat_id}, error: {invite_data.get('description')}")
-            raise HTTPException(status_code=400, detail=invite_data.get('description', 'Failed to create invite link'))
+            error_desc = invite_data.get('description', 'Failed to create invite link')
+            logging.error(f"Telegram API error: {error_desc}")
+            raise HTTPException(status_code=400, detail=error_desc)
     except Exception as e:
         logging.error(f"Error in get_invite_link for chat_id {chat_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
