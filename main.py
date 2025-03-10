@@ -3,9 +3,11 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
-from supabase import create_client, Client
-from aiogram.types import CallbackQuery, InlineKeyboardButton
+from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from supabase import create_client, Client
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -15,17 +17,27 @@ from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
-from aiohttp import web  # Добавляем aiohttp для HTTP-сервера
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 
-# Инициализация бота и диспетчера
+# Инициализация бота
 BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
-# В aiogram v3 бот регистрируется при создании диспетчера
-dp = Dispatcher(storage=storage)
+dp = Dispatcher(bot=bot, storage=storage)
+
+# Инициализация FastAPI
+app = FastAPI()
+
+# Настройка CORS для связи с Vercel
+app.add_middleware(
+    CORSMiddleware,  # Передаем класс напрямую как middleware без создания экземпляра
+    allow_origins=["https://your-app.vercel.app"],  # Замени на свой Vercel-домен
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Конфигурация Supabase
 supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
@@ -36,7 +48,6 @@ user_selected_communities = {}
 paid_users = {}
 
 # Регистрация обработчиков из других модулей
-# Примечание: эти функции нужно будет обновить для работы с aiogram v3
 register_active_giveaways_handlers(dp, bot, supabase)
 register_create_giveaway_handlers(dp, bot, supabase)
 register_created_giveaways_handlers(dp, bot, supabase)
@@ -45,51 +56,30 @@ register_congratulations_messages(dp, bot, supabase)
 register_congratulations_messages_active(dp, bot, supabase)
 register_new_public(dp, bot, supabase)
 
-# Функция для получения/создания инвайт-ссылки
-async def get_invite_link(channel_id: int) -> str | None:
+# Функция проверки подписки
+async def check_subscription(chat_id: str, user_id: int) -> bool:
     try:
-        # Проверяем, есть ли уже инвайт-ссылка
-        chat = await bot.get_chat(channel_id)
-        if hasattr(chat, 'invite_link') and chat.invite_link:
-            return chat.invite_link
-
-        # Если ссылки нет, создаем новую
-        invite_link = await bot.export_chat_invite_link(channel_id)
-        return invite_link
+        member = await bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+        return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
-        logging.error(f"Ошибка при получении инвайт-ссылки: {e}")
-        return None
-
-# HTTP-обработчик для эндпоинта /getInviteLink
-async def handle_invite_link_request(request: web.Request) -> web.Response:
-    data = await request.json()
-    channel_id = data.get('channel_id')
-
-    if not channel_id:
-        return web.json_response({"error": "channel_id is required"}, status=400)
-
-    invite_link = await get_invite_link(channel_id)
-    if invite_link:
-        return web.json_response({"invite_link": invite_link})
-    else:
-        return web.json_response({"error": "Failed to get invite link"}, status=500)
-
-# Настройка aiohttp-сервера
-app = web.Application()
-app.add_routes([web.post('/getInviteLink', handle_invite_link_request)])
+        logging.error(f"Ошибка проверки подписки: {e}")
+        return False
 
 # Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    builder = InlineKeyboardBuilder()
-    builder.add(InlineKeyboardButton(text="🎁 Создать розыгрыш", callback_data="create_giveaway"))
-    builder.add(InlineKeyboardButton(text="📋 Мои розыгрыши", callback_data="created_giveaways"))
-    builder.add(InlineKeyboardButton(text="🔥 Активные розыгрыши", callback_data="active_giveaways"))
-    builder.add(InlineKeyboardButton(text="🎯 Мои участия", callback_data="my_participations"))
-    builder.adjust(1)
-    
-    await send_message_with_image(bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", reply_markup=builder.as_markup())
+    keyboard = types.InlineKeyboardMarkup(inline_keyboard=[
+        [types.InlineKeyboardButton(text="🎁 Создать розыгрыш", callback_data="create_giveaway")],
+        [types.InlineKeyboardButton(text="📋 Мои розыгрыши", callback_data="created_giveaways")],
+        [types.InlineKeyboardButton(text="🔥 Активные розыгрыши", callback_data="active_giveaways")],
+        [types.InlineKeyboardButton(text="🎯 Мои участия", callback_data="my_participations")],
+    ])
+    await send_message_with_image(
+        bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:",
+        reply_markup=keyboard
+    )
 
+# Обработчик команды /help
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     try:
@@ -147,14 +137,12 @@ async def cmd_help(message: types.Message):
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     await state.clear()
     await bot.answer_callback_query(callback_query.id)
-
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
     keyboard.button(text="📋 Мои розыгрыши", callback_data="created_giveaways")
     keyboard.button(text="🔥 Активные розыгрыши", callback_data="active_giveaways")
     keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
     keyboard.adjust(1)
-
     await send_message_with_image(
         bot,
         callback_query.message.chat.id,
@@ -163,34 +151,52 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
-# Периодическая проверка username
+# API-эндпоинт для проверки подписки
+@app.post("/check_subscription")
+async def check_subscription_endpoint(request: Request):
+    data = await request.json()
+    user_id = data.get("user_id")
+    chat_id = data.get("chat_id")
+    if not user_id or not chat_id:
+        raise HTTPException(status_code=400, detail="User ID and Chat ID are required")
+    is_subscribed = await check_subscription(chat_id, int(user_id))
+    return {"is_subscribed": is_subscribed}
+
+# Вебхук для Telegram
+@app.post("/webhook")
+async def process_webhook(request: Request):
+    update = types.Update(**await request.json())
+    await dp.feed_update(bot, update)  # Используем feed_update вместо process_update
+    return {"status": "ok"}
+
+# Периодическая проверка usernames
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
         await asyncio.sleep(60)  # Проверка каждую минуту
 
-# Главная функция запуска бота и HTTP-сервера
+# Запуск при старте
+async def on_startup(_):
+    webhook_url = "https://snapi.site/webhook"  # Укажи свой домен
+    await bot.set_webhook(webhook_url)
+    logging.info(f"Webhook установлен: {webhook_url}")
+
+# Главная функция
 async def main():
-    # Создаем задачи для периодических проверок
+    # Запуск периодических задач
     check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
     username_check_task = asyncio.create_task(periodic_username_check())
 
-    # Запуск HTTP-сервера
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 3000)  # Порт 3000
-    await site.start()
-    logging.info("HTTP-сервер запущен на порту 3000")
-
     try:
-        # В aiogram v3 нужно явно указать бота при запуске поллинга
-        await dp.start_polling(bot)
+        dp.startup.register(on_startup)
+        # Запуск через polling (раскомментируй, если не хочешь вебхуки)
+        # await dp.start_polling(bot)
     finally:
-        # Очистка при завершении
         check_task.cancel()
         username_check_task.cancel()
-        await runner.cleanup()
+        await bot.delete_webhook()
 
-if __name__ == '__main__':
-    asyncio.run(main())
-
+if __name__ == "__main__":
+    import uvicorn
+    asyncio.run(main())  # Запуск асинхронных задач
+    uvicorn.run(app, host="0.0.0.0", port=80)  # Порт 80 для Jino
