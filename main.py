@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from supabase import create_client, Client
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
 from active_giveaways import register_active_giveaways_handlers
@@ -38,7 +38,7 @@ app = FastAPI()
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://vite-react-raffle.vercel.app"],  # Только фронтенд
+    allow_origins=["https://vite-react-raffle.vercel.app"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["*"],
@@ -138,10 +138,15 @@ async def api_check_subscription(request: Request):
     result = await check_subscription(chat_id, user_id)
     return {"is_subscribed": result}
 
-# Явная обработка OPTIONS для preflight-запроса
+# Ручная обработка OPTIONS для preflight-запроса
 @app.options("/check_subscription")
 async def options_check_subscription():
-    return {}
+    headers = {
+        "Access-Control-Allow-Origin": "https://vite-react-raffle.vercel.app",
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+    }
+    return Response(status_code=204, headers=headers)
 
 # Периодическая проверка usernames
 async def periodic_username_check():
@@ -165,7 +170,7 @@ async def main():
             server.serve()
         )
     finally:
-        await bot.session.close()  # Закрываем сессию бота
+        await bot.session.close()
         check_task.cancel()
         username_check_task.cancel()
         logging.info("Бот и сервер остановлены.")
