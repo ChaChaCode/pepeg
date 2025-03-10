@@ -16,8 +16,8 @@ from congratulations_messages_active import register_congratulations_messages_ac
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware  # Для поддержки CORS
 from pydantic import BaseModel
-import uvicorn
 from hypercorn.config import Config
 from hypercorn.asyncio import serve
 
@@ -50,6 +50,15 @@ register_new_public(dp, bot, supabase)
 # Инициализация FastAPI
 app = FastAPI()
 
+# Добавляем CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # Разрешаем запросы с локального хоста для разработки
+    allow_credentials=True,
+    allow_methods=["*"],  # Разрешаем все методы (GET, POST и т.д.)
+    allow_headers=["*"],  # Разрешаем все заголовки
+)
+
 # Модель для запроса проверки подписки
 class SubscriptionRequest(BaseModel):
     chat_id: int
@@ -59,7 +68,6 @@ class SubscriptionRequest(BaseModel):
 @app.post("/api/check-subscription")
 async def check_subscription(request: SubscriptionRequest):
     try:
-        # Проверяем статус подписки через Telegram API
         chat_member = await bot.get_chat_member(chat_id=request.chat_id, user_id=request.user_id)
         is_subscribed = chat_member.status in ["creator", "administrator", "member"]
         return {"isSubscribed": is_subscribed, "error": None}
@@ -71,17 +79,14 @@ async def check_subscription(request: SubscriptionRequest):
 @app.get("/api/get-invite-link/{chat_id}")
 async def get_invite_link(chat_id: int):
     try:
-        # Проверяем, существует ли чат и есть ли у бота права администратора
         chat = await bot.get_chat(chat_id)
         if chat.invite_link:
             return {"inviteLink": chat.invite_link, "error": None}
         else:
-            # Если ссылка отсутствует, создаем новую
             invite_link = await bot.export_chat_invite_link(chat_id)
             return {"inviteLink": invite_link, "error": None}
     except Exception as e:
         logging.error(f"Ошибка при получении ссылки на приглашение: {e}")
-        # Если бот не имеет прав или чат не существует, возвращаем ошибку
         if "403" in str(e) or "400" in str(e):
             return {"inviteLink": None, "error": "Бот не имеет прав администратора или чат не существует"}
         return {"inviteLink": None, "error": str(e)}
@@ -97,6 +102,7 @@ async def cmd_start(message: types.Message):
     ])
     await send_message_with_image(bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", reply_markup=keyboard)
 
+# Обработчик команды /help
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     try:
@@ -170,10 +176,52 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
+# Периодическая проверка имен пользователей
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
         await asyncio.sleep(60)  # Проверка каждую минуту
+
+# Обработчик для получения ID кастомных эмодзи (закомментирован, как в вашем исходном коде)
+#@dp.message()
+#async def handle_custom_emoji(message: types.Message):
+#    found_emoji = False
+#
+#    if message.entities:
+#        for entity in message.entities:
+#            if entity.type == "custom_emoji":
+#                found_emoji = True
+#                emoji_id = entity.custom_emoji_id
+#                start_pos = entity.offset
+#                end_pos = entity.offset + entity.length
+#                emoji_text = message.text[start_pos:end_pos]
+#
+#                emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+#                await message.reply(
+#                    f"```\n{emoji_format}\n```",
+#                    parse_mode="MarkdownV2"
+#                )
+#
+#    if "<tg-emoji" in message.text and not found_emoji:
+#        import re
+#        emoji_matches = re.findall(r'<tg-emoji emoji-id=[\'"](\d+)[\'"]>(.+?)</tg-emoji>', message.text)
+#
+#        if emoji_matches:
+#            for emoji_id, emoji_text in emoji_matches:
+#                emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
+#                escaped_format = emoji_format.replace("<", "\\<").replace(">", "\\>").replace("'", "\\'")
+#
+#                await message.reply(
+#                    f"```\n{escaped_format}\n```",
+#                    parse_mode="MarkdownV2"
+#                )
+#                found_emoji = True
+#
+#    if not found_emoji and any(ord(c) > 127 for c in message.text) and len(message.text.strip()) <= 5:
+#        await message.reply(
+#            "Это обычное эмодзи, а не кастомное. У него нет ID в Telegram.",
+#            parse_mode="HTML"
+#        )
 
 # Главная функция запуска бота и API
 async def main():
