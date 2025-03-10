@@ -155,17 +155,21 @@ async def get_invite_link(chat_id: int):
     logging.info(f"Received request for invite link with chat_id: {chat_id}")
     try:
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as session:
-            # Проверка существующей ссылки
-            chat_response = await session.get(f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id={chat_id}")
-            chat_data = await chat_response.json()
+    chat_response = await session.get(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/getChat?chat_id={chat_id}",
+        allow_redirects=True  # Разрешить редиректы
+    )
+    chat_data = await chat_response.json()
 
-            if chat_data.get('ok') and chat_data['result'].get('invite_link'):
-                logging.info(f"Returning existing invite link for chat_id: {chat_id}")
-                return {"inviteLink": chat_data['result']['invite_link']}
+    if chat_data.get('ok') and chat_data['result'].get('invite_link'):
+        logging.info(f"Returning existing invite link for chat_id: {chat_id}")
+        return {"inviteLink": chat_data['result']['invite_link']}
 
-            # Создание новой ссылки
-            invite_response = await session.get(f"https://api.telegram.org/bot{BOT_TOKEN}/exportChatInviteLink?chat_id={chat_id}")
-            invite_data = await invite_response.json()
+    invite_response = await session.get(
+        f"https://api.telegram.org/bot{BOT_TOKEN}/exportChatInviteLink?chat_id={chat_id}",
+        allow_redirects=True  # Разрешить редиректы
+    )
+    invite_data = await invite_response.json()
 
             if invite_data.get('ok'):
                 logging.info(f"Created new invite link for chat_id: {chat_id}")
