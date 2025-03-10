@@ -190,7 +190,7 @@ async def main():
     try:
         dp.startup.register(on_startup)
         # Запуск через polling (раскомментируй, если не хочешь вебхуки)
-        # await dp.start_polling(bot)
+        await dp.start_polling(bot)
     finally:
         check_task.cancel()
         username_check_task.cancel()
