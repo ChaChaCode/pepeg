@@ -33,7 +33,7 @@ app = FastAPI()
 # Настройка CORS для связи с Vercel
 app.add_middleware(
     CORSMiddleware,  # Передаем класс напрямую как middleware без создания экземпляра
-    allow_origins=["https://your-app.vercel.app"],  # Замени на свой Vercel-домен
+    allow_origins=["https://vite-react-raffle.vercel.app"],  # Замени на свой Vercel-домен
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
