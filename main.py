@@ -30,7 +30,7 @@ app = FastAPI()
 # Настройка CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost", "http://127.0.0.1:5173"],
+    allow_origins=["https://vite-react-raffle.vercel.app", "http://localhost:5173", "http://localhost", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -205,7 +205,7 @@ async def check_subscription(data: dict):
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
-        await asyncio.sleep(60)  # Проверка каждую минуту
+        await asyncio.sleep(60)
 
 # Фоновая задача для завершения розыгрышей и проверки юзернеймов
 async def periodic_tasks():
@@ -218,9 +218,8 @@ async def periodic_tasks():
 async def main():
     check_task = asyncio.create_task(periodic_tasks())
     try:
-        # Запуск FastAPI и aiogram
         import uvicorn
-        config = uvicorn.Config(app, host="0.0.0.0", port=3001, workers=2)  # Добавляем несколько воркеров
+        config = uvicorn.Config(app, host="0.0.0.0", port=3001, workers=2)
         server = uvicorn.Server(config)
         await asyncio.gather(dp.start_polling(bot), server.serve())
     except Exception as e:
