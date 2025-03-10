@@ -128,28 +128,6 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
-# API для фронтенда (например, проверка подписки на канал)
-async def check_subscription(request):
-    data = await request.json()
-    channel_id = data.get("channelId")
-    user_id = data.get("userId")
-    init_data = data.get("initData")  # Получаем initData от фронтенда
-
-    if not channel_id or not user_id or not init_data:
-        return web.json_response({"error": "channelId, userId, and initData are required"}, status=400)
-
-    # Проверка подлинности initData (рекомендуется для безопасности)
-    if not verify_telegram_init_data(init_data, BOT_TOKEN):
-        return web.json_response({"error": "Invalid initData"}, status=403)
-
-    try:
-        chat_member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
-        is_subscribed = chat_member.status in ["creator", "administrator", "member"]
-        return web.json_response({"isSubscribed": is_subscribed, "error": None})
-    except Exception as e:
-        logging.error(f"Ошибка при проверке подписки: {e}")
-        return web.json_response({"isSubscribed": False, "error": str(e)}, status=500)
-
 # Функция проверки initData (для безопасности API)
 import hmac
 import hashlib
@@ -169,9 +147,59 @@ def verify_telegram_init_data(init_data: str, bot_token: str) -> bool:
     
     return calculated_hash == parsed_data["hash"][0]
 
+# API для фронтенда
+# 1. Проверка подписки на канал
+async def check_subscription(request):
+    data = await request.json()
+    channel_id = data.get("channelId")
+    user_id = data.get("userId")
+    init_data = data.get("initData")  # Получаем initData от фронтенда
+
+    if not channel_id or not user_id or not init_data:
+        return web.json_response({"error": "channelId, userId, and initData are required"}, status=400)
+
+    # Проверка подлинности initData
+    if not verify_telegram_init_data(init_data, BOT_TOKEN):
+        return web.json_response({"error": "Invalid initData"}, status=403)
+
+    try:
+        chat_member = await bot.get_chat_member(chat_id=channel_id, user_id=user_id)
+        is_subscribed = chat_member.status in ["creator", "administrator", "member"]
+        return web.json_response({"isSubscribed": is_subscribed, "error": None})
+    except Exception as e:
+        logging.error(f"Ошибка при проверке подписки: {e}")
+        return web.json_response({"isSubscribed": False, "error": str(e)}, status=500)
+
+# 2. Получение инвайт-ссылки для канала
+async def get_invite_link(request):
+    data = await request.json()
+    channel_id = data.get("channelId")
+    init_data = data.get("initData")  # Получаем initData от фронтенда
+
+    if not channel_id or not init_data:
+        return web.json_response({"error": "channelId and initData are required"}, status=400)
+
+    # Проверка подлинности initData
+    if not verify_telegram_init_data(init_data, BOT_TOKEN):
+        return web.json_response({"error": "Invalid initData"}, status=403)
+
+    try:
+        # Проверяем, есть ли уже инвайт-ссылка
+        chat = await bot.get_chat(chat_id=channel_id)
+        if hasattr(chat, "invite_link") and chat.invite_link:
+            return web.json_response({"inviteLink": chat.invite_link, "error": None})
+
+        # Если инвайт-ссылки нет, создаём новую
+        invite_link = await bot.export_chat_invite_link(chat_id=channel_id)
+        return web.json_response({"inviteLink": invite_link, "error": None})
+    except Exception as e:
+        logging.error(f"Ошибка при получении инвайт-ссылки: {e}")
+        return web.json_response({"inviteLink": None, "error": str(e)}, status=500)
+
 # Настройка веб-сервера для API
 app = web.Application()
 app.router.add_post("/api/check-subscription", check_subscription)
+app.router.add_post("/api/get-invite-link", get_invite_link)
 
 async def periodic_username_check():
     while True:
