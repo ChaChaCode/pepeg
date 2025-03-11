@@ -133,14 +133,21 @@ async def api_check_subscription(request: Request):
     user_id = data.get("user_id")
     chat_id = data.get("chat_id")
     if not user_id or not chat_id:
-        logging.error("Отсутствуют user_id или chat_id в запросе")
         return {"error": "Missing user_id or chat_id", "is_subscribed": False}
     logging.info(f"API запрос: user_id={user_id}, chat_id={chat_id}")
     result = await check_subscription(chat_id, user_id)
     return {"is_subscribed": result}
 
+# API-эндпоинт для получения инвайт-ссылки
+@app.get("/get-invite-link")
+async def api_get_invite_link(chat_id: int, request: Request):
+    logging.info(f"Headers: {request.headers}")
+    # Здесь должна быть логика для получения реальной инвайт-ссылки
+    return {"inviteLink": f"https://t.me/joinchat/{chat_id}"}
+
 # Ручная обработка OPTIONS для preflight-запроса
 @app.options("/check_subscription")
+@app.options("/get-invite-link")
 async def options_check_subscription():
     headers = {
         "Access-Control-Allow-Origin": "https://vite-react-raffle.vercel.app",
