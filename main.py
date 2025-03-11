@@ -133,6 +133,7 @@ async def api_check_subscription(request: Request):
     user_id = data.get("user_id")
     chat_id = data.get("chat_id")
     if not user_id or not chat_id:
+        logging.error("Отсутствуют user_id или chat_id в запросе")
         return {"error": "Missing user_id or chat_id", "is_subscribed": False}
     logging.info(f"API запрос: user_id={user_id}, chat_id={chat_id}")
     result = await check_subscription(chat_id, user_id)
