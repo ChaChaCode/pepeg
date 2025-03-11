@@ -169,7 +169,7 @@ async def start_web_server():
     app.router.add_get('/check_subscription', handle_channel_subscription_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 80)  # Используем порт 80 для внешнего подключения
+    site = web.TCPSite(runner, '0.0.0.0', 443)  # Используем порт 80 для внешнего подключения
     await site.start()
     logging.info("Веб-сервер запущен на http://0.0.0.0:80")
 
