@@ -16,6 +16,9 @@ from congratulations_messages_active import register_congratulations_messages_ac
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
 from aiohttp import web
+import ssl
+import os
+from OpenSSL import crypto
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -43,6 +46,28 @@ register_congratulations_messages(dp, bot, supabase)
 register_congratulations_messages_active(dp, bot, supabase)
 register_new_public(dp, bot, supabase)
 
+
+# Генерация самоподписанного сертификата
+def generate_self_signed_cert(cert_file, key_file):
+    if not os.path.exists(cert_file) or not os.path.exists(key_file):
+        k = crypto.PKey()
+        k.generate_key(crypto.TYPE_RSA, 2048)
+
+        cert = crypto.X509()
+        cert.get_subject().CN = "localhost"
+        cert.set_serial_number(1000)
+        cert.gmtime_adj_notBefore(0)
+        cert.gmtime_adj_notAfter(10 * 365 * 24 * 60 * 60)  # 10 лет
+        cert.set_issuer(cert.get_subject())
+        cert.set_pubkey(k)
+        cert.sign(k, 'sha256')
+
+        with open(cert_file, "wt") as f:
+            f.write(crypto.dump_certificate(crypto.FILETYPE_PEM, cert).decode("utf-8"))
+        with open(key_file, "wt") as f:
+            f.write(crypto.dump_privatekey(crypto.FILETYPE_PEM, k).decode("utf-8"))
+
+
 # Функция проверки подписки на канал через Telegram API
 async def check_channel_subscription(user_id: int, channel_id: str) -> bool:
     try:
@@ -52,14 +77,15 @@ async def check_channel_subscription(user_id: int, channel_id: str) -> bool:
         logging.error(f"Ошибка при проверке подписки user_id={user_id} на channel_id={channel_id}: {e}")
         return False
 
+
 # Обработчик HTTP-запроса для проверки подписки на канал
 async def handle_channel_subscription_check(request: web.Request):
     user_id = request.query.get('user_id')
     channel_id = request.query.get('channel_id')
-    
+
     if not user_id or not channel_id:
         return web.json_response({'error': 'user_id and channel_id are required'}, status=400)
-    
+
     try:
         user_id = int(user_id)
         is_subscribed = await check_channel_subscription(user_id, channel_id)
@@ -70,6 +96,7 @@ async def handle_channel_subscription_check(request: web.Request):
         logging.error(f"Ошибка в обработке запроса: {e}")
         return web.json_response({'error': 'internal server error'}, status=500)
 
+
 # Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
@@ -79,7 +106,10 @@ async def cmd_start(message: types.Message):
         [types.InlineKeyboardButton(text="🔥 Активные розыгрыши", callback_data="active_giveaways")],
         [types.InlineKeyboardButton(text="🎯 Мои участия", callback_data="my_participations")],
     ])
-    await send_message_with_image(bot, message.chat.id, "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:", reply_markup=keyboard)
+    await send_message_with_image(bot, message.chat.id,
+                                  "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:",
+                                  reply_markup=keyboard)
+
 
 # Обработчик команды /help
 @dp.message(Command("help"))
@@ -134,6 +164,7 @@ async def cmd_help(message: types.Message):
         logging.error(f"Ошибка в cmd_help: {e}")
         await message.reply("Произошла ошибка при выполнении команды /help.")
 
+
 # Обработчик возврата в главное меню
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
@@ -155,20 +186,35 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=callback_query.message.message_id
     )
 
-# Настройка веб-сервера для работы на порту 8080
+
+# Настройка веб-сервера с HTTPS
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/check_subscription', handle_channel_subscription_check)
+
+    # Путь к сертификатам
+    cert_file = "cert.pem"
+    key_file = "key.pem"
+
+    # Генерируем сертификаты, если их нет
+    generate_self_signed_cert(cert_file, key_file)
+
+    # Настройка SSL
+    ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ssl_context.load_cert_chain(cert_file, key_file)
+
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '0.0.0.0', 8080)  # Изменен порт на 8080
+    site = web.TCPSite(runner, '0.0.0.0', 8443, ssl_context=ssl_context)  # Порт 8443 для HTTPS
     await site.start()
-    logging.info("Веб-сервер запущен на http://0.0.0.0:8080")
+    logging.info("Веб-сервер запущен на https://0.0.0.0:8443")
+
 
 async def periodic_username_check():
     while True:
         await check_usernames(bot, supabase)
         await asyncio.sleep(60)  # Проверка каждую минуту
+
 
 # Главная функция запуска бота и веб-сервера
 async def main():
@@ -182,6 +228,7 @@ async def main():
         check_task.cancel()
         username_check_task.cancel()
         web_server_task.cancel()
+
 
 if __name__ == '__main__':
     asyncio.run(main())
