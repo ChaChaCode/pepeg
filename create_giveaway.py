@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import aiogram.exceptions
 from datetime import timedelta  # Ensure this is imported at the top
 from aiogram.types import InputMediaPhoto, InputMediaAnimation, InputMediaVideo  # Add these imports
+import re
 
 # Настройка логирования 📝
 logging.basicConfig(level=logging.INFO)
@@ -44,10 +45,11 @@ s3_client = boto3.client(
 )
 
 # Константы ⚙️
-MAX_NAME_LENGTH = 100
-MAX_DESCRIPTION_LENGTH = 2500
-MAX_MEDIA_SIZE_MB = 5
-MAX_WINNERS = 50
+MAX_CAPTION_LENGTH = 850
+MAX_NAME_LENGTH = 50
+MAX_DESCRIPTION_LENGTH = 850
+MAX_MEDIA_SIZE_MB = 10
+MAX_WINNERS = 100
 
 # Состояния FSM 🎛️
 class GiveawayStates(StatesGroup):
@@ -71,8 +73,25 @@ FORMATTING_GUIDE = """
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
 - Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
-</blockquote>
+
+Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
+
+
+def count_length_with_custom_emoji(text: str) -> int:
+    """Подсчитывает длину текста, считая кастомные эмодзи как 1 символ."""
+    # Регулярное выражение для поиска тегов <tg-emoji>
+    emoji_pattern = r'<tg-emoji emoji-id="[^"]+">[^<]+</tg-emoji>'
+
+    # Находим все вхождения кастомных эмодзи
+    custom_emojis = re.findall(emoji_pattern, text)
+
+    # Подсчитываем длину текста без учёта длины тегов, заменяя каждый тег на 1 символ
+    cleaned_text = text
+    for emoji in custom_emojis:
+        cleaned_text = cleaned_text.replace(emoji, ' ')  # Заменяем тег на один символ (пробел)
+
+    return len(cleaned_text)
 
 async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
     """Загружает файл в хранилище 📤"""
@@ -175,14 +194,18 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         """Обрабатывает введённое название 🎯"""
         formatted_text = message.html_text if message.text else ""
 
-        if len(formatted_text) > MAX_NAME_LENGTH:
+        # Используем новую функцию для подсчёта длины
+        text_length = count_length_with_custom_emoji(formatted_text)
+
+        if text_length > MAX_NAME_LENGTH:
             data = await state.get_data()
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {len(formatted_text)}. Сократите!\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard,
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -191,7 +214,8 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
 
         await state.update_data(name=formatted_text)
         await state.set_state(GiveawayStates.waiting_for_description)
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
         data = await state.get_data()
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         await send_message_with_image(
@@ -208,37 +232,41 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, supabase: Client
         """Обрабатывает введённое описание 📜"""
         formatted_text = message.html_text if message.text else ""
 
-        if len(formatted_text) > MAX_DESCRIPTION_LENGTH:
+        # Используем новую функцию для подсчёта длины
+        text_length = count_length_with_custom_emoji(formatted_text)
+
+        if text_length > MAX_DESCRIPTION_LENGTH:
             data = await state.get_data()
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
+            keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[[InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu")]])
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Описание длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {len(formatted_text)}. Сократите!\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Описание длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard,
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
             )
-            return
-
-        await state.update_data(description=formatted_text)
-        await state.set_state(GiveawayStates.waiting_for_media_choice)
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="✅ Да", callback_data="add_media")
-        keyboard.button(text="⏭️ Пропустить", callback_data="skip_media")
-        keyboard.button(text="В меню", callback_data="back_to_main_menu")
-        keyboard.adjust(2, 1)
-        data = await state.get_data()
-        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-        await send_message_with_image(
-            bot,
-            message.chat.id,
-            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите добавить фото, GIF или видео? (до {MAX_MEDIA_SIZE_MB} МБ) 📎",
-            reply_markup=keyboard.as_markup(),
-            message_id=data['last_message_id'],
-            parse_mode='HTML'
-        )
+            # Убираем return, чтобы бот остался в состоянии waiting_for_description и ждал нового ввода
+        else:
+            await state.update_data(description=formatted_text)
+            await state.set_state(GiveawayStates.waiting_for_media_choice)
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="✅ Да", callback_data="add_media")
+            keyboard.button(text="⏭️ Пропустить", callback_data="skip_media")
+            keyboard.button(text="В меню", callback_data="back_to_main_menu")
+            keyboard.adjust(2, 1)
+            data = await state.get_data()
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите добавить фото, GIF или видео? (до {MAX_MEDIA_SIZE_MB} МБ) 📎",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
+            )
 
     @dp.callback_query(lambda c: c.data in ["add_media", "skip_media", "back_to_media_choice"])
     async def process_media_choice(callback_query: CallbackQuery, state: FSMContext):
