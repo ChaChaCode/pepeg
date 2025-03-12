@@ -38,10 +38,11 @@ s3_client = boto3.client(
 )
 
 # Константы ⚙️
-MAX_NAME_LENGTH = 100
-MAX_DESCRIPTION_LENGTH = 2500
-MAX_MEDIA_SIZE_MB = 5
-MAX_WINNERS = 50
+MAX_CAPTION_LENGTH = 850
+MAX_NAME_LENGTH = 50
+MAX_DESCRIPTION_LENGTH = 850
+MAX_MEDIA_SIZE_MB = 10
+MAX_WINNERS = 100
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
@@ -56,12 +57,22 @@ FORMATTING_GUIDE = """
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
 - Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
-</blockquote>
+
+Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
 
 def strip_html_tags(text: str) -> str:
     """Удаляет HTML-теги из текста 🧹"""
     return re.sub(r'<[^>]+>', '', text)
+
+def count_length_with_custom_emoji(text: str) -> int:
+    """Подсчитывает длину текста, считая кастомные эмодзи как 1 символ."""
+    emoji_pattern = r'<tg-emoji emoji-id="[^"]+">[^<]+</tg-emoji>'
+    custom_emojis = re.findall(emoji_pattern, text)
+    cleaned_text = text
+    for emoji in custom_emojis:
+        cleaned_text = cleaned_text.replace(emoji, ' ')
+    return len(cleaned_text)
 
 class EditGiveawayStates(StatesGroup):
     waiting_for_new_name_active = State()  # ✏️
@@ -484,14 +495,32 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         giveaway_id = data['giveaway_id']
         new_name = message.html_text if message.text else ""
 
-        if len(new_name) > MAX_NAME_LENGTH:
+        # Используем новую функцию для подсчёта длины
+        text_length = count_length_with_custom_emoji(new_name)
+
+        if text_length > MAX_NAME_LENGTH:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {len(new_name)}. Сократите!\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название слишком длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
+            )
+            return
+
+        # Проверка на лимит Telegram для подписи
+        if text_length > MAX_CAPTION_LENGTH:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов для медиа)! Сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -543,14 +572,32 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
         giveaway_id = data['giveaway_id']
         new_description = message.html_text if message.text else ""
 
-        if len(new_description) > MAX_DESCRIPTION_LENGTH:
+        # Используем новую функцию для подсчёта длины
+        text_length = count_length_with_custom_emoji(new_description)
+
+        if text_length > MAX_DESCRIPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {len(new_description)}. Сократите!\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
+                reply_markup=keyboard.as_markup(),
+                message_id=data['last_message_id'],
+                parse_mode='HTML'
+            )
+            return
+
+        # Проверка на лимит Telegram для подписи
+        if text_length > MAX_CAPTION_LENGTH:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов для медиа)! Сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
