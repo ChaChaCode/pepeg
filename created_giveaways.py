@@ -1343,17 +1343,27 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             'communities': [(comm[0], comm[1]) for comm in selected_communities]
         }
 
+        # Формируем список сообществ с пригласительными ссылками
+        community_links = []
+        for community_id, _, community_name in selected_communities:
+            try:
+                chat = await bot.get_chat(community_id)
+                invite_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(community_id).replace('-100', '')}"
+                community_links.append(f"<a href=\"{invite_link}\">{community_name}</a>")
+            except Exception as e:
+                logger.error(f"Не удалось получить информацию о сообществе {community_id}: {str(e)}")
+                community_links.append(f"{community_name} (ссылка недоступна)")
+
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="🚀 Опубликовать", callback_data=f"publish_giveaway:{giveaway_id}")
-        keyboard.button(text=" ◀️ Назад", callback_data=f"activate_giveaway:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"activate_giveaway:{giveaway_id}")
         keyboard.adjust(1)
 
         await bot.answer_callback_query(callback_query.id)
-        community_names = [comm[2] for comm in selected_communities]
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Розыгрыш будет опубликован в: {', '.join(community_names)}!\nПодтвердите запуск!",
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Розыгрыш будет опубликован в: {', '.join(community_links)}\nПодтвердите запуск!",
             keyboard.as_markup(),
             message_id=callback_query.message.message_id
         )
@@ -1574,16 +1584,32 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     counter_tasks = []
                     for task_info in participant_counter_tasks:
                         task = asyncio.create_task(
-                            start_participant_counter(bot, task_info['chat_id'], task_info['message_id'], giveaway_id, supabase)
+                            start_participant_counter(bot, task_info['chat_id'], task_info['message_id'], giveaway_id,
+                                                      supabase)
                         )
                         counter_tasks.append(task)
 
                     await bot.answer_callback_query(callback_query.id, text="✅ Розыгрыш запущен! 🎉")
 
+                    # Получаем информацию о каналах
+                    channel_links = []
+                    unique_chat_ids = set(msg['chat_id'] for msg in published_messages)
+                    for chat_id in unique_chat_ids:
+                        try:
+                            chat = await bot.get_chat(chat_id)
+                            channel_name = chat.title
+                            invite_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(chat_id).replace('-100', '')}"
+                            channel_links.append(f"<a href=\"{invite_link}\">{channel_name}</a>")
+                        except Exception as e:
+                            logger.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
+                            channel_links.append("Неизвестный канал")
+
+                    channel_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Опубликовано в:</b> {', '.join(channel_links)}" if channel_links else ""
+
                     keyboard = InlineKeyboardBuilder()
                     keyboard.button(text="🏠 Назад", callback_data="back_to_main_menu")
 
-                    result_message = f"<b><tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Успешно опубликовано в {success_count} сообществах!</b>\n<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> Участники будут обновляться каждую минуту."
+                    result_message = f"<b><tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Успешно опубликовано в {success_count} сообществах!</b>{channel_info}\n<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> Участники будут обновляться каждую минуту."
                     if error_count > 0:
                         result_message += f"\n\n<b><tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибок: {error_count}</b>"
                         for error in error_messages:
@@ -1603,22 +1629,26 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     )
                 except Exception as e:
                     logger.error(f"🚫 Ошибка активации: {str(e)}")
-                    await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при запуске розыгрыша 😔")
+                    await bot.answer_callback_query(callback_query.id,
+                                                    text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при запуске розыгрыша 😔")
             else:
-                await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось опубликовать 😔")
+                await bot.answer_callback_query(callback_query.id,
+                                                text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось опубликовать 😔")
                 error_keyboard = InlineKeyboardBuilder()
                 error_keyboard.button(text=" ◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
                 await send_message_with_image(
                     bot,
                     callback_query.from_user.id,
-                    f"<b><tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Публикация не удалась</b>\nОшибок: {error_count}\n\n<b>Подробности:</b>\n" + "\n".join(error_messages),
+                    f"<b><tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Публикация не удалась</b>\nОшибок: {error_count}\n\n<b>Подробности:</b>\n" + "\n".join(
+                        error_messages),
                     reply_markup=error_keyboard.as_markup(),
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML'
                 )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при публикации 😔")
+            await bot.answer_callback_query(callback_query.id,
+                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при публикации 😔")
         finally:
             user_selected_communities.pop(user_id, None)
 
@@ -1644,6 +1674,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message_id=message_id,
                 reply_markup=keyboard.as_markup()
             )
+        except aiogram.exceptions.TelegramBadRequest as e:
+            if "message is not modified" not in str(e).lower():
+                logger.error(f"🚫 Ошибка обновления кнопки: {str(e)}")
+            # Если это "message is not modified", ничего не делаем и не логируем
         except Exception as e:
             logger.error(f"🚫 Ошибка обновления кнопки: {str(e)}")
 
