@@ -1,264 +1,477 @@
-from aiogram import Dispatcher, Bot, types
-from aiogram.types import CallbackQuery
-from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.exceptions import TelegramBadRequest
-from supabase import Client
-from datetime import datetime, timedelta
 import logging
-from utils import send_message_with_image
-import math
-import re
+from aiogram import Bot, types
+from aiogram.types import FSInputFile, Message, InputMediaPhoto, InputMediaAnimation, InputMediaVideo
+from supabase import Client
+import random
+import aiogram.exceptions
+import asyncio
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+from typing import List, Dict, Any
+from aiogram.enums import ChatMemberStatus
+from datetime import datetime
+import pytz
 
-def strip_html_tags(text):
-    """Удаляет HTML-теги из текста, оставляя только видимую часть."""
-    clean_text = re.sub(r'<[^>]+>', '', text)
-    return clean_text
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
-    @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
-    async def process_my_participations(callback_query: CallbackQuery):
-        user_id = callback_query.from_user.id
-        ITEMS_PER_PAGE = 5
+FORMATTING_GUIDE = """
+Поддерживаемые форматы текста:
+<blockquote expandable>
+- Цитата
+- Жирный: <b>текст</b>
+- Курсив: <i>текст</i>
+- Подчёркнутый: <u>текст</u>
+- Зачёркнутый: <s>текст</s>
+- Моноширинный
+- Скрытый: <tg-spoiler>текст</tg-spoiler>
+- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
+- Код: <code>текст</code>
+- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
 
-        # Get page number from callback data
-        current_page = 1
-        if callback_query.data.startswith('my_participations_page:'):
-            current_page = int(callback_query.data.split(':')[1])
-
-        try:
-            response = supabase.table('participations').select('*, giveaways(*)').eq('user_id', user_id).execute()
-            participations = response.data
-
-            # Filter out participations where giveaway's user_id is 1
-            filtered_participations = [p for p in participations if p['giveaways']['user_id'] != 1]
-
-            if not filtered_participations:
-                await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном розыгрыше.")
-                return
-
-            total_participations = len(filtered_participations)
-            total_pages = math.ceil(total_participations / ITEMS_PER_PAGE)
-
-            # Calculate slice indices for current page
-            start_idx = (current_page - 1) * ITEMS_PER_PAGE
-            end_idx = start_idx + ITEMS_PER_PAGE
-
-            # Get participations for current page
-            current_participations = filtered_participations[start_idx:end_idx]
-
-            # Generate keyboard with pagination
-            keyboard = InlineKeyboardBuilder()
-
-            # Add participation buttons (each in its own row)
-            for participation in current_participations:
-                giveaway = participation['giveaways']
-                # Очищаем название от HTML-тегов для отображения в кнопке
-                clean_name = strip_html_tags(giveaway['name'])
-                # Ограничиваем длину текста кнопки до 64 символов (Telegram limit)
-                if len(clean_name) > 64:
-                    clean_name = clean_name[:61] + "..."
-                keyboard.row(types.InlineKeyboardButton(
-                    text=clean_name,
-                    callback_data=f"giveaway_{giveaway['id']}"
-                ))
-
-            # Create navigation row
-            nav_buttons = []
-
-            # Previous page button
-            if current_page > 1:
-                nav_buttons.append(types.InlineKeyboardButton(
-                    text="←",
-                    callback_data=f"my_participations_page:{current_page - 1}"
-                ))
-
-            # Page indicator - only show if there's more than one page
-            if total_pages > 1:
-                nav_buttons.append(types.InlineKeyboardButton(
-                    text=f"{current_page}/{total_pages}",
-                    callback_data="ignore"
-                ))
-
-            # Next page button
-            if current_page < total_pages:
-                nav_buttons.append(types.InlineKeyboardButton(
-                    text="→",
-                    callback_data=f"my_participations_page:{current_page + 1}"
-                ))
-
-            # Add navigation buttons in one row if there are any
-            if nav_buttons:
-                keyboard.row(*nav_buttons)
-
-            # Add back button in its own row
-            keyboard.row(types.InlineKeyboardButton(
-                text="◀️ Назад",
-                callback_data="back_to_main_menu"
-            ))
-
-            message_text = f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Список розыгрышей, в которых вы участвуете"
-            if total_pages > 1:
-                message_text += f" (Страница {current_page} из {total_pages}):"
-            else:
-                message_text += ":"
-
-            await send_message_with_image(
-                bot,
-                chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
-                text=message_text,
-                reply_markup=keyboard.as_markup()
-            )
-        except Exception as e:
-            logging.error(f"Error in process_my_participations: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении ваших участий.")
-
-    @dp.callback_query(lambda c: c.data == "ignore")
-    async def process_ignore(callback_query: CallbackQuery):
-        await bot.answer_callback_query(callback_query.id)
-
-    @dp.callback_query(lambda c: c.data.startswith('giveaway_'))
-    async def process_giveaway_details(callback_query: CallbackQuery):
-        giveaway_id = callback_query.data.split('_')[1]
-        try:
-            response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-            giveaway = response.data
-
-            if not giveaway:
-                await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
-                return
-
-            # Формируем текст с сохранением HTML-форматирования
-            giveaway_info = f"""
-{giveaway['name']}
-
-{giveaway['description']}
-
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
 
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(
-                text="Открыть",
-                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+
+async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
+                                  parse_mode: str = 'HTML', entities=None) -> Message | None:
+    image_path = 'image/pepes.png'  # Replace with your image path
+    image = FSInputFile(image_path)
+
+    try:
+        if message_id:
+            # Edit existing message
+            return await bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=types.InputMediaPhoto(
+                    media=image,
+                    caption=text,
+                    parse_mode=parse_mode,
+                    caption_entities=entities
+                ),
+                reply_markup=reply_markup
             )
-            keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
-            keyboard.adjust(1)
+        else:
+            # Send new message
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=image,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                caption_entities=entities
+            )
+    except Exception as e:
+        logging.error(f"Error in send_message_with_image: {str(e)}")
+        # If sending/editing with image fails, try sending/editing just the text
+        try:
+            if message_id:
+                return await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    entities=entities
+                )
+            else:
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    entities=entities
+                )
+        except Exception as text_e:
+            logging.error(f"Error sending/editing text message: {str(text_e)}")
+        return None
 
+
+async def check_and_end_giveaways(bot: Bot, supabase: Client):
+    while True:
+        now = datetime.now(pytz.utc)
+        try:
+            # Обновляем запрос: используем 'true' вместо True
+            response = supabase.table('giveaways').select('*').eq('is_active', 'true').execute()
+            if response.data:
+                for giveaway in response.data:
+                    end_time = datetime.fromisoformat(giveaway['end_time'])
+                    if end_time <= now:
+                        try:
+                            await end_giveaway(bot, supabase, giveaway['id'])
+                        except Exception as e:
+                            logging.error(f"Error ending giveaway {giveaway['id']}: {str(e)}")
+            else:
+                logging.info("No active giveaways found")
+        except Exception as e:
+            logging.error(f"Error fetching active giveaways: {str(e)}")
+
+        await asyncio.sleep(30)  # Check every 30 seconds
+
+
+async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
+    try:
+        # Fetch giveaway details
+        response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
+        if not response.data:
+            logging.error(f"Error fetching giveaway: Giveaway not found")
+            return
+        giveaway = response.data
+
+        # Fetch participants
+        response = supabase.table('participations').select('user_id').eq('giveaway_id', giveaway_id).execute()
+        participants = response.data if response.data else []
+
+        # Recheck participants
+        valid_participants = await recheck_participants(bot, supabase, giveaway_id, participants)
+
+        # Select winners from valid participants
+        winners = await select_random_winners(bot, valid_participants,
+                                              min(len(valid_participants), giveaway['winner_count']))
+
+        # Update giveaway status
+        await update_giveaway_status(supabase, giveaway_id, 'false')  # Используем 'false' вместо False
+
+        # Save winners (if any)
+        if winners:
+            for index, winner in enumerate(winners, start=1):
+                supabase.table('giveaway_winners').insert({
+                    'giveaway_id': giveaway_id,
+                    'user_id': winner['user_id'],
+                    'username': winner['username'],
+                    'name': winner.get('name', ''),
+                    'place': index
+                }).execute()
+
+        # Notify winners and publish results
+        await notify_winners_and_publish_results(bot, supabase, giveaway, winners)
+
+        # Create a new giveaway with the same details
+        new_giveaway = giveaway.copy()
+        new_giveaway.pop('id', None)
+        new_giveaway['is_active'] = 'false'  # Используем 'false' вместо False
+        new_giveaway['created_at'] = None
+        new_giveaway['end_time'] = giveaway['end_time']
+
+        # Insert the new giveaway
+        new_giveaway_response = supabase.table('giveaways').insert(new_giveaway).execute()
+        new_giveaway_id = new_giveaway_response.data[0]['id']
+
+        # Duplicate giveaway_communities data
+        congratulations_response = supabase.table('congratulations').select('*').eq('giveaway_id',
+                                                                                    giveaway_id).execute()
+        if congratulations_response.data:
+            new_congratulations = []
+            for congrat in congratulations_response.data:
+                new_congrat = congrat.copy()
+                new_congrat.pop('id', None)
+                new_congrat['giveaway_id'] = new_giveaway_id
+                new_congratulations.append(new_congrat)
+
+            if new_congratulations:
+                supabase.table('congratulations').insert(new_congratulations).execute()
+
+        # Update the old giveaway (оставляем participant_counter_tasks без изменений)
+        supabase.table('giveaways').update({
+            'user_id': 1,  # Если это изменение нужно, оставляем
+            'published_messages': None  # Очищаем только published_messages, если это требуется
+        }).eq('id', giveaway_id).execute()
+
+        logging.info(f"Giveaway {giveaway_id} ended and duplicated with new id {new_giveaway_id}")
+
+    except Exception as e:
+        logging.error(f"Error in end_giveaway: {str(e)}")
+
+
+async def recheck_participants(bot: Bot, supabase: Client, giveaway_id: str, participants: List[Dict[str, Any]]) -> \
+List[Dict[str, Any]]:
+    valid_participants = []
+    giveaway_communities = await get_giveaway_communities(supabase, giveaway_id)
+
+    for participant in participants:
+        user_id = participant['user_id']
+        is_valid = True
+
+        for community in giveaway_communities:
             try:
-                await bot.answer_callback_query(callback_query.id)
-            except TelegramBadRequest as e:
-                if "query is too old" in str(e):
-                    logging.warning(f"Callback query is too old: {e}")
-                else:
-                    raise
+                member = await bot.get_chat_member(chat_id=community['community_id'], user_id=user_id)
+                if member.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR,
+                                         ChatMemberStatus.CREATOR]:
+                    is_valid = False
+                    break
+            except Exception as e:
+                logging.error(
+                    f"Error checking membership for user {user_id} in community {community['community_id']}: {str(e)}")
+                is_valid = False
+                break
 
-            if giveaway['media_type'] and giveaway['media_file_id']:
+        if is_valid:
+            valid_participants.append(participant)
+        else:
+            supabase.table('participations').delete().eq('giveaway_id', giveaway_id).eq('user_id', user_id).execute()
+
+    return valid_participants
+
+
+async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveaway: Dict[str, Any],
+                                             winners: List[Dict[str, Any]]):
+    # Извлекаем chat_id из participant_counter_tasks
+    participant_counter_tasks = giveaway.get('participant_counter_tasks')
+    target_chat_ids = []
+    channel_links = []
+    if participant_counter_tasks:
+        try:
+            import json
+            tasks = json.loads(participant_counter_tasks)
+            target_chat_ids = [task['chat_id'] for task in tasks if 'chat_id' in task]
+            # Формируем список каналов с названиями и ссылками
+            for chat_id in set(target_chat_ids):  # Используем set для уникальности
                 try:
+                    chat = await bot.get_chat(chat_id)
+                    channel_name = chat.title
+                    invite_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(chat_id).replace('-100', '')}"
+                    channel_links.append(f"<a href=\"{invite_link}\">{channel_name}</a>")
+                except Exception as e:
+                    logging.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
+                    channel_links.append("Неизвестный канал")
+        except Exception as e:
+            logging.error(f"Error parsing participant_counter_tasks for giveaway {giveaway['id']}: {str(e)}")
+
+    if not target_chat_ids:
+        logging.error(f"No valid chat_ids found in participant_counter_tasks for giveaway {giveaway['id']}")
+        return
+
+    # Формируем сообщение для публикации в каналах и создателю
+    if winners:
+        # Форматируем победителей с медалями для первых трех мест
+        winners_formatted = []
+        for idx, winner in enumerate(winners, start=1):
+            medal = ""
+            if idx == 1:
+                medal = "<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> "
+            elif idx == 2:
+                medal = "<tg-emoji emoji-id='5447203607294265305'>🥈</tg-emoji> "
+            elif idx == 3:
+                medal = "<tg-emoji emoji-id='5453902265922376865'>🥉</tg-emoji> "
+            winners_formatted.append(
+                f"{medal}{idx}. <a href='tg://user?id={winner['user_id']}'>@{winner['username']}</a>")
+
+        winners_list = '\n'.join(winners_formatted)
+        result_message = f"""
+<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
+
+<b>{giveaway['name']}</b>
+
+<b>Победители:</b> 
+<blockquote expandable>
+{winners_list}
+</blockquote>
+"""
+    else:
+        result_message = f"""
+<b>Розыгрыш завершен</b>
+
+<b>{giveaway['name']}</b>
+
+К сожалению, в этом розыгрыше не было участников.
+"""
+
+    if winners and len(winners) < giveaway['winner_count']:
+        result_message += f"""
+Не все призовые места были распределены.
+"""
+
+    # Добавляем информацию о каналах в сообщение для создателя
+    if channel_links:
+        result_message_for_creator = result_message + f"""
+<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
+"""
+    else:
+        result_message_for_creator = result_message
+
+    # Клавиатура для публикации в каналах
+    channel_keyboard = InlineKeyboardBuilder()
+    channel_keyboard.button(text="Результаты", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}")
+
+    # Публикуем результаты только в каналы из participant_counter_tasks
+    for chat_id in target_chat_ids:
+        try:
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                media_types = {
+                    'photo': InputMediaPhoto,
+                    'gif': InputMediaAnimation,
+                    'video': InputMediaVideo
+                }
+                media_type = media_types.get(giveaway['media_type'])
+                if media_type:
                     if giveaway['media_type'] == 'photo':
-                        await bot.edit_message_media(
-                            chat_id=callback_query.message.chat.id,
-                            message_id=callback_query.message.message_id,
-                            media=types.InputMediaPhoto(
-                                media=giveaway['media_file_id'],
-                                caption=giveaway_info,
-                                parse_mode='HTML'
-                            ),
-                            reply_markup=keyboard.as_markup()
+                        await bot.send_photo(
+                            chat_id=int(chat_id),
+                            photo=giveaway['media_file_id'],
+                            caption=result_message,
+                            reply_markup=channel_keyboard.as_markup(),
+                            parse_mode='HTML'
                         )
                     elif giveaway['media_type'] == 'gif':
-                        await bot.edit_message_media(
-                            chat_id=callback_query.message.chat.id,
-                            message_id=callback_query.message.message_id,
-                            media=types.InputMediaAnimation(
-                                media=giveaway['media_file_id'],
-                                caption=giveaway_info,
-                                parse_mode='HTML'
-                            ),
-                            reply_markup=keyboard.as_markup()
+                        await bot.send_animation(
+                            chat_id=int(chat_id),
+                            animation=giveaway['media_file_id'],
+                            caption=result_message,
+                            reply_markup=channel_keyboard.as_markup(),
+                            parse_mode='HTML'
                         )
                     elif giveaway['media_type'] == 'video':
-                        await bot.edit_message_media(
-                            chat_id=callback_query.message.chat.id,
-                            message_id=callback_query.message.message_id,
-                            media=types.InputMediaVideo(
-                                media=giveaway['media_file_id'],
-                                caption=giveaway_info,
-                                parse_mode='HTML'
-                            ),
-                            reply_markup=keyboard.as_markup()
+                        await bot.send_video(
+                            chat_id=int(chat_id),
+                            video=giveaway['media_file_id'],
+                            caption=result_message,
+                            reply_markup=channel_keyboard.as_markup(),
+                            parse_mode='HTML'
                         )
-                except TelegramBadRequest as e:
-                    if "message to edit not found" in str(e):
-                        logging.warning(f"Message to edit not found: {e}")
-                        await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
-                    else:
-                        raise
             else:
-                try:
-                    await send_message_with_image(
-                        bot,
-                        callback_query.from_user.id,
-                        giveaway_info,
-                        reply_markup=keyboard.as_markup(),
-                        message_id=callback_query.message.message_id,
-                        parse_mode='HTML'
-                    )
-                except TelegramBadRequest as e:
-                    if "message to edit not found" in str(e):
-                        logging.warning(f"Message to edit not found: {e}")
-                        await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
-                    else:
-                        raise
-
+                await bot.send_message(
+                    chat_id=int(chat_id),
+                    text=result_message,
+                    reply_markup=channel_keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
         except Exception as e:
-            logging.error(f"Error in process_giveaway_details: {str(e)}")
-            try:
-                await bot.answer_callback_query(callback_query.id,
-                                                text="Произошла ошибка при получении информации о розыгрыше.")
-            except TelegramBadRequest:
-                logging.warning("Failed to answer callback query due to timeout")
+            logging.error(f"Error publishing results in chat {chat_id}: {e}")
 
-            await bot.send_message(
-                chat_id=callback_query.from_user.id,
-                text="Произошла ошибка при получении информации о розыгрыше. Пожалуйста, попробуйте еще раз.",
-                parse_mode='HTML'
+    # Уведомляем победителей
+    congrats_response = supabase.table('congratulations').select('place', 'message').eq('giveaway_id',
+                                                                                        giveaway['id']).execute()
+    congrats_messages = {item['place']: item['message'] for item in congrats_response.data}
+
+    for index, winner in enumerate(winners, start=1):
+        try:
+            congrats_message = congrats_messages.get(index,
+                                                     f"<b>Поздравляем!</b> Вы выиграли в розыгрыше \"<i>{giveaway['name']}</i>\"!")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(
+                text="Результаты",
+                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}"
             )
-
-    async def send_new_giveaway_message(chat_id, giveaway, g_info, keyboard):
-        if giveaway['media_type'] and giveaway['media_file_id']:
-            media_type = giveaway['media_type']
-            if media_type == 'photo':
-                await bot.send_photo(
-                    chat_id,
-                    giveaway['media_file_id'],
-                    caption=g_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            elif media_type == 'gif':
-                await bot.send_animation(
-                    chat_id,
-                    giveaway['media_file_id'],
-                    caption=g_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            elif media_type == 'video':
-                await bot.send_video(
-                    chat_id,
-                    giveaway['media_file_id'],
-                    caption=g_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-        else:
-            await send_message_with_image(
-                bot,
-                chat_id,
-                g_info,
+            keyboard.button(text="В меню", callback_data="back_to_main_menu")
+            await bot.send_message(
+                chat_id=winner['user_id'],
+                text=congrats_message,
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
             )
+        except Exception as e:
+            logging.error(f"Error notifying winner {winner['user_id']}: {e}")
 
-    return send_new_giveaway_message
+    # Уведомляем создателя розыгрыша
+    creator_id = giveaway.get('user_id')
+    if creator_id:
+        # Клавиатура для создателя
+        creator_keyboard = InlineKeyboardBuilder()
+        creator_keyboard.button(text="В меню", callback_data="back_to_main_menu")
+
+        try:
+            await send_message_with_image(
+                bot,
+                chat_id=creator_id,
+                text=result_message_for_creator,
+                reply_markup=creator_keyboard.as_markup(),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logging.error(f"Error notifying creator {creator_id}: {str(e)}")
+
+
+async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], winner_count: int) -> List[
+    Dict[str, Any]]:
+    winners = random.sample(participants, min(winner_count, len(participants)))
+    winner_details = []
+    for winner in winners:
+        try:
+            user = await bot.get_chat_member(winner['user_id'], winner['user_id'])
+            winner_details.append({
+                'user_id': winner['user_id'],
+                'username': user.user.username or f"user{winner['user_id']}",
+                'name': user.user.first_name
+            })
+        except Exception as e:
+            logging.error(f"Error fetching user details: {e}")
+            winner_details.append({
+                'user_id': winner['user_id'],
+                'username': f"user{winner['user_id']}",
+                'name': ""
+            })
+    return winner_details
+
+
+async def update_giveaway_status(supabase: Client, giveaway_id: str, is_active: str):
+    try:
+        # Используем строковое значение 'true' или 'false' вместо булевого
+        supabase.table('giveaways').update({'is_active': is_active}).eq('id', giveaway_id).execute()
+    except Exception as e:
+        logging.error(f"Error updating giveaway status: {str(e)}")
+
+
+async def get_giveaway_communities(supabase: Client, giveaway_id: str) -> List[Dict[str, Any]]:
+    response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway_id).execute()
+    return response.data if response.data else []
+
+
+async def check_usernames(bot: Bot, supabase: Client):
+    try:
+        users_response = supabase.table('users').select('user_id, telegram_username').execute()
+        users = users_response.data
+
+        for user in users:
+            try:
+                chat = await bot.get_chat(user['user_id'])
+                current_username = chat.username
+
+                if current_username != user.get('telegram_username'):
+                    supabase.table('users').update({
+                        'telegram_username': current_username
+                    }).eq('user_id', user['user_id']).execute()
+                    logging.info(
+                        f"Updated username for user {user['user_id']}: {user.get('telegram_username')} -> {current_username}")
+            except Exception as e:
+                logging.error(f"Error checking user {user['user_id']}: {str(e)}")
+
+        communities_response = supabase.table('bound_communities').select(
+            'community_id, community_username, community_name').execute()
+        communities = communities_response.data
+
+        for community in communities:
+            try:
+                chat = await bot.get_chat(community['community_id'])
+                current_username = chat.username or chat.title
+                current_name = chat.title
+
+                if (current_username != community.get('community_username') or
+                        current_name != community.get('community_name')):
+                    supabase.table('bound_communities').update({
+                        'community_username': current_username,
+                        'community_name': current_name
+                    }).eq('community_id', community['community_id']).execute()
+
+                    supabase.table('giveaway_communities').update({
+                        'community_username': current_username,
+                        'community_name': current_name
+                    }).eq('community_id', community['community_id']).execute()
+
+                    logging.info(
+                        f"Обновлены данные для сообщества {community['community_id']}:\n"
+                        f"Username: {community.get('community_username')} -> {current_username}\n"
+                        f"Name: {community.get('community_name')} -> {current_name}"
+                    )
+            except aiogram.exceptions.TelegramBadRequest as e:
+                if "chat not found" in str(e).lower():
+                    community_name = community.get('community_username', 'Неизвестное сообщество')
+                    logging.warning(f"Нет доступа к сообществу {community_name} (ID: {community['community_id']}). "
+                                    f"Возможно, бот был удален из администраторов или сообщество было удалено.")
+                else:
+                    logging.error(f"Неожиданная ошибка при проверке сообщества {community['community_id']}: {str(e)}")
+            except Exception as e:
+                logging.error(f"Ошибка при проверке сообщества {community['community_id']}: {str(e)}")
+
+    except Exception as e:
+        logging.error(f"Ошибка в функции check_usernames: {str(e)}")
