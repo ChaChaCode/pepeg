@@ -293,18 +293,56 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
     async def process_force_end_giveaway(callback_query: types.CallbackQuery):
         """Принудительное завершение розыгрыша после подтверждения ⏹️"""
         giveaway_id = callback_query.data.split(':')[1]
-        await bot.answer_callback_query(callback_query.id, text="Завершаем розыгрыш...")
+
+        # Обновляем текущее сообщение с индикатором загрузки
+        await send_message_with_image(
+            bot,
+            chat_id=callback_query.from_user.id,
+            text="<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Завершаем розыгрыш...",
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
+        )
+        await bot.answer_callback_query(callback_query.id)  # Подтверждаем обработку callback
 
         try:
             await end_giveaway(bot=bot, giveaway_id=giveaway_id, supabase=supabase)
+
+            # Получаем данные о розыгрыше
+            giveaway_response = supabase.table('giveaways').select('participant_counter_tasks').eq('id',
+                                                                                                   giveaway_id).single().execute()
+            giveaway = giveaway_response.data
+
+            # Извлекаем chat_id из participant_counter_tasks
+            participant_counter_tasks = giveaway.get('participant_counter_tasks')
+            channel_links = []
+            if participant_counter_tasks:
+                try:
+                    tasks = json.loads(participant_counter_tasks)
+                    unique_chat_ids = set(task['chat_id'] for task in tasks if 'chat_id' in task)
+                    for chat_id in unique_chat_ids:
+                        try:
+                            chat = await bot.get_chat(chat_id)
+                            channel_name = chat.title
+                            invite_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(chat_id).replace('-100', '')}"
+                            channel_links.append(f"<a href=\"{invite_link}\">{channel_name}</a>")
+                        except Exception as e:
+                            logger.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
+                            channel_links.append("Неизвестный канал")
+                except Exception as e:
+                    logger.error(f"Ошибка при разборе participant_counter_tasks для розыгрыша {giveaway_id}: {str(e)}")
+
+            # Формируем информацию о каналах
+            channel_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}" if channel_links else ""
+
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             await send_message_with_image(
                 bot,
                 chat_id=callback_query.from_user.id,
                 message_id=callback_query.message.message_id,
-                text="✅ Розыгрыш завершён! Результаты уже в сообществах 🎉",
-                reply_markup=keyboard.as_markup()
+                text=f"✅ Розыгрыш принудительно завершён!<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji>{channel_info}",
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка завершения розыгрыша: {str(e)}")
@@ -315,7 +353,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                 chat_id=callback_query.from_user.id,
                 message_id=callback_query.message.message_id,
                 text="❌ Упс! Не удалось завершить розыгрыш 😔 Попробуйте снова!",
-                reply_markup=keyboard.as_markup()
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
             )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_active_post:'))
