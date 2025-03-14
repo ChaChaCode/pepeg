@@ -172,11 +172,10 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
             if new_congratulations:
                 supabase.table('congratulations').insert(new_congratulations).execute()
 
-        # Update the old giveaway
+        # Update the old giveaway (оставляем participant_counter_tasks без изменений)
         supabase.table('giveaways').update({
-            'user_id': 1,
-            'participant_counter_tasks': None,
-            'published_messages': None
+            'user_id': 1,  # Если это изменение нужно, оставляем
+            'published_messages': None  # Очищаем только published_messages, если это требуется
         }).eq('id', giveaway_id).execute()
 
         logging.info(f"Giveaway {giveaway_id} ended and duplicated with new id {new_giveaway_id}")
@@ -217,14 +216,35 @@ List[Dict[str, Any]]:
 
 async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveaway: Dict[str, Any],
                                              winners: List[Dict[str, Any]]):
-    response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway['id']).execute()
-    if not response.data:
-        logging.error(f"Error fetching communities: No communities found")
-        return
-    communities = response.data
+    # Извлекаем chat_id из participant_counter_tasks
+    participant_counter_tasks = giveaway.get('participant_counter_tasks')
+    target_chat_ids = []
+    channel_links = []
+    if participant_counter_tasks:
+        try:
+            import json
+            tasks = json.loads(participant_counter_tasks)
+            target_chat_ids = [task['chat_id'] for task in tasks if 'chat_id' in task]
+            # Формируем список каналов с названиями и ссылками
+            for chat_id in set(target_chat_ids):  # Используем set для уникальности
+                try:
+                    chat = await bot.get_chat(chat_id)
+                    channel_name = chat.title
+                    invite_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(chat_id).replace('-100', '')}"
+                    channel_links.append(f"<a href=\"{invite_link}\">{channel_name}</a>")
+                except Exception as e:
+                    logging.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
+                    channel_links.append("Неизвестный канал")
+        except Exception as e:
+            logging.error(f"Error parsing participant_counter_tasks for giveaway {giveaway['id']}: {str(e)}")
 
+    if not target_chat_ids:
+        logging.error(f"No valid chat_ids found in participant_counter_tasks for giveaway {giveaway['id']}")
+        return
+
+    # Формируем сообщение для публикации в каналах и создателю
     if winners:
-        # Format winners with medals for top 3 places
+        # Форматируем победителей с медалями для первых трех мест
         winners_formatted = []
         for idx, winner in enumerate(winners, start=1):
             medal = ""
@@ -234,7 +254,6 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
                 medal = "<tg-emoji emoji-id='5447203607294265305'>🥈</tg-emoji> "
             elif idx == 3:
                 medal = "<tg-emoji emoji-id='5453902265922376865'>🥉</tg-emoji> "
-
             winners_formatted.append(
                 f"{medal}{idx}. <a href='tg://user?id={winner['user_id']}'>@{winner['username']}</a>")
 
@@ -263,10 +282,20 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
 Не все призовые места были распределены.
 """
 
-    keyboard = InlineKeyboardBuilder()
-    keyboard.button(text="Результаты", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}")
+    # Добавляем информацию о каналах в сообщение для создателя
+    if channel_links:
+        result_message_for_creator = result_message + f"""
+<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
+"""
+    else:
+        result_message_for_creator = result_message
 
-    for community in communities:
+    # Клавиатура для публикации в каналах
+    channel_keyboard = InlineKeyboardBuilder()
+    channel_keyboard.button(text="Результаты", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}")
+
+    # Публикуем результаты только в каналы из participant_counter_tasks
+    for chat_id in target_chat_ids:
         try:
             if giveaway['media_type'] and giveaway['media_file_id']:
                 media_types = {
@@ -278,38 +307,39 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
                 if media_type:
                     if giveaway['media_type'] == 'photo':
                         await bot.send_photo(
-                            chat_id=int(community['community_id']),
+                            chat_id=int(chat_id),
                             photo=giveaway['media_file_id'],
                             caption=result_message,
-                            reply_markup=keyboard.as_markup(),
+                            reply_markup=channel_keyboard.as_markup(),
                             parse_mode='HTML'
                         )
                     elif giveaway['media_type'] == 'gif':
                         await bot.send_animation(
-                            chat_id=int(community['community_id']),
+                            chat_id=int(chat_id),
                             animation=giveaway['media_file_id'],
                             caption=result_message,
-                            reply_markup=keyboard.as_markup(),
+                            reply_markup=channel_keyboard.as_markup(),
                             parse_mode='HTML'
                         )
                     elif giveaway['media_type'] == 'video':
                         await bot.send_video(
-                            chat_id=int(community['community_id']),
+                            chat_id=int(chat_id),
                             video=giveaway['media_file_id'],
                             caption=result_message,
-                            reply_markup=keyboard.as_markup(),
+                            reply_markup=channel_keyboard.as_markup(),
                             parse_mode='HTML'
                         )
             else:
                 await bot.send_message(
-                    chat_id=int(community['community_id']),
+                    chat_id=int(chat_id),
                     text=result_message,
-                    reply_markup=keyboard.as_markup(),
+                    reply_markup=channel_keyboard.as_markup(),
                     parse_mode='HTML'
                 )
         except Exception as e:
-            logging.error(f"Error publishing results in community @{community['community_id']}: {e}")
+            logging.error(f"Error publishing results in chat {chat_id}: {e}")
 
+    # Уведомляем победителей
     congrats_response = supabase.table('congratulations').select('place', 'message').eq('giveaway_id',
                                                                                         giveaway['id']).execute()
     congrats_messages = {item['place']: item['message'] for item in congrats_response.data}
@@ -332,6 +362,24 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
             )
         except Exception as e:
             logging.error(f"Error notifying winner {winner['user_id']}: {e}")
+
+    # Уведомляем создателя розыгрыша
+    creator_id = giveaway.get('user_id')
+    if creator_id:
+        # Клавиатура для создателя
+        creator_keyboard = InlineKeyboardBuilder()
+        creator_keyboard.button(text="В меню", callback_data="back_to_main_menu")
+
+        try:
+            await send_message_with_image(
+                bot,
+                chat_id=creator_id,
+                text=result_message_for_creator,
+                reply_markup=creator_keyboard.as_markup(),
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logging.error(f"Error notifying creator {creator_id}: {str(e)}")
 
 
 async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], winner_count: int) -> List[
