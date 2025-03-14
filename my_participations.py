@@ -96,7 +96,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 callback_data="back_to_main_menu"
             ))
 
-            message_text = f"Список розыгрышей, в которых вы участвуете"
+            message_text = f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Список розыгрышей, в которых вы участвуете"
             if total_pages > 1:
                 message_text += f" (Страница {current_page} из {total_pages}):"
             else:
@@ -134,7 +134,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
 {giveaway['description']}
 
-<b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 """
 
             keyboard = InlineKeyboardBuilder()
