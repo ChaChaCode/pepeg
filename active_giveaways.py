@@ -340,7 +340,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clien
                 bot,
                 chat_id=callback_query.from_user.id,
                 message_id=callback_query.message.message_id,
-                text=f"<tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b> Розыгрыш принудительно завершён!{channel_info}",
+                text=f"✅ Розыгрыш принудительно завершён!{channel_info}",
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML'
             )
