@@ -315,7 +315,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text=f"🎉 Участвовать ({participant_count})",
-                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.button(
                 text="◀️ Назад",
@@ -1470,7 +1470,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text=f"🎉 Участвовать ({participant_count})",
-                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.adjust(1)
 
@@ -1666,7 +1666,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text=f"🎉 Участвовать ({count})",
-                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.adjust(1)
             await bot.edit_message_reply_markup(
