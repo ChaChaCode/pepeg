@@ -140,7 +140,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text="Открыть",
-                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway_id}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
             keyboard.adjust(1)
