@@ -292,7 +292,7 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
 
     # Клавиатура для публикации в каналах
     channel_keyboard = InlineKeyboardBuilder()
-    channel_keyboard.button(text="Результаты", url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}")
+    channel_keyboard.button(text="Результаты", url=f"https://t.me/Snapi/app?startapp={giveaway['id']}")
 
     # Публикуем результаты только в каналы из participant_counter_tasks
     for chat_id in target_chat_ids:
@@ -351,7 +351,7 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text="Результаты",
-                url=f"https://t.me/PepeGift_Bot/open?startapp={giveaway['id']}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway['id']}"
             )
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             await bot.send_message(
