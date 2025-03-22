@@ -40,7 +40,6 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
 
     try:
         if message_id:
-            # Edit existing message
             return await bot.edit_message_media(
                 chat_id=chat_id,
                 message_id=message_id,
@@ -53,7 +52,6 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
                 reply_markup=reply_markup
             )
         else:
-            # Send new message
             return await bot.send_photo(
                 chat_id=chat_id,
                 photo=image,
@@ -64,7 +62,6 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
             )
     except Exception as e:
         logging.error(f"Error in send_message_with_image: {str(e)}")
-        # If sending/editing with image fails, try sending/editing just the text
         try:
             if message_id:
                 return await bot.edit_message_text(
@@ -92,7 +89,6 @@ async def check_and_end_giveaways(bot: Bot, supabase: Client):
     while True:
         now = datetime.now(pytz.utc)
         try:
-            # Обновляем запрос: используем 'true' вместо True
             response = supabase.table('giveaways').select('*').eq('is_active', 'true').execute()
             if response.data:
                 for giveaway in response.data:
@@ -119,19 +115,29 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
             return
         giveaway = response.data
 
-        # Fetch participants
-        response = supabase.table('participations').select('user_id').eq('giveaway_id', giveaway_id).execute()
-        participants = response.data if response.data else []
+        # Fetch all participants with pagination
+        participants = []
+        limit = 1000
+        offset = 0
+        while True:
+            response = supabase.table('participations').select('user_id').eq('giveaway_id', giveaway_id).limit(
+                limit).offset(offset).execute()
+            if not response.data:
+                break
+            participants.extend(response.data)
+            offset += limit
+            if len(response.data) < limit:
+                break
 
-        # Recheck participants
-        valid_participants = await recheck_participants(bot, supabase, giveaway_id, participants)
+        logging.info(f"Total participants fetched for giveaway {giveaway_id}: {len(participants)}")
 
-        # Select winners from valid participants
-        winners = await select_random_winners(bot, valid_participants,
-                                              min(len(valid_participants), giveaway['winner_count']))
+        # Select winners with subscription check
+        winners = await select_random_winners(bot, participants,
+                                              min(len(participants), giveaway['winner_count']),
+                                              giveaway_id, supabase)
 
         # Update giveaway status
-        await update_giveaway_status(supabase, giveaway_id, 'false')  # Используем 'false' вместо False
+        await update_giveaway_status(supabase, giveaway_id, 'false')
 
         # Save winners (if any)
         if winners:
@@ -150,15 +156,13 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
         # Create a new giveaway with the same details
         new_giveaway = giveaway.copy()
         new_giveaway.pop('id', None)
-        new_giveaway['is_active'] = 'false'  # Используем 'false' вместо False
+        new_giveaway['is_active'] = 'false'
         new_giveaway['created_at'] = None
         new_giveaway['end_time'] = giveaway['end_time']
 
-        # Insert the new giveaway
         new_giveaway_response = supabase.table('giveaways').insert(new_giveaway).execute()
         new_giveaway_id = new_giveaway_response.data[0]['id']
 
-        # Duplicate giveaway_communities data
         congratulations_response = supabase.table('congratulations').select('*').eq('giveaway_id',
                                                                                     giveaway_id).execute()
         if congratulations_response.data:
@@ -172,10 +176,9 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
             if new_congratulations:
                 supabase.table('congratulations').insert(new_congratulations).execute()
 
-        # Update the old giveaway (оставляем participant_counter_tasks без изменений)
         supabase.table('giveaways').update({
-            'user_id': 1,  # Если это изменение нужно, оставляем
-            'published_messages': None  # Очищаем только published_messages, если это требуется
+            'user_id': 1,
+            'published_messages': None
         }).eq('id', giveaway_id).execute()
 
         logging.info(f"Giveaway {giveaway_id} ended and duplicated with new id {new_giveaway_id}")
@@ -184,39 +187,86 @@ async def end_giveaway(bot: Bot, supabase: Client, giveaway_id: str):
         logging.error(f"Error in end_giveaway: {str(e)}")
 
 
-async def recheck_participants(bot: Bot, supabase: Client, giveaway_id: str, participants: List[Dict[str, Any]]) -> \
-List[Dict[str, Any]]:
-    valid_participants = []
+async def check_participant(bot: Bot, user_id: int, communities: List[Dict[str, Any]]) -> bool:
+    """Проверка подписки участника на все указанные каналы."""
+    for community in communities:
+        try:
+            member = await bot.get_chat_member(chat_id=community['community_id'], user_id=user_id)
+            if member.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR]:
+                return False
+        except Exception as e:
+            logging.error(
+                f"Error checking membership for user {user_id} in community {community['community_id']}: {str(e)}")
+            return False
+    return True
+
+
+async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], winner_count: int, giveaway_id: str,
+                                supabase: Client) -> List[Dict[str, Any]]:
+    # Устанавливаем сид для воспроизводимости
+    random.seed(giveaway_id)
+
+    # Получаем список каналов для проверки
     giveaway_communities = await get_giveaway_communities(supabase, giveaway_id)
+    if not giveaway_communities:
+        logging.warning(f"No communities found for giveaway {giveaway_id}, all participants considered valid")
+        shuffled_participants = participants.copy()
+        random.shuffle(shuffled_participants)
+        winners = random.sample(shuffled_participants, min(winner_count, len(shuffled_participants)))
+    else:
+        # Параллельная проверка всех участников
+        tasks = [check_participant(bot, p['user_id'], giveaway_communities) for p in participants]
+        results = await asyncio.gather(*tasks)
+        valid_participants = [p for p, valid in zip(participants, results) if valid]
 
-    for participant in participants:
-        user_id = participant['user_id']
-        is_valid = True
+        logging.info(
+            f"Found {len(valid_participants)} valid participants out of {len(participants)} for giveaway {giveaway_id}")
 
-        for community in giveaway_communities:
-            try:
-                member = await bot.get_chat_member(chat_id=community['community_id'], user_id=user_id)
-                if member.status not in [ChatMemberStatus.MEMBER, ChatMemberStatus.ADMINISTRATOR,
-                                         ChatMemberStatus.CREATOR]:
-                    is_valid = False
-                    break
-            except Exception as e:
-                logging.error(
-                    f"Error checking membership for user {user_id} in community {community['community_id']}: {str(e)}")
-                is_valid = False
-                break
-
-        if is_valid:
-            valid_participants.append(participant)
+        # Перемешиваем и выбираем победителей из валидных
+        if valid_participants:
+            random.shuffle(valid_participants)
+            winners = random.sample(valid_participants, min(winner_count, len(valid_participants)))
         else:
-            supabase.table('participations').delete().eq('giveaway_id', giveaway_id).eq('user_id', user_id).execute()
+            winners = []
+            logging.warning(f"No valid participants found for giveaway {giveaway_id}")
 
-    return valid_participants
+    # Формируем детали победителей
+    winner_details = []
+    for winner in winners:
+        user_id = winner['user_id']
+        try:
+            user = await bot.get_chat_member(user_id, user_id)
+            winner_details.append({
+                'user_id': user_id,
+                'username': user.user.username or f"user{user_id}",
+                'name': user.user.first_name
+            })
+        except Exception as e:
+            logging.error(f"Error fetching user details for {user_id}: {e}")
+            winner_details.append({
+                'user_id': user_id,
+                'username': f"user{user_id}",
+                'name': ""
+            })
+
+    logging.info(f"Selected winners for giveaway {giveaway_id}: {[w['user_id'] for w in winner_details]}")
+    return winner_details
+
+
+async def update_giveaway_status(supabase: Client, giveaway_id: str, is_active: str):
+    try:
+        supabase.table('giveaways').update({'is_active': is_active}).eq('id', giveaway_id).execute()
+    except Exception as e:
+        logging.error(f"Error updating giveaway status: {str(e)}")
+
+
+async def get_giveaway_communities(supabase: Client, giveaway_id: str) -> List[Dict[str, Any]]:
+    response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway_id).execute()
+    return response.data if response.data else []
 
 
 async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveaway: Dict[str, Any],
                                              winners: List[Dict[str, Any]]):
-    # Извлекаем chat_id из participant_counter_tasks
     participant_counter_tasks = giveaway.get('participant_counter_tasks')
     target_chat_ids = []
     channel_links = []
@@ -225,8 +275,7 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
             import json
             tasks = json.loads(participant_counter_tasks)
             target_chat_ids = [task['chat_id'] for task in tasks if 'chat_id' in task]
-            # Формируем список каналов с названиями и ссылками
-            for chat_id in set(target_chat_ids):  # Используем set для уникальности
+            for chat_id in set(target_chat_ids):
                 try:
                     chat = await bot.get_chat(chat_id)
                     channel_name = chat.title
@@ -242,9 +291,7 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
         logging.error(f"No valid chat_ids found in participant_counter_tasks for giveaway {giveaway['id']}")
         return
 
-    # Формируем сообщение для публикации в каналах и создателю
     if winners:
-        # Форматируем победителей с медалями для первых трех мест
         winners_formatted = []
         for idx, winner in enumerate(winners, start=1):
             medal = ""
@@ -282,7 +329,6 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
 Не все призовые места были распределены.
 """
 
-    # Добавляем информацию о каналах в сообщение для создателя
     if channel_links:
         result_message_for_creator = result_message + f"""
 <tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
@@ -290,11 +336,9 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
     else:
         result_message_for_creator = result_message
 
-    # Клавиатура для публикации в каналах
     channel_keyboard = InlineKeyboardBuilder()
     channel_keyboard.button(text="Результаты", url=f"https://t.me/Snapi/app?startapp={giveaway['id']}")
 
-    # Публикуем результаты только в каналы из participant_counter_tasks
     for chat_id in target_chat_ids:
         try:
             if giveaway['media_type'] and giveaway['media_file_id']:
@@ -305,30 +349,42 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
                 }
                 media_type = media_types.get(giveaway['media_type'])
                 if media_type:
-                    if giveaway['media_type'] == 'photo':
-                        await bot.send_photo(
-                            chat_id=int(chat_id),
-                            photo=giveaway['media_file_id'],
-                            caption=result_message,
-                            reply_markup=channel_keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
-                    elif giveaway['media_type'] == 'gif':
-                        await bot.send_animation(
-                            chat_id=int(chat_id),
-                            animation=giveaway['media_file_id'],
-                            caption=result_message,
-                            reply_markup=channel_keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
-                    elif giveaway['media_type'] == 'video':
-                        await bot.send_video(
-                            chat_id=int(chat_id),
-                            video=giveaway['media_file_id'],
-                            caption=result_message,
-                            reply_markup=channel_keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
+                    try:
+                        if giveaway['media_type'] == 'photo':
+                            await bot.send_photo(
+                                chat_id=int(chat_id),
+                                photo=giveaway['media_file_id'],
+                                caption=result_message,
+                                reply_markup=channel_keyboard.as_markup(),
+                                parse_mode='HTML'
+                            )
+                        elif giveaway['media_type'] == 'gif':
+                            await bot.send_animation(
+                                chat_id=int(chat_id),
+                                animation=giveaway['media_file_id'],
+                                caption=result_message,
+                                reply_markup=channel_keyboard.as_markup(),
+                                parse_mode='HTML'
+                            )
+                        elif giveaway['media_type'] == 'video':
+                            await bot.send_video(
+                                chat_id=int(chat_id),
+                                video=giveaway['media_file_id'],
+                                caption=result_message,
+                                reply_markup=channel_keyboard.as_markup(),
+                                parse_mode='HTML'
+                            )
+                    except aiogram.exceptions.TelegramBadRequest as e:
+                        if "message caption is too long" in str(e).lower():
+                            logging.warning(f"Caption too long for media in chat {chat_id}, sending as text instead")
+                            await bot.send_message(
+                                chat_id=int(chat_id),
+                                text=result_message,
+                                reply_markup=channel_keyboard.as_markup(),
+                                parse_mode='HTML'
+                            )
+                        else:
+                            raise
             else:
                 await bot.send_message(
                     chat_id=int(chat_id),
@@ -339,7 +395,6 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
         except Exception as e:
             logging.error(f"Error publishing results in chat {chat_id}: {e}")
 
-    # Уведомляем победителей
     congrats_response = supabase.table('congratulations').select('place', 'message').eq('giveaway_id',
                                                                                         giveaway['id']).execute()
     congrats_messages = {item['place']: item['message'] for item in congrats_response.data}
@@ -363,10 +418,8 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
         except Exception as e:
             logging.error(f"Error notifying winner {winner['user_id']}: {e}")
 
-    # Уведомляем создателя розыгрыша
     creator_id = giveaway.get('user_id')
     if creator_id:
-        # Клавиатура для создателя
         creator_keyboard = InlineKeyboardBuilder()
         creator_keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
@@ -380,41 +433,6 @@ async def notify_winners_and_publish_results(bot: Bot, supabase: Client, giveawa
             )
         except Exception as e:
             logging.error(f"Error notifying creator {creator_id}: {str(e)}")
-
-
-async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], winner_count: int) -> List[
-    Dict[str, Any]]:
-    winners = random.sample(participants, min(winner_count, len(participants)))
-    winner_details = []
-    for winner in winners:
-        try:
-            user = await bot.get_chat_member(winner['user_id'], winner['user_id'])
-            winner_details.append({
-                'user_id': winner['user_id'],
-                'username': user.user.username or f"user{winner['user_id']}",
-                'name': user.user.first_name
-            })
-        except Exception as e:
-            logging.error(f"Error fetching user details: {e}")
-            winner_details.append({
-                'user_id': winner['user_id'],
-                'username': f"user{winner['user_id']}",
-                'name': ""
-            })
-    return winner_details
-
-
-async def update_giveaway_status(supabase: Client, giveaway_id: str, is_active: str):
-    try:
-        # Используем строковое значение 'true' или 'false' вместо булевого
-        supabase.table('giveaways').update({'is_active': is_active}).eq('id', giveaway_id).execute()
-    except Exception as e:
-        logging.error(f"Error updating giveaway status: {str(e)}")
-
-
-async def get_giveaway_communities(supabase: Client, giveaway_id: str) -> List[Dict[str, Any]]:
-    response = supabase.table('giveaway_communities').select('community_id').eq('giveaway_id', giveaway_id).execute()
-    return response.data if response.data else []
 
 
 async def check_usernames(bot: Bot, supabase: Client):
