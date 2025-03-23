@@ -496,11 +496,14 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     async def display_giveaway(bot: Bot, chat_id: int, giveaway_id: int, conn, cursor, message_id: int = None):
         """Displays the giveaway details by updating the existing message."""
         try:
+            # Получаем данные розыгрыша из базы
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-            giveaway = cursor.fetchone()
+            columns = [desc[0] for desc in cursor.description]
+            giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
                 raise Exception("Giveaway not found in database")
 
+            # Создаем клавиатуру
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Редактировать", callback_data=f"edit_post:{giveaway_id}")
             keyboard.button(text="👥 Привязать сообщества", callback_data=f"bind_communities:{giveaway_id}")
@@ -512,45 +515,108 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
-            invite_info = f"\n<tg-emoji emoji-id='5352899869369446268'>😊</tg-emoji> Приглашайте {giveaway[12]} друзей для участия!" if \
-                giveaway[11] else ""
+            # Формируем информацию о приглашениях
+            invite_info = f"\n<tg-emoji emoji-id='5352899869369446268'>😊</tg-emoji> Приглашайте {giveaway['quantity_invite']} друзей для участия!" if giveaway.get(
+                'invite') else ""
 
-            # Предполагаем, что giveaway[5] — это end_time, и он уже в формате datetime с учётом часового пояса
-            end_time = giveaway[5]  # end_time — шестой столбец
+            # Обрабатываем время окончания
+            end_time = giveaway['end_time']
             if not isinstance(end_time, datetime):
                 raise ValueError(f"end_time is not a datetime object: {end_time}")
-
-            # Если end_time уже в часовом поясе Москвы (как мы сохранили в save_giveaway), просто форматируем
             end_time_msk = end_time.strftime('%d.%m.%Y %H:%M')
+
+            # Формируем текст розыгрыша
             giveaway_info = f"""
-<b>{giveaway[1]}</b>
+<b>{giveaway['name']}</b>
 
-{giveaway[2]}
+{giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway[6]}
+<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {end_time_msk} (МСК)
 {invite_info}
 """
 
-            await send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard, message_id=message_id)
+            # Обновляем существующее сообщение
+            if message_id:
+                if giveaway.get('media_type') and giveaway.get('media_file_id'):
+                    # Если есть медиа в розыгрыше, используем его
+                    media_types = {
+                        'photo': InputMediaPhoto,
+                        'gif': InputMediaAnimation,
+                        'video': InputMediaVideo
+                    }
+                    await bot.edit_message_media(
+                        chat_id=chat_id,
+                        message_id=message_id,
+                        media=media_types[giveaway['media_type']](
+                            media=giveaway['media_file_id'],
+                            caption=giveaway_info,
+                            parse_mode='HTML'
+                        ),
+                        reply_markup=keyboard.as_markup()
+                    )
+                else:
+                    # Если медиа нет, используем заглушку через send_message_with_image
+                    await send_message_with_image(
+                        bot,
+                        chat_id,
+                        giveaway_info,
+                        reply_markup=keyboard.as_markup(),
+                        message_id=message_id,  # Передаём message_id для редактирования
+                        parse_mode='HTML'
+                    )
+            else:
+                # Если message_id не передан (новое сообщение), отправляем с медиа или заглушкой
+                if giveaway.get('media_type') and giveaway.get('media_file_id'):
+                    if giveaway['media_type'] == 'photo':
+                        await bot.send_photo(chat_id, giveaway['media_file_id'], caption=giveaway_info,
+                                             reply_markup=keyboard.as_markup(), parse_mode='HTML')
+                    elif giveaway['media_type'] == 'gif':
+                        await bot.send_animation(chat_id, animation=giveaway['media_file_id'], caption=giveaway_info,
+                                                 reply_markup=keyboard.as_markup(), parse_mode='HTML')
+                    elif giveaway['media_type'] == 'video':
+                        await bot.send_video(chat_id, video=giveaway['media_file_id'], caption=giveaway_info,
+                                             reply_markup=keyboard.as_markup(), parse_mode='HTML')
+                else:
+                    await send_message_with_image(
+                        bot,
+                        chat_id,
+                        giveaway_info,
+                        reply_markup=keyboard.as_markup(),
+                        parse_mode='HTML'
+                    )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка отображения розыгрыша: {str(e)}")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
+            error_message = "❌ Ошибка загрузки розыгрыша 😔\n⚠️ Упс! Что-то пошло не так. Попробуйте снова!"
             if message_id:
-                await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text="❌ Ошибка загрузки розыгрыша 😔\n⚠️ Упс! Что-то пошло не так. Попробуйте снова!",
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
+                try:
+                    # Пробуем отредактировать сообщение с ошибкой через send_message_with_image
+                    await send_message_with_image(
+                        bot,
+                        chat_id,
+                        error_message,
+                        reply_markup=keyboard.as_markup(),
+                        message_id=message_id,
+                        parse_mode='HTML'
+                    )
+                except Exception as edit_e:
+                    logger.error(f"Не удалось отредактировать сообщение с ошибкой: {str(edit_e)}")
+                    # Если редактирование не удалось, отправляем новое
+                    await send_message_with_image(
+                        bot,
+                        chat_id,
+                        error_message,
+                        reply_markup=keyboard.as_markup(),
+                        parse_mode='HTML'
+                    )
             else:
                 await send_message_with_image(
                     bot,
                     chat_id,
-                    "❌ Ошибка загрузки розыгрыша 😔\n⚠️ Упс! Что-то пошло не так. Попробуйте снова!",
+                    error_message,
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML'
                 )
