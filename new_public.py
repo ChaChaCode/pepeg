@@ -3,7 +3,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import ChatMemberUpdatedFilter, IS_MEMBER
 from aiogram.types import ChatMemberUpdated, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberAdministrator
-from supabase import create_client, Client
 from utils import send_message_with_image
 from aiogram.enums import ChatMemberStatus, ChatType
 import logging
@@ -22,11 +21,6 @@ logging.basicConfig(
 )
 
 BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
-
-# Конфигурация Supabase 🗄️
-supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
-supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
-supabase: Client = create_client(supabase_url, supabase_key)
 
 # Конфигурация Yandex Cloud S3 ☁️
 YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
@@ -110,7 +104,7 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
         logging.error(f"Ошибка загрузки в Yandex Cloud: {str(e)}")
         return False, str(e)
 
-def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
+def register_new_public(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
     async def process_bind_new_community(callback_query: types.CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
@@ -284,10 +278,16 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
                                         state: FSMContext, message_id: int, chat_type_db: str, chat_type_display: str,
                                         community_name: str, avatar_url: str = None):
         try:
-            response = supabase.table('giveaway_communities').select('*').eq('giveaway_id', giveaway_id).eq(
-                'community_id', str(channel_id)).eq('user_id', user_id).execute()
+            cursor.execute(
+                """
+                SELECT * FROM giveaway_communities 
+                WHERE giveaway_id = %s AND community_id = %s AND user_id = %s
+                """,
+                (giveaway_id, str(channel_id), user_id)
+            )
+            existing = cursor.fetchone()
 
-            if response.data:
+            if existing:
                 await send_message_with_image(
                     bot, user_id,
                     f"{chat_type_display.capitalize()} \"{community_username}\" уже привязан к этому розыгрышу.",
@@ -323,8 +323,15 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
     async def record_bound_community(user_id: int, community_username: str, community_id: str, community_type: str,
                                      community_name: str, media_file_ava: str = None):
         try:
-            response = supabase.table('bound_communities').select('*').eq('community_id', community_id).eq('user_id',
-                                                                                                           user_id).execute()
+            cursor.execute(
+                """
+                SELECT * FROM bound_communities 
+                WHERE community_id = %s AND user_id = %s
+                """,
+                (community_id, user_id)
+            )
+            existing = cursor.fetchone()
+
             data = {
                 'user_id': user_id,
                 'community_username': community_username,
@@ -338,14 +345,33 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
             else:
                 logging.info("Записываем в bound_communities без аватара")
 
-            if response.data:
-                supabase.table('bound_communities').update(data).eq('community_id', community_id).eq('user_id',
-                                                                                                     user_id).execute()
+            if existing:
+                # Обновляем существующую запись
+                update_columns = ', '.join([f"{key} = %s" for key in data.keys()])
+                cursor.execute(
+                    f"""
+                    UPDATE bound_communities 
+                    SET {update_columns}
+                    WHERE community_id = %s AND user_id = %s
+                    """,
+                    (*data.values(), community_id, user_id)
+                )
             else:
-                supabase.table('bound_communities').insert(data).execute()
+                # Вставляем новую запись
+                columns = ', '.join(data.keys())
+                placeholders = ', '.join(['%s'] * len(data))
+                cursor.execute(
+                    f"""
+                    INSERT INTO bound_communities ({columns})
+                    VALUES ({placeholders})
+                    """,
+                    tuple(data.values())
+                )
+            conn.commit()
             return True
         except Exception as e:
             logging.error(f"Ошибка при записи привязанного сообщества: {str(e)}")
+            conn.rollback()
             return False
 
     async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id,
@@ -365,13 +391,32 @@ def register_new_public(dp: Dispatcher, bot: Bot, supabase: Client):
             logging.info("Записываем в giveaway_communities без аватара")
 
         try:
-            supabase.table("giveaway_communities").insert(data).execute()
+            columns = ', '.join(data.keys())
+            placeholders = ', '.join(['%s'] * len(data))
+            cursor.execute(
+                f"""
+                INSERT INTO giveaway_communities ({columns})
+                VALUES ({placeholders})
+                """,
+                tuple(data.values())
+            )
+            conn.commit()
         except Exception as e:
             logging.error(f"Ошибка при привязке сообщества: {str(e)}")
             if "community_type" in str(e):
                 del data["community_type"]
-                supabase.table("giveaway_communities").insert(data).execute()
+                columns = ', '.join(data.keys())
+                placeholders = ', '.join(['%s'] * len(data))
+                cursor.execute(
+                    f"""
+                    INSERT INTO giveaway_communities ({columns})
+                    VALUES ({placeholders})
+                    """,
+                    tuple(data.values())
+                )
+                conn.commit()
             else:
+                conn.rollback()
                 raise e
 
     def get_required_permissions(chat_type: str):
