@@ -4,11 +4,9 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from supabase import create_client, Client
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image
 import json
-from postgrest import APIResponse
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -16,11 +14,6 @@ logger = logging.getLogger(__name__)
 
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
-
-# Supabase configuration
-supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
-supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
-supabase: Client = create_client(supabase_url, supabase_key)
 
 user_selected_communities = {}
 paid_users: Dict[int, str] = {}
@@ -61,17 +54,18 @@ class GiveawayStates(StatesGroup):
     creating_giveaway = State()
     binding_communities = State()
 
-def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client):
+def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data.startswith('message_winners:'))
     async def process_message_winners(callback_query: types.CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
 
-        giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-        giveaway = giveaway_response.data
-
+        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+        giveaway = cursor.fetchone()
         if not giveaway:
             await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
             return
+        columns = [desc[0] for desc in cursor.description]
+        giveaway = dict(zip(columns, giveaway))
 
         winner_count = giveaway['winner_count']
 
@@ -93,10 +87,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             parse_mode='HTML'
         )
 
-    def extract_message(obj: Union[str, Dict, List, APIResponse]) -> Union[str, None]:
-        if isinstance(obj, APIResponse):
-            return extract_message(obj.data)
-
+    def extract_message(obj: Union[str, Dict, List]) -> Union[str, None]:
         if isinstance(obj, str):
             try:
                 parsed = json.loads(obj)
@@ -105,9 +96,6 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 return obj.strip()
 
         if isinstance(obj, dict):
-            if 'data' in obj and isinstance(obj['data'], list):
-                if obj['data'] and 'message' in obj['data'][0]:
-                    return obj['data'][0]['message']
             if 'message' in obj:
                 return obj['message']
             for value in obj.values():
@@ -127,13 +115,16 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
 
         existing_message = None
         try:
-            response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).eq('place',
-                                                                                                             place).execute()
-            logging.info(f"Supabase response: {json.dumps(response, default=str)}")
-            existing_message = extract_message(response)
-            logging.info(f"Extracted message: {existing_message}")
+            cursor.execute(
+                "SELECT message FROM congratulations WHERE giveaway_id = %s AND place = %s",
+                (giveaway_id, place)
+            )
+            result = cursor.fetchone()
+            if result:
+                existing_message = result[0]
+            logger.info(f"Extracted message: {existing_message}")
         except Exception as e:
-            logging.error(f"Error fetching congratulation for place {place}: {str(e)}")
+            logger.error(f"Error fetching congratulation for place {place}: {str(e)}")
 
         await state.update_data(giveaway_id=giveaway_id, place=place)
         await state.set_state(GiveawayStates.waiting_for_congrats_message)
@@ -158,9 +149,9 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
             else:
-                logging.error("Failed to send message with image")
+                logger.error("Failed to send message with image")
         except Exception as e:
-            logging.error(f"Error in send_message_with_image: {str(e)}")
+            logger.error(f"Error in send_message_with_image: {str(e)}")
             try:
                 sent_message = await bot.send_message(
                     callback_query.from_user.id,
@@ -170,7 +161,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 )
                 await state.update_data(original_message_id=sent_message.message_id)
             except Exception as e:
-                logging.error(f"Error sending fallback message: {str(e)}")
+                logger.error(f"Error sending fallback message: {str(e)}")
 
         await callback_query.answer()
 
@@ -185,12 +176,18 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
 
         try:
             # Save the new congratulation message
-            supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).eq('place', place).execute()
-            supabase.table('congratulations').insert({
-                'giveaway_id': giveaway_id,
-                'place': place,
-                'message': formatted_text
-            }).execute()
+            cursor.execute(
+                "DELETE FROM congratulations WHERE giveaway_id = %s AND place = %s",
+                (giveaway_id, place)
+            )
+            cursor.execute(
+                """
+                INSERT INTO congratulations (giveaway_id, place, message)
+                VALUES (%s, %s, %s)
+                """,
+                (giveaway_id, place, formatted_text)
+            )
+            conn.commit()
 
             # Не очищаем состояние, чтобы пользователь мог продолжить редактирование
             keyboard = InlineKeyboardBuilder()
@@ -213,7 +210,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                         parse_mode='HTML'
                     )
                 except Exception as edit_error:
-                    logging.error(f"Error editing message: {str(edit_error)}")
+                    logger.error(f"Error editing message: {str(edit_error)}")
                     new_message = await send_message_with_image(
                         bot,
                         message.chat.id,
@@ -235,7 +232,8 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
         except Exception as e:
-            logging.error(f"Error saving congratulation message: {str(e)}")
+            logger.error(f"Error saving congratulation message: {str(e)}")
+            conn.rollback()
             await message.reply("Произошла ошибка при сохранении поздравления. Пожалуйста, попробуйте еще раз.")
 
     @dp.callback_query(lambda c: c.data == 'show_common_congrats')
@@ -244,24 +242,27 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         giveaway_id = data['giveaway_id']
 
         try:
-            response = supabase.table('congratulations').select('message', 'place').eq('giveaway_id',
-                                                                                       giveaway_id).execute()
-            logging.info(f"Fetched congratulations: {json.dumps(response.data, default=str)}")
+            cursor.execute(
+                "SELECT message, place FROM congratulations WHERE giveaway_id = %s",
+                (giveaway_id,)
+            )
+            congratulations = cursor.fetchall()
+            congratulations = [{'place': row[1], 'message': row[0]} for row in congratulations]
+            logger.info(f"Fetched congratulations: {json.dumps(congratulations, default=str)}")
 
-            if not response.data:
+            if not congratulations:
                 message_text = f"В настоящее время поздравления не установлены."
             else:
-                congratulations = {item['place']: item['message'] for item in response.data if
-                                   'message' in item and 'place' in item}
-                logging.info(f"Parsed congratulations: {congratulations}")
+                congrats_dict = {item['place']: item['message'] for item in congratulations}
+                logger.info(f"Parsed congratulations: {congrats_dict}")
 
-                if len(set(congratulations.values())) == 1:
-                    common_message = next(iter(congratulations.values()))
+                if len(set(congrats_dict.values())) == 1:
+                    common_message = next(iter(congrats_dict.values()))
                     message_text = f"Текущее общее поздравление:\n\n{common_message}"
                 else:
                     message_text = f"В настоящее время общее поздравление не установлено. Поздравления различаются для разных мест."
 
-            logging.info(f"Final message_text: {message_text}")
+            logger.info(f"Final message_text: {message_text}")
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Изменить общее поздравление", callback_data=f"edit_common_congrats:{giveaway_id}")
@@ -273,11 +274,12 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 callback_query.from_user.id,
                 message_text,
                 reply_markup=keyboard.as_markup(),
+                message_id=callback_query.message.message_id,
                 parse_mode='HTML'
             )
 
         except Exception as e:
-            logging.error(f"Error fetching common congratulation: {str(e)}")
+            logger.error(f"Error fetching common congratulation: {str(e)}")
             await callback_query.answer("Произошла ошибка при получении общего поздравления.")
 
         await callback_query.answer()
@@ -285,11 +287,14 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
     @dp.callback_query(lambda c: c.data.startswith('edit_common_congrats:'))
     async def edit_common_congrats(callback_query: types.CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
-        logging.info(f"Editing common congratulation for giveaway {giveaway_id}")
+        logger.info(f"Editing common congratulation for giveaway {giveaway_id}")
 
         try:
-            response = supabase.table('congratulations').select('message').eq('giveaway_id', giveaway_id).execute()
-            existing_messages = [item['message'] for item in response.data if 'message' in item]
+            cursor.execute(
+                "SELECT message FROM congratulations WHERE giveaway_id = %s",
+                (giveaway_id,)
+            )
+            existing_messages = [row[0] for row in cursor.fetchall()]
 
             if existing_messages and len(set(existing_messages)) == 1:
                 existing_message = existing_messages[0]
@@ -319,7 +324,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                 await state.update_data(original_message_id=sent_message.message_id)
 
         except Exception as e:
-            logging.error(f"Error preparing to edit common congratulation: {str(e)}")
+            logger.error(f"Error preparing to edit common congratulation: {str(e)}")
             await callback_query.answer("Произошла ошибка при подготовке к редактированию общего поздравления.")
 
         await callback_query.answer()
@@ -333,21 +338,28 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
         formatted_text = message.html_text if message.text else ""
 
         try:
-            giveaway_response = supabase.table('giveaways').select('winner_count').eq('id',
-                                                                                      giveaway_id).single().execute()
-            winner_count = giveaway_response.data['winner_count']
+            cursor.execute(
+                "SELECT winner_count FROM giveaways WHERE id = %s",
+                (giveaway_id,)
+            )
+            winner_count = cursor.fetchone()[0]
 
-            supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).execute()
+            cursor.execute(
+                "DELETE FROM congratulations WHERE giveaway_id = %s",
+                (giveaway_id,)
+            )
 
             congratulations = []
             for place in range(1, winner_count + 1):
-                congratulations.append({
-                    'giveaway_id': giveaway_id,
-                    'place': place,
-                    'message': formatted_text
-                })
+                cursor.execute(
+                    """
+                    INSERT INTO congratulations (giveaway_id, place, message)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (giveaway_id, place, formatted_text)
+                )
 
-            supabase.table('congratulations').insert(congratulations).execute()
+            conn.commit()
 
             # Не очищаем состояние, чтобы пользователь мог продолжить редактирование
             keyboard = InlineKeyboardBuilder()
@@ -370,7 +382,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
                         parse_mode='HTML'
                     )
                 except Exception as edit_error:
-                    logging.error(f"Error editing message: {str(edit_error)}")
+                    logger.error(f"Error editing message: {str(edit_error)}")
                     new_message = await send_message_with_image(
                         bot,
                         message.chat.id,
@@ -392,5 +404,6 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, supabase: Client
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
         except Exception as e:
-            logging.error(f"Error saving common congratulation message: {str(e)}")
+            logger.error(f"Error saving common congratulation message: {str(e)}")
+            conn.rollback()
             await message.reply("Произошла ошибка при сохранении поздравлений. Пожалуйста, попробуйте еще раз.")
