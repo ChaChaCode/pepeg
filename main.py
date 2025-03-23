@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
-from supabase import create_client, Client
+import psycopg2
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
@@ -25,23 +25,39 @@ bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Конфигурация Supabase
-supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
-supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
-supabase: Client = create_client(supabase_url, supabase_key)
+# Конфигурация PostgreSQL
+db_config = {
+    "host": "195.200.26.251",
+    "port": 5432,
+    "database": "mydatabase",
+    "user": "app_user",
+    "password": "moxy1337"
+}
 
+# Подключение к PostgreSQL
+try:
+    conn = psycopg2.connect(**db_config)
+    logging.info("Успешно подключились к PostgreSQL!")
+except Exception as e:
+    logging.error(f"Ошибка подключения к PostgreSQL: {e}")
+    raise
+
+# Создай курсор для выполнения запросов
+cursor = conn.cursor()
+
+# Переменные для хранения данных
 user_selected_communities = {}
 paid_users = {}
 
 # Регистрация обработчиков из других модулей
-register_active_giveaways_handlers(dp, bot, supabase)
-register_create_giveaway_handlers(dp, bot, supabase)
-register_created_giveaways_handlers(dp, bot, supabase)
-register_my_participations_handlers(dp, bot, supabase)
-register_congratulations_messages(dp, bot, supabase)
-register_congratulations_messages_active(dp, bot, supabase)
-register_new_public(dp, bot, supabase)
-
+# Передаём conn и cursor вместо supabase
+register_active_giveaways_handlers(dp, bot, conn, cursor)
+register_create_giveaway_handlers(dp, bot, conn, cursor)
+register_created_giveaways_handlers(dp, bot, conn, cursor)
+register_my_participations_handlers(dp, bot, conn, cursor)
+register_congratulations_messages(dp, bot, conn, cursor)
+register_congratulations_messages_active(dp, bot, conn, cursor)
+register_new_public(dp, bot, conn, cursor)
 
 # Обработчик команды /start
 @dp.message(Command("start"))
@@ -130,62 +146,12 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 
 async def periodic_username_check():
     while True:
-        await check_usernames(bot, supabase)
+        await check_usernames(bot, conn, cursor)  # Передаём conn и cursor вместо supabase
         await asyncio.sleep(60)  # Проверка каждую минуту
-
-# Обработчик для получения ID кастомных эмодзи
-#@dp.message()
-#async def handle_custom_emoji(message: types.Message):
-    # Проверяем наличие кастомных эмодзи
-    #   found_emoji = False
-
-    # Проверка через entities
-        #    if message.entities:
-        #for entity in message.entities:
-        #    if entity.type == "custom_emoji":
-        #        found_emoji = True
-        #        emoji_id = entity.custom_emoji_id
-        #        start_pos = entity.offset
-        #        end_pos = entity.offset + entity.length
-        #        emoji_text = message.text[start_pos:end_pos]
-
-        #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
-
-                # Отправляем как текст, который можно скопировать
-        #        await message.reply(
-        #            f"```\n{emoji_format}\n```",
-        #            parse_mode="MarkdownV2"
-        #        )
-
-    # Если в сообщении есть HTML-разметка эмодзи
-    #if "<tg-emoji" in message.text and not found_emoji:
-    #    import re
-    #    emoji_matches = re.findall(r'<tg-emoji emoji-id=[\'"](\d+)[\'"]>(.+?)</tg-emoji>', message.text)
-
-    #    if emoji_matches:
-    #        for emoji_id, emoji_text in emoji_matches:
-    #            emoji_format = f"<tg-emoji emoji-id='{emoji_id}'>{emoji_text}</tg-emoji>"
-
-                # Экранируем специальные символы для MarkdownV2
-    #            escaped_format = emoji_format.replace("<", "\\<").replace(">", "\\>").replace("'", "\\'")
-
-    #            await message.reply(
-    #                f"```\n{escaped_format}\n```",
-    #                parse_mode="MarkdownV2"
-    #            )
-    #            found_emoji = True
-
-    # Если это просто обычное эмодзи без ID, но пользователь хочет получить формат
-    #if not found_emoji and any(ord(c) > 127 for c in message.text) and len(message.text.strip()) <= 5:
-        # Предполагаем, что это эмодзи, и пользователь хочет получить формат
-    #    await message.reply(
-    #        "Это обычное эмодзи, а не кастомное. У него нет ID в Telegram.",
-    #        parse_mode="HTML"
-    #    )
 
 # Главная функция запуска бота
 async def main():
-    check_task = asyncio.create_task(check_and_end_giveaways(bot, supabase))
+    check_task = asyncio.create_task(check_and_end_giveaways(bot, conn, cursor))  # Передаём conn и cursor
     username_check_task = asyncio.create_task(periodic_username_check())
 
     try:
@@ -193,6 +159,10 @@ async def main():
     finally:
         check_task.cancel()
         username_check_task.cancel()
+        # Закрываем соединение с базой данных при завершении
+        cursor.close()
+        conn.close()
+        logging.info("Соединение с PostgreSQL закрыто.")
 
 
 if __name__ == '__main__':
