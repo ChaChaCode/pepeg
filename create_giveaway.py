@@ -523,14 +523,14 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             # Если end_time уже в часовом поясе Москвы (как мы сохранили в save_giveaway), просто форматируем
             end_time_msk = end_time.strftime('%d.%m.%Y %H:%M')
             giveaway_info = f"""
-    <b>{giveaway[1]}</b>
+<b>{giveaway[1]}</b>
 
-    {giveaway[2]}
+{giveaway[2]}
 
-    <tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway[6]}
-    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {end_time_msk} (МСК)
-    {invite_info}
-    """
+<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway[6]}
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {end_time_msk} (МСК)
+{invite_info}
+"""
 
             await send_new_giveaway_message(chat_id, giveaway, giveaway_info, keyboard, message_id=message_id)
 
