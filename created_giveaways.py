@@ -6,7 +6,6 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime, timedelta
 import pytz
-from supabase import create_client, Client
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardMarkup, InlineKeyboardButton
 from utils import send_message_with_image
 import aiogram.exceptions
@@ -25,11 +24,6 @@ logger = logging.getLogger(__name__)
 
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
-
-# Конфигурация Supabase 🗄️
-supabase_url = 'https://olbnxtiigxqcpailyecq.supabase.co'
-supabase_key = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9sYm54dGlpZ3hxY3BhaWx5ZWNxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3MzAxMjQwNzksImV4cCI6MjA0NTcwMDA3OX0.dki8TuMUhhFCoUVpHrcJo4V1ngKEnNotpLtZfRjsePY'
-supabase: Client = create_client(supabase_url, supabase_key)
 
 # Конфигурация Yandex Cloud S3 ☁️
 YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
@@ -146,39 +140,44 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
         logger.error(f"🚫 Ошибка: {str(e)}")
         return False, f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось загрузить файл: {str(e)}"
 
-def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
+def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрирует обработчики для управления розыгрышами 🎁"""
 
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
     async def process_created_giveaways(callback_query: CallbackQuery):
-        """Показывает список созданных розыгрышей с is_active = 'false' или 'waiting' 📋"""
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
 
         try:
-            # Изменяем запрос, чтобы выбрать розыгрыши с is_active в ('false', 'waiting')
-            response = supabase.table('giveaways').select('*').eq('user_id', user_id).in_('is_active', ['false',
-                                                                                                        'waiting']).execute()
-            if not response.data:
+            cursor.execute(
+                """
+                SELECT * FROM giveaways 
+                WHERE user_id = %s AND is_active IN ('false', 'waiting')
+                """,
+                (user_id,)
+            )
+            giveaways = cursor.fetchall()
+            if not giveaways:
                 await bot.answer_callback_query(callback_query.id,
                                                 text="📭 Пока нет розыгрышей? Создайте свой первый! 🚀")
                 return
 
-            total_giveaways = len(response.data)
+            total_giveaways = len(giveaways)
             total_pages = math.ceil(total_giveaways / ITEMS_PER_PAGE)
             start_idx = (current_page - 1) * ITEMS_PER_PAGE
-            current_giveaways = response.data[start_idx:start_idx + ITEMS_PER_PAGE]
+            current_giveaways = giveaways[start_idx:start_idx + ITEMS_PER_PAGE]
 
             keyboard = InlineKeyboardBuilder()
             for giveaway in current_giveaways:
-                clean_name = strip_html_tags(giveaway['name'])[:61] + "..." if len(
-                    giveaway['name']) > 64 else strip_html_tags(giveaway['name'])
-                # Можно добавить индикатор состояния в название, если хотите
-                status_indicator = "" if giveaway['is_active'] == 'waiting' else ""
+                # Используем giveaway[2] для name вместо giveaway[1]
+                name = str(giveaway[2]) if giveaway[2] is not None else "Без названия"
+                clean_name = strip_html_tags(name)[:61] + "..." if len(name) > 64 else strip_html_tags(name)
+                # Используем giveaway[6] для is_active вместо giveaway[4]
+                status_indicator = "" if giveaway[6] == 'waiting' else ""
                 keyboard.row(InlineKeyboardButton(
                     text=f"{status_indicator} {clean_name}",
-                    callback_data=f"view_created_giveaway:{giveaway['id']}"
+                    callback_data=f"view_created_giveaway:{giveaway[0]}"
                 ))
 
             nav_buttons = []
@@ -205,23 +204,25 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Что-то пошло не так 😔")
+            await bot.answer_callback_query(callback_query.id,
+                                            text="<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Что-то пошло не так 😔")
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: types.CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('view_created_giveaway:'))
-    async def process_view_created_giveaway(callback_query: CallbackQuery, state: FSMContext):  # Добавляем state
-        """Показывает детали розыгрыша 👀"""
+    async def process_view_created_giveaway(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         try:
-            response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-            if not response.data:
+            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            # Преобразуем результат в словарь
+            columns = [desc[0] for desc in cursor.description]
+            giveaway = dict(zip(columns, cursor.fetchone()))
+            if not giveaway:
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
                 return
 
-            giveaway = response.data
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Редактировать", callback_data=f"edit_post:{giveaway_id}")
             keyboard.button(text="👥 Привязать сообщества", callback_data=f"bind_communities:{giveaway_id}")
@@ -233,20 +234,20 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
-            invite_info = f"\n<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей) для участия!" if giveaway.get(
-                'invite', False) else ""
+            invite_info = f"\n<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей) для участия!" if \
+            giveaway['invite'] else ""
             giveaway_info = f"""
-<b>{giveaway['name']}</b>
+    <b>{giveaway['name']}</b>
 
-{giveaway['description']}
+    {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
-{invite_info}
-"""
+    <tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
+    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+    {invite_info}
+    """
 
             await bot.answer_callback_query(callback_query.id)
-            await state.clear()  # Сбрасываем состояние при возвращении к просмотру розыгрыша
+            await state.clear()
             if giveaway['media_type'] and giveaway['media_file_id']:
                 media_types = {
                     'photo': types.InputMediaPhoto,
@@ -281,91 +282,15 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 "⚠️ Упс! Что-то пошло не так. Попробуйте снова!"
             )
 
-    @dp.callback_query(lambda c: c.data.startswith('preview_giveaway:'))
-    async def process_preview_giveaway(callback_query: CallbackQuery):
-        """Показывает предпросмотр розыгрыша как при публикации и меняет is_active на 'waiting'"""
-        giveaway_id = callback_query.data.split(':')[1]
-        try:
-            # Получаем текущие данные розыгрыша
-            response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-            if not response.data:
-                await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
-                return
-
-            giveaway = response.data
-
-            # Обновляем состояние is_active на 'waiting'
-            supabase.table('giveaways').update({'is_active': 'waiting'}).eq('id', giveaway_id).execute()
-            logger.info(f"Состояние is_active для розыгрыша {giveaway_id} изменено на 'waiting'")
-
-            # Получаем количество участников
-            participant_count = await get_participant_count(giveaway_id, supabase)
-
-            # Формируем текст предпросмотра
-            post_text = f"""
-<b>{giveaway['name']}</b>
-
-{giveaway['description']}
-
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
-"""
-
-            # Создаём клавиатуру для предпросмотра
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(
-                text=f"🎉 Участвовать ({participant_count})",
-                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
-            )
-            keyboard.button(
-                text="◀️ Назад",
-                callback_data=f"view_created_giveaway:{giveaway_id}"
-            )
-            keyboard.adjust(1)
-
-            await bot.answer_callback_query(callback_query.id)
-
-            # Отображаем предпросмотр с учётом медиа
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                media_types = {
-                    'photo': types.InputMediaPhoto,
-                    'gif': types.InputMediaAnimation,
-                    'video': types.InputMediaVideo
-                }
-                await bot.edit_message_media(
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.message_id,
-                    media=media_types[giveaway['media_type']](
-                        media=giveaway['media_file_id'],
-                        caption=post_text,
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
-                )
-            else:
-                await send_message_with_image(
-                    bot,
-                    callback_query.from_user.id,
-                    post_text,
-                    reply_markup=keyboard.as_markup(),
-                    message_id=callback_query.message.message_id,
-                    parse_mode='HTML'
-                )
-
-        except Exception as e:
-            logger.error(f"🚫 Ошибка предпросмотра: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при предпросмотре 😔")
-
     @dp.callback_query(lambda c: c.data.startswith('add_invite_task:'))
-    async def process_add_invite_task(callback_query: CallbackQuery, state: FSMContext):  # Добавляем state
-        """Добавление задания с приглашениями 📩"""
+    async def process_add_invite_task(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
-        response = supabase.table('giveaways').select('invite', 'quantity_invite').eq('id',
-                                                                                      giveaway_id).single().execute()
-        giveaway = response.data
+        cursor.execute("SELECT invite, quantity_invite FROM giveaways WHERE id = %s", (giveaway_id,))
+        columns = [desc[0] for desc in cursor.description]
+        giveaway = dict(zip(columns, cursor.fetchone()))
 
         keyboard = InlineKeyboardBuilder()
-        if giveaway.get('invite', False):
+        if giveaway['invite']:
             keyboard.button(text="✏️ Изменить количество", callback_data=f"change_invite_quantity:{giveaway_id}")
             keyboard.button(text="🗑️ Убрать задание", callback_data=f"remove_invite_task:{giveaway_id}")
             keyboard.button(text=" ◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
@@ -378,7 +303,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             message_text = "<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Хотите добавить задание 'Пригласить друга'?"
 
         await bot.answer_callback_query(callback_query.id)
-        await state.clear()  # Сбрасываем состояние при возвращении в меню
+        await state.clear()
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -427,7 +352,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_remove_invite_task(callback_query: CallbackQuery, state: FSMContext):  # Добавляем state
         giveaway_id = callback_query.data.split(':')[1]
         try:
-            supabase.table('giveaways').update({'invite': False, 'quantity_invite': 0}).eq('id', giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET invite = %s, quantity_invite = %s WHERE id = %s",
+                (False, 0, giveaway_id)
+            )
+            conn.commit()
             await bot.answer_callback_query(callback_query.id, text="Задание убрано ✅")
             new_callback_query = types.CallbackQuery(
                 id=callback_query.id,
@@ -440,6 +369,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await process_view_created_giveaway(new_callback_query, state)
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             await bot.answer_callback_query(callback_query.id,
                                             text="Упс! Не удалось убрать задание 😔")
 
@@ -454,7 +384,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             if quantity <= 0:
                 raise ValueError("Количество должно быть положительным")
 
-            supabase.table('giveaways').update({'invite': True, 'quantity_invite': quantity}).eq('id', giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET invite = %s, quantity_invite = %s WHERE id = %s",
+                (True, quantity, giveaway_id)
+            )
+            conn.commit()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
             keyboard = InlineKeyboardBuilder()
@@ -466,7 +400,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await send_message_with_image(
                 bot,
                 message.from_user.id,
-                f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Задание добавленно\n\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласить {quantity} другу(зей) для участия!",
+                f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Задание добавлено\n\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласить {quantity} друга(зей) для участия!",
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id
             )
@@ -490,13 +424,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         await _show_edit_menu(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
 
     async def _show_edit_menu(user_id: int, giveaway_id: str, message_id: int = None):
-        """Показывает меню редактирования розыгрыша ✏️"""
-        response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-        if not response.data:
+        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+        columns = [desc[0] for desc in cursor.description]
+        giveaway = dict(zip(columns, cursor.fetchone()))
+        if not giveaway:
             await bot.send_message(user_id, "🔍 Розыгрыш не найден 😕")
             return
 
-        giveaway = response.data
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="📝 Название", callback_data=f"edit_name:{giveaway_id}")
         keyboard.button(text="📄 Описание", callback_data=f"edit_description:{giveaway_id}")
@@ -506,19 +440,20 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         keyboard.button(text=" ◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1)
 
-        invite_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей)!" if giveaway.get('invite', False) else ""
+        invite_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей)!" if \
+        giveaway['invite'] else ""
         giveaway_info = f"""
-<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
+    <tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
 
-<b>Название:</b> {giveaway['name']}
+    <b>Название:</b> {giveaway['name']}
 
-<b>Описание:</b> {giveaway['description']}
+    <b>Описание:</b> {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
-🖼️ <b>Медиа:</b> {'✅ Есть' if giveaway['media_type'] else '❌ Нет'}
-{invite_info}
-"""
+    <tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
+    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+    🖼️ <b>Медиа:</b> {'✅ Есть' if giveaway['media_type'] else '❌ Нет'}
+    {invite_info}
+    """
 
         try:
             if giveaway['media_type'] and giveaway['media_file_id']:
@@ -548,7 +483,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.send_message(user_id, "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Ошибка при загрузке меню. Попробуйте снова!", parse_mode='HTML')
+            await bot.send_message(user_id,
+                                   "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Ошибка при загрузке меню. Попробуйте снова!",
+                                   parse_mode='HTML')
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name:'))
     async def process_edit_name(callback_query: CallbackQuery, state: FSMContext):
@@ -645,11 +582,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             return
 
         try:
-            supabase.table('giveaways').update({'name': new_name}).eq('id', giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET name = %s WHERE id = %s",
+                (new_name, giveaway_id)
+            )
+            conn.commit()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
@@ -701,11 +643,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             return
 
         try:
-            supabase.table('giveaways').update({'description': new_description}).eq('id', giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET description = %s WHERE id = %s",
+                (new_description, giveaway_id)
+            )
+            conn.commit()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
@@ -750,23 +697,30 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message_id=data.get('last_message_id'),
             )
 
-            current_winner_count_response = supabase.table('giveaways').select('winner_count').eq('id',
-                                                                                                  giveaway_id).single().execute()
-            current_winner_count = current_winner_count_response.data['winner_count']
+            cursor.execute("SELECT winner_count FROM giveaways WHERE id = %s", (giveaway_id,))
+            current_winner_count = cursor.fetchone()[0]
 
-            supabase.table('giveaways').update({'winner_count': new_winner_count}).eq('id', giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET winner_count = %s WHERE id = %s",
+                (new_winner_count, giveaway_id)
+            )
 
             if new_winner_count > current_winner_count:
                 for place in range(current_winner_count + 1, new_winner_count + 1):
-                    supabase.table('congratulations').insert({
-                        'giveaway_id': giveaway_id,
-                        'place': place,
-                        'message': f"🎉 Поздравляем! Вы заняли {place} место!"
-                    }).execute()
+                    cursor.execute(
+                        """
+                        INSERT INTO congratulations (giveaway_id, place, message)
+                        VALUES (%s, %s, %s)
+                        """,
+                        (giveaway_id, place, f"🎉 Поздравляем! Вы заняли {place} место!")
+                    )
             elif new_winner_count < current_winner_count:
-                supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).gte('place',
-                                                                                              new_winner_count + 1).execute()
+                cursor.execute(
+                    "DELETE FROM congratulations WHERE giveaway_id = %s AND place >= %s",
+                    (giveaway_id, new_winner_count + 1)
+                )
 
+            conn.commit()
             await state.clear()  # Сбрасываем состояние после успешного обновления
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
 
@@ -783,6 +737,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
@@ -798,10 +753,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_manage_media(callback_query: CallbackQuery, state: FSMContext):
         """Управление медиа для розыгрыша 🖼️"""
         giveaway_id = callback_query.data.split(':')[1]
-        giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-        giveaway = giveaway_response.data
+        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+        giveaway = cursor.fetchone()
 
-        if giveaway['media_type']:
+        if giveaway[7]:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Изменить медиа", callback_data=f"change_media:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить медиа", callback_data=f"delete_media:{giveaway_id}")
@@ -938,14 +893,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             if not success:
                 raise Exception(result)
 
-            supabase.table('giveaways').update({'media_type': media_type, 'media_file_id': result}).eq('id',
-                                                                                                       giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET media_type = %s, media_file_id = %s WHERE id = %s",
+                (media_type, result, giveaway_id)
+            )
+            conn.commit()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await state.clear()
             await _show_edit_menu(message.from_user.id, giveaway_id, last_message_id)
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             try:
                 await bot.edit_message_text(
                     chat_id=message.chat.id,
@@ -968,13 +927,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_delete_media(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         try:
-            supabase.table('giveaways').update({'media_type': None, 'media_file_id': None}).eq('id', giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET media_type = NULL, media_file_id = NULL WHERE id = %s",
+                (giveaway_id,)
+            )
+            conn.commit()
             data = await state.get_data()
             last_message_id = data.get('last_bot_message_id') or callback_query.message.message_id
             await _show_edit_menu(callback_query.from_user.id, giveaway_id, last_message_id)
             await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Медиа удалено!")
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось удалить медиа")
 
     @dp.callback_query(lambda c: c.data.startswith('delete_giveaway:'))
@@ -996,25 +960,24 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_confirm_delete_giveaway(callback_query: CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
         try:
-            supabase.table('giveaway_communities').delete().eq('giveaway_id', giveaway_id).execute()
-            supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
-            supabase.table('congratulations').delete().eq('giveaway_id', giveaway_id).execute()
-            response = supabase.table('giveaways').delete().eq('id', giveaway_id).execute()
+            cursor.execute("DELETE FROM giveaway_communities WHERE giveaway_id = %s", (giveaway_id,))
+            cursor.execute("DELETE FROM participations WHERE giveaway_id = %s", (giveaway_id,))
+            cursor.execute("DELETE FROM congratulations WHERE giveaway_id = %s", (giveaway_id,))
+            cursor.execute("DELETE FROM giveaways WHERE id = %s", (giveaway_id,))
+            conn.commit()
 
-            if response.data:
-                keyboard = InlineKeyboardBuilder()
-                keyboard.button(text="В меню", callback_data="back_to_main_menu")
-                await send_message_with_image(
-                    bot,
-                    callback_query.from_user.id,
-                    "<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Розыгрыш успешно удалён!",
-                    reply_markup=keyboard.as_markup(),
-                    message_id=callback_query.message.message_id
-                )
-            else:
-                raise Exception("Нет данных об удалении")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="В меню", callback_data="back_to_main_menu")
+            await send_message_with_image(
+                bot,
+                callback_query.from_user.id,
+                "<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Розыгрыш успешно удалён!",
+                reply_markup=keyboard.as_markup(),
+                message_id=callback_query.message.message_id
+            )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             await send_message_with_image(
@@ -1054,6 +1017,80 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             parse_mode='HTML'
         )
 
+    @dp.callback_query(lambda c: c.data.startswith('preview_giveaway:'))
+    async def process_preview_giveaway(callback_query: CallbackQuery):
+        giveaway_id = callback_query.data.split(':')[1]
+        try:
+            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            columns = [desc[0] for desc in cursor.description]
+            giveaway = dict(zip(columns, cursor.fetchone()))
+            if not giveaway:
+                await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
+                return
+
+            cursor.execute(
+                "UPDATE giveaways SET is_active = %s WHERE id = %s",
+                ('waiting', giveaway_id)
+            )
+            conn.commit()
+            logger.info(f"Состояние is_active для розыгрыша {giveaway_id} изменено на 'waiting'")
+
+            participant_count = await get_participant_count(giveaway_id, conn, cursor)
+
+            post_text = f"""
+    <b>{giveaway['name']}</b>
+
+    {giveaway['description']}
+
+    <tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
+    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+    """
+
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(
+                text=f"🎉 Участвовать ({participant_count})",
+                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
+            )
+            keyboard.button(
+                text="◀️ Назад",
+                callback_data=f"view_created_giveaway:{giveaway_id}"
+            )
+            keyboard.adjust(1)
+
+            await bot.answer_callback_query(callback_query.id)
+
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                media_types = {
+                    'photo': types.InputMediaPhoto,
+                    'gif': types.InputMediaAnimation,
+                    'video': types.InputMediaVideo
+                }
+                await bot.edit_message_media(
+                    chat_id=callback_query.message.chat.id,
+                    message_id=callback_query.message.message_id,
+                    media=media_types[giveaway['media_type']](
+                        media=giveaway['media_file_id'],
+                        caption=post_text,
+                        parse_mode='HTML'
+                    ),
+                    reply_markup=keyboard.as_markup()
+                )
+            else:
+                await send_message_with_image(
+                    bot,
+                    callback_query.from_user.id,
+                    post_text,
+                    reply_markup=keyboard.as_markup(),
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML'
+                )
+
+        except Exception as e:
+            logger.error(f"🚫 Ошибка предпросмотра: {str(e)}")
+            conn.rollback()
+            await bot.answer_callback_query(callback_query.id,
+                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при предпросмотре 😔")
+
     @dp.message(GiveawayStates.waiting_for_new_end_time)
     async def process_new_end_time(message: types.Message, state: FSMContext):
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
@@ -1079,7 +1116,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 message_id=data.get('last_message_id'),
             )
 
-            supabase.table('giveaways').update({'end_time': new_end_time_tz.isoformat()}).eq('id', giveaway_id).execute()
+            cursor.execute(
+                "UPDATE giveaways SET end_time = %s WHERE id = %s",
+                (new_end_time_tz, giveaway_id)
+            )
+            conn.commit()
             await state.clear()
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
         except ValueError:
@@ -1101,6 +1142,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
@@ -1112,40 +1154,49 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             )
 
     async def get_giveaway_creator(giveaway_id: str) -> int:
-        response = supabase.table('giveaways').select('user_id').eq('id', giveaway_id).single().execute()
-        return int(response.data['user_id']) if response.data else -1
+        cursor.execute("SELECT user_id FROM giveaways WHERE id = %s", (giveaway_id,))
+        result = cursor.fetchone()
+        return int(result[0]) if result else -1
 
     async def get_bound_communities(user_id: int) -> List[Dict[str, Any]]:
-        response = supabase.table('bound_communities').select('*').eq('user_id', user_id).execute()
-        return response.data if response.data else []
+        cursor.execute("SELECT * FROM bound_communities WHERE user_id = %s", (user_id,))
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        return [dict(zip(columns, row)) for row in rows]
 
     async def bind_community_to_giveaway(giveaway_id, community_id, community_username):
         try:
-            response = supabase.table('bound_communities').select('*').eq('community_id', community_id).execute()
-            if not response.data:
+            cursor.execute("SELECT * FROM bound_communities WHERE community_id = %s", (community_id,))
+            community = cursor.fetchone()
+            if not community:
                 logger.error(f"🚫 Сообщество {community_id} не найдено")
                 return False
 
-            community = response.data[0]
+            columns = [desc[0] for desc in cursor.description]
+            community_dict = dict(zip(columns, community))
             actual_username = community_username if community_username != 'id' else (
-                community.get('community_username') or community.get('community_name'))
+                community_dict.get('community_username') or community_dict.get('community_name'))
 
-            data = {
-                "giveaway_id": giveaway_id,
-                "community_id": community_id,
-                "community_username": actual_username,
-                "community_type": community['community_type'],
-                "user_id": community['user_id'],
-                "community_name": community['community_name']
-            }
-            supabase.table("giveaway_communities").insert(data).execute()
+            cursor.execute(
+                """
+                INSERT INTO giveaway_communities (giveaway_id, community_id, community_username, community_type, user_id, community_name)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                """,
+                (giveaway_id, community_id, actual_username, community_dict['community_type'], community_dict['user_id'], community_dict['community_name'])
+            )
+            conn.commit()
             return True
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             return False
 
     async def unbind_community_from_giveaway(giveaway_id, community_id):
-        supabase.table("giveaway_communities").delete().eq("giveaway_id", giveaway_id).eq("community_id", community_id).execute()
+        cursor.execute(
+            "DELETE FROM giveaway_communities WHERE giveaway_id = %s AND community_id = %s",
+            (giveaway_id, community_id)
+        )
+        conn.commit()
 
     @dp.callback_query(lambda c: c.data == 'bind_communities:' or c.data.startswith('bind_communities:'))
     async def process_bind_communities(callback_query: CallbackQuery, state: FSMContext):
@@ -1218,14 +1269,17 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         if len(parts) >= 4:
             _, giveaway_id, community_id, community_username = parts
         else:
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Неверные данные 😔")
+            await bot.answer_callback_query(callback_query.id,
+                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Неверные данные 😔")
             return
 
         try:
-            response = supabase.table('bound_communities').select('community_name').eq('community_id', community_id).execute()
-            community_name = response.data[0]['community_name'] if response.data else community_username
+            cursor.execute("SELECT community_name FROM bound_communities WHERE community_id = %s", (community_id,))
+            community = cursor.fetchone()
+            community_name = community[0] if community else community_username
 
-            if user_id not in user_selected_communities or user_selected_communities[user_id]['giveaway_id'] != giveaway_id:
+            if user_id not in user_selected_communities or user_selected_communities[user_id][
+                'giveaway_id'] != giveaway_id:
                 user_selected_communities[user_id] = {'giveaway_id': giveaway_id, 'communities': set()}
 
             new_keyboard = []
@@ -1235,7 +1289,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     if button.callback_data == callback_query.data:
                         if '✅' in button.text:
                             new_text = f"{truncate_name(community_name)}"
-                            user_selected_communities[user_id]['communities'].discard((community_id, community_username))
+                            user_selected_communities[user_id]['communities'].discard(
+                                (community_id, community_username))
                         else:
                             new_text = f"{truncate_name(community_name)} ✅"
                             user_selected_communities[user_id]['communities'].add((community_id, community_username))
@@ -1252,19 +1307,31 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await bot.answer_callback_query(callback_query.id)
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Ошибка при выборе сообщества 😔")
+            await bot.answer_callback_query(callback_query.id,
+                                            text="<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Ошибка при выборе сообщества 😔")
 
     async def get_giveaway_communities(giveaway_id):
-        response = supabase.table("giveaway_communities").select("*").eq("giveaway_id", giveaway_id).execute()
-        return response.data
+        try:
+            cursor.execute("SELECT * FROM giveaway_communities WHERE giveaway_id = %s", (giveaway_id,))
+            rows = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.error(f"🚫 Ошибка получения сообществ розыгрыша: {str(e)}")
+            return []
 
     @dp.callback_query(lambda c: c.data.startswith('activate_giveaway:'))
     async def process_activate_giveaway(callback_query: CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
         try:
-            response = supabase.table('giveaway_communities').select('community_id', 'community_username', 'community_name').eq('giveaway_id', giveaway_id).execute()
-            communities = response.data
+            cursor.execute(
+                "SELECT community_id, community_username, community_name FROM giveaway_communities WHERE giveaway_id = %s",
+                (giveaway_id,)
+            )
+            communities = cursor.fetchall()
+            communities = [dict(zip(['community_id', 'community_username', 'community_name'], comm)) for comm in
+                           communities]
 
             if not communities:
                 await bot.answer_callback_query(callback_query.id, text="⚠️ Нет привязанных сообществ для публикации!")
@@ -1291,21 +1358,23 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при загрузке сообществ 😔")
+            await bot.answer_callback_query(callback_query.id,
+                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при загрузке сообществ 😔")
 
     @dp.callback_query(lambda c: c.data.startswith('toggle_activate_community:'))
     async def process_toggle_activate_community(callback_query: CallbackQuery):
         _, giveaway_id, community_id, community_username = callback_query.data.split(':')
         try:
-            response = supabase.table('bound_communities').select('community_name').eq('community_id', community_id).execute()
-            community_name = response.data[0]['community_name'] if response.data else community_username
+            cursor.execute("SELECT community_name FROM bound_communities WHERE community_id = %s", (community_id,))
+            community = cursor.fetchone()
+            community_name = community[0] if community else community_username
 
             new_keyboard = []
             for row in callback_query.message.reply_markup.inline_keyboard:
                 new_row = []
                 for button in row:
                     if button.callback_data == callback_query.data:
-                        new_text = f"{community_name}" if '✅' in button.text else f"{community_name} ✅"
+                        new_text = f"{truncate_name(community_name)}" if '✅' in button.text else f"{truncate_name(community_name)} ✅"
                         new_row.append(InlineKeyboardButton(text=new_text, callback_data=button.callback_data))
                     else:
                         new_row.append(button)
@@ -1319,7 +1388,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             await bot.answer_callback_query(callback_query.id)
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при выборе сообщества 😔")
+            await bot.answer_callback_query(callback_query.id,
+                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при выборе сообщества 😔")
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_activate_selection:'))
     async def process_confirm_activate_selection(callback_query: CallbackQuery):
@@ -1369,7 +1439,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         )
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_community_selection:'))
-    async def process_confirm_community_selection(callback_query: CallbackQuery, state: FSMContext):  # Добавляем state
+    async def process_confirm_community_selection(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
 
@@ -1385,11 +1455,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         parts = button.callback_data.split(':')
                         if len(parts) >= 3:
                             community_id = parts[2]
-                            response = supabase.table('bound_communities').select('*').eq('community_id',
-                                                                                          community_id).execute()
-                            if response.data:
-                                community = response.data[0]
-                                community_username = community.get('community_username') or community.get(
+                            cursor.execute("SELECT * FROM bound_communities WHERE community_id = %s", (community_id,))
+                            community = cursor.fetchone()
+                            if community:
+                                columns = [desc[0] for desc in cursor.description]
+                                community_dict = dict(zip(columns, community))
+                                community_username = community_dict.get('community_username') or community_dict.get(
                                     'community_name')
                                 selected_set.add((str(community_id), community_username))
 
@@ -1400,12 +1471,34 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             if changes_made:
                 for community_id, community_username in to_add:
-                    success = await bind_community_to_giveaway(giveaway_id, community_id, community_username)
-                    if not success:
-                        logger.error(f"🚫 Ошибка привязки: {community_username}")
+                    # Получаем данные из bound_communities, включая media_file_ava
+                    cursor.execute(
+                        "SELECT community_username, community_type, user_id, community_name, media_file_ava "
+                        "FROM bound_communities WHERE community_id = %s",
+                        (community_id,)
+                    )
+                    community = cursor.fetchone()
+                    if community:
+                        community_username, community_type, user_id, community_name, media_file_ava = community
+                        # Вставляем запись в giveaway_communities с media_file_ava
+                        cursor.execute(
+                            """
+                            INSERT INTO giveaway_communities (
+                                giveaway_id, community_id, community_username, community_type, user_id, 
+                                community_name, media_file_ava
+                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                            """,
+                            (
+                                giveaway_id, community_id, community_username, community_type, user_id,
+                                community_name, media_file_ava
+                            )
+                        )
+                    else:
+                        logger.error(f"🚫 Сообщество {community_id} не найдено")
                 for community_id, _ in to_remove:
                     await unbind_community_from_giveaway(giveaway_id, community_id)
 
+                conn.commit()
                 await bot.answer_callback_query(callback_query.id, text="✅ Сообщества обновлены!")
             else:
                 await bot.answer_callback_query(callback_query.id, text="✅ Выбор сохранен")
@@ -1420,10 +1513,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             )
             if user_id in user_selected_communities:
                 del user_selected_communities[user_id]
-            await process_view_created_giveaway(new_callback_query, state)  # Передаем state
+            await process_view_created_giveaway(new_callback_query, state)
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
             await bot.answer_callback_query(callback_query.id, text="❌ Ошибка при обновлении сообществ 😔")
 
     @dp.callback_query(lambda c: c.data.startswith('publish_giveaway:'))
@@ -1450,22 +1544,22 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         selected_communities = user_data['communities']
 
         try:
-            giveaway_response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-            giveaway = giveaway_response.data
-
+            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            columns = [desc[0] for desc in cursor.description]
+            giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
                 return
 
-            participant_count = await get_participant_count(giveaway_id, supabase)
+            participant_count = await get_participant_count(giveaway_id, conn, cursor)
             post_text = f"""
-<b>{giveaway['name']}</b>
+    <b>{giveaway['name']}</b>
 
-{giveaway['description']}
+    {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
-"""
+    <tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
+    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+    """
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
@@ -1568,30 +1662,33 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             if success_count > 0:
                 try:
-                    supabase.table('giveaway_winners').delete().eq('giveaway_id', giveaway_id).execute()
-                    supabase.table('participations').delete().eq('giveaway_id', giveaway_id).execute()
+                    cursor.execute("DELETE FROM giveaway_winners WHERE giveaway_id = %s", (giveaway_id,))
+                    cursor.execute("DELETE FROM participations WHERE giveaway_id = %s", (giveaway_id,))
 
                     moscow_tz = pytz.timezone('Europe/Moscow')
                     current_time = datetime.now(moscow_tz)
 
-                    supabase.table('giveaways').update({
-                        'is_active': 'true',
-                        'created_at': current_time.isoformat(),
-                        'published_messages': json.dumps(published_messages),
-                        'participant_counter_tasks': json.dumps(participant_counter_tasks)
-                    }).eq('id', giveaway_id).execute()
+                    cursor.execute(
+                        """
+                        UPDATE giveaways 
+                        SET is_active = %s, created_at = %s, published_messages = %s, participant_counter_tasks = %s 
+                        WHERE id = %s
+                        """,
+                        ('true', current_time, json.dumps(published_messages), json.dumps(participant_counter_tasks),
+                         giveaway_id)
+                    )
+                    conn.commit()
 
                     counter_tasks = []
                     for task_info in participant_counter_tasks:
                         task = asyncio.create_task(
                             start_participant_counter(bot, task_info['chat_id'], task_info['message_id'], giveaway_id,
-                                                      supabase)
+                                                      conn, cursor)
                         )
                         counter_tasks.append(task)
 
                     await bot.answer_callback_query(callback_query.id, text="✅ Розыгрыш запущен! 🎉")
 
-                    # Получаем информацию о каналах
                     channel_links = []
                     unique_chat_ids = set(msg['chat_id'] for msg in published_messages)
                     for chat_id in unique_chat_ids:
@@ -1629,6 +1726,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     )
                 except Exception as e:
                     logger.error(f"🚫 Ошибка активации: {str(e)}")
+                    conn.rollback()
                     await bot.answer_callback_query(callback_query.id,
                                                     text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при запуске розыгрыша 😔")
             else:
@@ -1652,17 +1750,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         finally:
             user_selected_communities.pop(user_id, None)
 
-    async def get_participant_count(giveaway_id: str, supabase: Client) -> int:
+    async def get_participant_count(giveaway_id: str, conn, cursor) -> int:
         try:
-            response = supabase.table('participations').select('*', count='exact').eq('giveaway_id', giveaway_id).execute()
-            return response.count if hasattr(response, 'count') else 0
+            cursor.execute("SELECT COUNT(*) FROM participations WHERE giveaway_id = %s", (giveaway_id,))
+            count = cursor.fetchone()[0]
+            return count
         except Exception as e:
             logger.error(f"🚫 Ошибка подсчёта участников: {str(e)}")
             return 0
 
-    async def update_participant_button(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, supabase: Client):
+    async def update_participant_button(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, conn, cursor):
         try:
-            count = await get_participant_count(giveaway_id, supabase)
+            count = await get_participant_count(giveaway_id, conn, cursor)
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text=f"🎉 Участвовать ({count})",
@@ -1681,7 +1780,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
         except Exception as e:
             logger.error(f"🚫 Ошибка обновления кнопки: {str(e)}")
 
-    async def start_participant_counter(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, supabase: Client):
+    async def start_participant_counter(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, conn, cursor):
         while True:
-            await update_participant_button(bot, chat_id, message_id, giveaway_id, supabase)
+            await update_participant_button(bot, chat_id, message_id, giveaway_id, conn, cursor)
             await asyncio.sleep(60)
