@@ -2,19 +2,22 @@ from aiogram import Dispatcher, Bot, types
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
-from supabase import Client
-from datetime import datetime, timedelta
 import logging
 from utils import send_message_with_image
 import math
 import re
+from datetime import timedelta
+
+# Логирование
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 def strip_html_tags(text):
     """Удаляет HTML-теги из текста, оставляя только видимую часть."""
     clean_text = re.sub(r'<[^>]+>', '', text)
     return clean_text
 
-def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Client):
+def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
     async def process_my_participations(callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
@@ -26,11 +29,24 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
             current_page = int(callback_query.data.split(':')[1])
 
         try:
-            response = supabase.table('participations').select('*, giveaways(*)').eq('user_id', user_id).execute()
-            participations = response.data
+            # Запрос к таблице participations с JOIN на giveaways
+            cursor.execute(
+                """
+                SELECT p.*, g.*
+                FROM participations p
+                JOIN giveaways g ON p.giveaway_id = g.id
+                WHERE p.user_id = %s
+                """,
+                (user_id,)
+            )
+            participations = cursor.fetchall()
 
-            # Filter out participations where giveaway's user_id is 1
-            filtered_participations = [p for p in participations if p['giveaways']['user_id'] != 1]
+            # Преобразуем результат в список словарей
+            columns = [desc[0] for desc in cursor.description]
+            participations = [dict(zip(columns, row)) for row in participations]
+
+            # Фильтруем участия, где user_id розыгрыша не равен 1
+            filtered_participations = [p for p in participations if p['user_id_1'] != 1]
 
             if not filtered_participations:
                 await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном розыгрыше.")
@@ -51,15 +67,14 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
             # Add participation buttons (each in its own row)
             for participation in current_participations:
-                giveaway = participation['giveaways']
                 # Очищаем название от HTML-тегов для отображения в кнопке
-                clean_name = strip_html_tags(giveaway['name'])
+                clean_name = strip_html_tags(participation['name'])
                 # Ограничиваем длину текста кнопки до 64 символов (Telegram limit)
                 if len(clean_name) > 64:
                     clean_name = clean_name[:61] + "..."
                 keyboard.row(types.InlineKeyboardButton(
                     text=clean_name,
-                    callback_data=f"giveaway_{giveaway['id']}"
+                    callback_data=f"giveaway_{participation['giveaway_id']}"
                 ))
 
             # Create navigation row
@@ -110,7 +125,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 reply_markup=keyboard.as_markup()
             )
         except Exception as e:
-            logging.error(f"Error in process_my_participations: {str(e)}")
+            logger.error(f"Error in process_my_participations: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении ваших участий.")
 
     @dp.callback_query(lambda c: c.data == "ignore")
@@ -121,12 +136,17 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
     async def process_giveaway_details(callback_query: CallbackQuery):
         giveaway_id = callback_query.data.split('_')[1]
         try:
-            response = supabase.table('giveaways').select('*').eq('id', giveaway_id).single().execute()
-            giveaway = response.data
+            # Запрос к таблице giveaways
+            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            giveaway = cursor.fetchone()
 
             if not giveaway:
                 await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
                 return
+
+            # Преобразуем результат в словарь
+            columns = [desc[0] for desc in cursor.description]
+            giveaway = dict(zip(columns, giveaway))
 
             # Формируем текст с сохранением HTML-форматирования
             giveaway_info = f"""
@@ -134,7 +154,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
 
 {giveaway['description']}
 
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(datetime.fromisoformat(giveaway['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 """
 
             keyboard = InlineKeyboardBuilder()
@@ -149,7 +169,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                 await bot.answer_callback_query(callback_query.id)
             except TelegramBadRequest as e:
                 if "query is too old" in str(e):
-                    logging.warning(f"Callback query is too old: {e}")
+                    logger.warning(f"Callback query is too old: {e}")
                 else:
                     raise
 
@@ -190,7 +210,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                         )
                 except TelegramBadRequest as e:
                     if "message to edit not found" in str(e):
-                        logging.warning(f"Message to edit not found: {e}")
+                        logger.warning(f"Message to edit not found: {e}")
                         await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
                     else:
                         raise
@@ -206,18 +226,18 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, supabase: Clie
                     )
                 except TelegramBadRequest as e:
                     if "message to edit not found" in str(e):
-                        logging.warning(f"Message to edit not found: {e}")
+                        logger.warning(f"Message to edit not found: {e}")
                         await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
                     else:
                         raise
 
         except Exception as e:
-            logging.error(f"Error in process_giveaway_details: {str(e)}")
+            logger.error(f"Error in process_giveaway_details: {str(e)}")
             try:
                 await bot.answer_callback_query(callback_query.id,
                                                 text="Произошла ошибка при получении информации о розыгрыше.")
             except TelegramBadRequest:
-                logging.warning("Failed to answer callback query due to timeout")
+                logger.warning("Failed to answer callback query due to timeout")
 
             await bot.send_message(
                 chat_id=callback_query.from_user.id,
