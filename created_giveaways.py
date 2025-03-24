@@ -813,13 +813,31 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
     @dp.message(GiveawayStates.waiting_for_media_edit)
     async def process_media_edit(message: types.Message, state: FSMContext):
+        # Определяем keyboard заранее с базовой разметкой
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=" ◀️ Назад", callback_data="back_to_edit_menu:0")]
+        ])
         try:
             data = await state.get_data()
             giveaway_id = data.get('giveaway_id')
+            # Устанавливаем значение по умолчанию для last_message_id, если его нет
             last_message_id = data.get('last_bot_message_id')
 
+            # Переопределяем keyboard с актуальным giveaway_id
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text=" ◀️ Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")]])
+
+            # Если last_message_id отсутствует, отправляем новое сообщение и обновляем его
+            if last_message_id is None:
+                temp_message = await send_message_with_image(
+                    bot,
+                    message.from_user.id,
+                    "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Загружаем ваше медиа...",
+                    reply_markup=keyboard
+                )
+                last_message_id = temp_message.message_id
+                await state.update_data(last_bot_message_id=last_message_id)
+
             # Изначальное сообщение о загрузке
             await send_message_with_image(
                 bot,
@@ -842,7 +860,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 media_type = 'video'
                 file_ext = 'mp4'
             else:
-                # Пробуем обновить существующее сообщение
                 try:
                     await bot.edit_message_text(
                         chat_id=message.chat.id,
@@ -851,16 +868,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         reply_markup=keyboard
                     )
                 except Exception:
-                    # Если редактирование не удалось, отправляем новое сообщение с использованием last_message_id
                     await send_message_with_image(
                         bot,
                         message.from_user.id,
                         "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Пожалуйста, отправьте фото, GIF или видео!",
                         reply_markup=keyboard,
-                        message_id=last_message_id  # Используем last_message_id вместо None
+                        message_id=last_message_id
                     )
-                await bot.delete_message(chat_id=message.chat.id,
-                                         message_id=message.message_id)  # Удаляем сообщение пользователя
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 return
 
             file = await bot.get_file(file_id)
@@ -988,7 +1003,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=callback_query.message.message_id
             )
 
-@dp.callback_query(lambda c: c.data.startswith('cancel_delete_giveaway:'))
+    @dp.callback_query(lambda c: c.data.startswith('cancel_delete_giveaway:'))
     async def process_cancel_delete_giveaway(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         await state.clear()
