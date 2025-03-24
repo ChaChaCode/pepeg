@@ -205,7 +205,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Что-то пошло не так 😔")
+                                            text="Упс! Что-то пошло не так 😔")
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: types.CallbackQuery):
@@ -276,7 +276,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка загрузки розыгрыша 😔")
+                                            text="Ошибка загрузки розыгрыша 😔")
             await bot.send_message(
                 callback_query.from_user.id,
                 "⚠️ Упс! Что-то пошло не так. Попробуйте снова!"
@@ -950,11 +950,11 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             data = await state.get_data()
             last_message_id = data.get('last_bot_message_id') or callback_query.message.message_id
             await _show_edit_menu(callback_query.from_user.id, giveaway_id, last_message_id)
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Медиа удалено!")
+            await bot.answer_callback_query(callback_query.id, text="Медиа удалено!")
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
-            await bot.answer_callback_query(callback_query.id, text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось удалить медиа")
+            await bot.answer_callback_query(callback_query.id, text="Не удалось удалить медиа")
 
     @dp.callback_query(lambda c: c.data.startswith('delete_giveaway:'))
     async def process_delete_giveaway(callback_query: CallbackQuery):
@@ -1113,7 +1113,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка предпросмотра: {str(e)}")
             conn.rollback()
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при предпросмотре 😔")
+                                            text="Ошибка при предпросмотре 😔")
 
     @dp.message(GiveawayStates.waiting_for_new_end_time)
     async def process_new_end_time(message: types.Message, state: FSMContext):
@@ -1226,7 +1226,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     async def process_bind_communities(callback_query: CallbackQuery, state: FSMContext):
         if callback_query.data == 'bind_communities:':
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Неверный формат данных 😔")
+                                            text="Неверный формат данных 😔")
             return
 
         giveaway_id = callback_query.data.split(':')[1]
@@ -1294,7 +1294,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             _, giveaway_id, community_id, community_username = parts
         else:
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Неверные данные 😔")
+                                            text="Неверные данные 😔")
             return
 
         try:
@@ -1332,7 +1332,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Ошибка при выборе сообщества 😔")
+                                            text="Упс! Ошибка при выборе сообщества 😔")
 
     async def get_giveaway_communities(giveaway_id):
         try:
@@ -1383,7 +1383,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при загрузке сообществ 😔")
+                                            text="Ошибка при загрузке сообществ 😔")
 
     @dp.callback_query(lambda c: c.data.startswith('toggle_activate_community:'))
     async def process_toggle_activate_community(callback_query: CallbackQuery):
@@ -1413,7 +1413,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при выборе сообщества 😔")
+                                            text="Ошибка при выборе сообщества 😔")
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_activate_selection:'))
     async def process_confirm_activate_selection(callback_query: CallbackQuery):
@@ -1752,10 +1752,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     logger.error(f"🚫 Ошибка активации: {str(e)}")
                     conn.rollback()
                     await bot.answer_callback_query(callback_query.id,
-                                                    text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при запуске розыгрыша 😔")
+                                                    text="Ошибка при запуске розыгрыша 😔")
             else:
                 await bot.answer_callback_query(callback_query.id,
-                                                text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось опубликовать 😔")
+                                                text="Не удалось опубликовать 😔")
                 error_keyboard = InlineKeyboardBuilder()
                 error_keyboard.button(text=" ◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
                 await send_message_with_image(
@@ -1770,7 +1770,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
-                                            text="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибка при публикации 😔")
+                                            text="Ошибка при публикации 😔")
         finally:
             user_selected_communities.pop(user_id, None)
 
