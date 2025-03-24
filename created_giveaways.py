@@ -16,7 +16,7 @@ import boto3
 from botocore.client import Config
 import requests
 import re
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, FSInputFile
 
 # Настройка логирования 📝
 logging.basicConfig(level=logging.INFO)
@@ -1100,13 +1100,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     reply_markup=keyboard.as_markup()
                 )
             else:
-                await send_message_with_image(
-                    bot,
-                    callback_query.from_user.id,
-                    post_text,
-                    reply_markup=keyboard.as_markup(),
+                # Используем snapipred.png как заглушку
+                snapipred_path = 'image/snapipred.png'  # Укажите путь к snapipred.png
+                snapipred_image = FSInputFile(snapipred_path)
+                await bot.edit_message_media(
+                    chat_id=callback_query.message.chat.id,
                     message_id=callback_query.message.message_id,
-                    parse_mode='HTML'
+                    media=types.InputMediaPhoto(
+                        media=snapipred_image,
+                        caption=post_text,
+                        parse_mode='HTML'
+                    ),
+                    reply_markup=keyboard.as_markup()
                 )
 
         except Exception as e:
