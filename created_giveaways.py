@@ -988,9 +988,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=callback_query.message.message_id
             )
 
-    @dp.callback_query(lambda c: c.data.startswith('cancel_delete_giveaway:'))
-    async def process_cancel_delete_giveaway(callback_query: CallbackQuery):
-        await process_view_created_giveaway(callback_query)
+@dp.callback_query(lambda c: c.data.startswith('cancel_delete_giveaway:'))
+    async def process_cancel_delete_giveaway(callback_query: CallbackQuery, state: FSMContext):
+        giveaway_id = callback_query.data.split(':')[1]
+        await state.clear()
+        new_callback_query = types.CallbackQuery(
+            id=callback_query.id,
+            from_user=callback_query.from_user,
+            chat_instance=callback_query.chat_instance,
+            message=callback_query.message,
+            data=f"view_created_giveaway:{giveaway_id}"
+        )
+        await process_view_created_giveaway(new_callback_query, state)
 
     @dp.callback_query(lambda c: c.data.startswith('change_end_date:'))
     async def process_change_end_date(callback_query: CallbackQuery, state: FSMContext):
