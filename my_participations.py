@@ -29,10 +29,11 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             current_page = int(callback_query.data.split(':')[1])
 
         try:
-            # Запрос к таблице participations с JOIN на giveaways
+            # Используем явные имена столбцов для избежания конфликтов
             cursor.execute(
                 """
-                SELECT p.*, g.*
+                SELECT p.user_id AS participant_user_id, g.user_id AS creator_user_id, g.name, g.description, 
+                       g.end_time, g.media_type, g.media_file_id, p.giveaway_id
                 FROM participations p
                 JOIN giveaways g ON p.giveaway_id = g.id
                 WHERE p.user_id = %s
@@ -45,8 +46,8 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             columns = [desc[0] for desc in cursor.description]
             participations = [dict(zip(columns, row)) for row in participations]
 
-            # Фильтруем участия, где user_id розыгрыша не равен 1
-            filtered_participations = [p for p in participations if p['user_id_1'] != 1]
+            # Фильтруем участия, где creator_user_id != 1
+            filtered_participations = [p for p in participations if p['creator_user_id'] != 1]
 
             if not filtered_participations:
                 await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном розыгрыше.")
@@ -67,9 +68,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             # Add participation buttons (each in its own row)
             for participation in current_participations:
-                # Очищаем название от HTML-тегов для отображения в кнопке
                 clean_name = strip_html_tags(participation['name'])
-                # Ограничиваем длину текста кнопки до 64 символов (Telegram limit)
                 if len(clean_name) > 64:
                     clean_name = clean_name[:61] + "..."
                 keyboard.row(types.InlineKeyboardButton(
@@ -79,33 +78,24 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             # Create navigation row
             nav_buttons = []
-
-            # Previous page button
             if current_page > 1:
                 nav_buttons.append(types.InlineKeyboardButton(
                     text="←",
                     callback_data=f"my_participations_page:{current_page - 1}"
                 ))
-
-            # Page indicator - only show if there's more than one page
             if total_pages > 1:
                 nav_buttons.append(types.InlineKeyboardButton(
                     text=f"{current_page}/{total_pages}",
                     callback_data="ignore"
                 ))
-
-            # Next page button
             if current_page < total_pages:
                 nav_buttons.append(types.InlineKeyboardButton(
                     text="→",
                     callback_data=f"my_participations_page:{current_page + 1}"
                 ))
-
-            # Add navigation buttons in one row if there are any
             if nav_buttons:
                 keyboard.row(*nav_buttons)
 
-            # Add back button in its own row
             keyboard.row(types.InlineKeyboardButton(
                 text="◀️ Назад",
                 callback_data="back_to_main_menu"
