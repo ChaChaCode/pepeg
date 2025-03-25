@@ -29,14 +29,14 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             current_page = int(callback_query.data.split(':')[1])
 
         try:
-            # Используем явные имена столбцов для избежания конфликтов
+            # Запрос для получения уникальных активных розыгрышей, в которых участвует пользователь
             cursor.execute(
                 """
-                SELECT p.user_id AS participant_user_id, g.user_id AS creator_user_id, g.name, g.description, 
-                       g.end_time, g.media_type, g.media_file_id, p.giveaway_id
+                SELECT DISTINCT g.id AS giveaway_id, g.user_id AS creator_user_id, g.name, g.description, 
+                       g.end_time, g.media_type, g.media_file_id
                 FROM participations p
                 JOIN giveaways g ON p.giveaway_id = g.id
-                WHERE p.user_id = %s
+                WHERE p.user_id = %s AND g.is_active = 'true'
                 """,
                 (user_id,)
             )
@@ -50,7 +50,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             filtered_participations = [p for p in participations if p['creator_user_id'] != 1]
 
             if not filtered_participations:
-                await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном розыгрыше.")
+                await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном активном розыгрыше.")
                 return
 
             total_participations = len(filtered_participations)
@@ -101,7 +101,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 callback_data="back_to_main_menu"
             ))
 
-            message_text = f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Список розыгрышей, в которых вы участвуете"
+            message_text = f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Список активных розыгрышей, в которых вы участвуете"
             if total_pages > 1:
                 message_text += f" (Страница {current_page} из {total_pages}):"
             else:
