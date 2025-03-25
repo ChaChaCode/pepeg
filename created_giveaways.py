@@ -153,7 +153,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             cursor.execute(
                 """
                 SELECT * FROM giveaways 
-                WHERE user_id = %s AND is_active IN ('false', 'waiting')
+                WHERE user_id = %s AND is_active IN ('false', 'waiting', 'true')
                 """,
                 (user_id,)
             )
@@ -163,21 +163,28 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                                                 text="📭 Пока нет розыгрышей? Создайте свой первый! 🚀")
                 return
 
-            total_giveaways = len(giveaways)
+            # Сортируем розыгрыши: сначала активные ('true'), затем ожидающие ('waiting'), затем неактивные ('false')
+            sorted_giveaways = sorted(
+                giveaways,
+                key=lambda x: {'true': 0, 'waiting': 1, 'false': 2}.get(x[6], 2)  # x[6] — это is_active
+            )
+
+            total_giveaways = len(sorted_giveaways)
             total_pages = math.ceil(total_giveaways / ITEMS_PER_PAGE)
             start_idx = (current_page - 1) * ITEMS_PER_PAGE
-            current_giveaways = giveaways[start_idx:start_idx + ITEMS_PER_PAGE]
+            current_giveaways = sorted_giveaways[start_idx:start_idx + ITEMS_PER_PAGE]
 
             keyboard = InlineKeyboardBuilder()
             for giveaway in current_giveaways:
-                # Используем giveaway[2] для name вместо giveaway[1]
                 name = str(giveaway[2]) if giveaway[2] is not None else "Без названия"
                 clean_name = strip_html_tags(name)[:61] + "..." if len(name) > 64 else strip_html_tags(name)
-                # Используем giveaway[6] для is_active вместо giveaway[4]
-                status_indicator = "" if giveaway[6] == 'waiting' else ""
+                status_indicator = "✅ " if giveaway[6] == 'true' else "" if giveaway[6] == 'waiting' else ""
+                # Определяем callback_data в зависимости от статуса
+                callback_data = (f"view_active_giveaway:{giveaway[0]}" if giveaway[6] == 'true'
+                                 else f"view_created_giveaway:{giveaway[0]}")
                 keyboard.row(InlineKeyboardButton(
-                    text=f"{status_indicator} {clean_name}",
-                    callback_data=f"view_created_giveaway:{giveaway[0]}"
+                    text=f"{status_indicator}{clean_name}",
+                    callback_data=callback_data
                 ))
 
             nav_buttons = []
