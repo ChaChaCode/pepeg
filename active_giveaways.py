@@ -249,7 +249,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners_active:{giveaway_id}")
         keyboard.button(text="⏹️ Завершить", callback_data=f"confirm_force_end_giveaway:{giveaway_id}")
         keyboard.button(text="🔗 Открыть", url=f"https://t.me/Snapi/app?startapp={giveaway_id}")
-        keyboard.button(text="◀️ Назад", callback_data="active_giveaways")
+        keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
         keyboard.adjust(1)
 
         try:
