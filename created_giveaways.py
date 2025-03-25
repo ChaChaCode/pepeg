@@ -178,8 +178,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             for giveaway in current_giveaways:
                 name = str(giveaway[2]) if giveaway[2] is not None else "Без названия"
                 clean_name = strip_html_tags(name)[:61] + "..." if len(name) > 64 else strip_html_tags(name)
-                status_indicator = "✅ " if giveaway[6] == 'true' else "" if giveaway[6] == 'waiting' else ""
-                # Определяем callback_data в зависимости от статуса
+                status_indicator = "✅ " if giveaway[6] == 'true' else ""  # Добавляем ✅ для активных розыгрышей
                 callback_data = (f"view_active_giveaway:{giveaway[0]}" if giveaway[6] == 'true'
                                  else f"view_created_giveaway:{giveaway[0]}")
                 keyboard.row(InlineKeyboardButton(
@@ -199,13 +198,19 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             if nav_buttons:
                 keyboard.row(*nav_buttons)
-            keyboard.row(InlineKeyboardButton(text=" ◀️ Назад", callback_data="back_to_main_menu"))
+            keyboard.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main_menu"))
+
+            # Проверяем, есть ли активные розыгрыши
+            has_active = any(giveaway[6] == 'true' for giveaway in sorted_giveaways)
+            message_text = ("<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!\n\n"
+                            "✅ - Активный розыгрыш" if has_active else
+                            "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!")
 
             await bot.answer_callback_query(callback_query.id)
             await send_message_with_image(
                 bot,
                 user_id,
-                f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!",
+                message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id
             )
