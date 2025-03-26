@@ -254,7 +254,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners_active:{giveaway_id}")
         keyboard.button(text="⏹️ Завершить", callback_data=f"confirm_force_end_giveaway:{giveaway_id}")
         keyboard.button(text="🔗 Открыть", url=f"https://t.me/Snapi/app?startapp={giveaway_id}")
-        keyboard.button(text="◀️ Назад", callback_data="active_giveaways")  # Исправлено на active_giveaways
+        keyboard.button(text="◀️ Назад", callback_data="created_giveaways")  # Исправлено на active_giveaways
         keyboard.adjust(1)
 
         try:
@@ -366,7 +366,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except Exception as e:
             logger.error(f"🚫 Ошибка завершения розыгрыша: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data="active_giveaways")
+            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             await send_message_with_image(
                 bot,
                 chat_id=callback_query.from_user.id,
