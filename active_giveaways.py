@@ -235,7 +235,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         # Условно добавляем текст в зависимости от text_type
         additional_info = (
-            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+            f"\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
         ) if giveaway['text_type'] == 0 else ""
 
@@ -243,7 +243,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 <b>{giveaway['name']}</b>
 
 {giveaway['description']}
-
 {additional_info}
 <tg-emoji emoji-id='5449683594425410231'>🔼</tg-emoji> <b>Участников:</b> {participants_count}
 {channel_info}
