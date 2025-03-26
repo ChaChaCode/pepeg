@@ -474,11 +474,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         # Определяем новое значение и текст для подтверждения
         new_text_type = 1 if current_text_type == 0 else 0
         action_text = (
-            f"Хотите убрать текст в конце поста?\n\n"
+            f"Хотите убрать этот текст в конце поста?\n\n"
             f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
         ) if current_text_type == 0 else (
-            f"Хотите вернуть текст в конце поста?\n\n"
+            f"Хотите вернуть этот текст в конце поста?\n\n"
             f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
         )
