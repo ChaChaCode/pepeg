@@ -228,7 +228,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway_id = callback_query.data.split(':')[1]
         try:
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-            # Преобразуем результат в словарь
             columns = [desc[0] for desc in cursor.description]
             giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
@@ -248,13 +247,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             invite_info = f"\n<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей) для участия!" if \
             giveaway['invite'] else ""
+            # Условно добавляем текст в зависимости от text_type
+            additional_info = (
+                f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+                f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+            ) if giveaway['text_type'] == 0 else ""
+
             giveaway_info = f"""
 <b>{giveaway['name']}</b>
 
 {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+{additional_info}
 {invite_info}
 """
 
@@ -449,11 +453,20 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="🏆 Победители", callback_data=f"edit_winner_count:{giveaway_id}")
         keyboard.button(text="⏰ Дата", callback_data=f"change_end_date:{giveaway_id}")
         keyboard.button(text="🖼️ Медиа", callback_data=f"manage_media:{giveaway_id}")
-        keyboard.button(text=" ◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
-        keyboard.adjust(2, 2, 1, 1)
+        # Добавляем кнопку "Убрать текст в конце"
+        text_type_label = "✂️ Убрать текст в конце" if giveaway['text_type'] == 0 else "📌 Вернуть текст в конце"
+        keyboard.button(text=text_type_label, callback_data=f"toggle_text_type:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+        keyboard.adjust(2, 2, 1, 1, 1)  # Корректируем расположение кнопок
 
         invite_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей)!" if \
         giveaway['invite'] else ""
+        # Условно добавляем текст в зависимости от text_type
+        additional_info = (
+            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+        ) if giveaway['text_type'] == 0 else ""
+
         giveaway_info = f"""
 <tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
 
@@ -461,8 +474,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
 <b>Описание:</b> {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+{additional_info}
 🖼️ <b>Медиа:</b> {'✅ Есть' if giveaway['media_type'] else '❌ Нет'}
 {invite_info}
 """
@@ -498,6 +510,68 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await bot.send_message(user_id,
                                    "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс! Ошибка при загрузке меню. Попробуйте снова!",
                                    parse_mode='HTML')
+
+    @dp.callback_query(lambda c: c.data.startswith('toggle_text_type:'))
+    async def process_toggle_text_type(callback_query: CallbackQuery):
+        giveaway_id = callback_query.data.split(':')[1]
+
+        # Получаем данные розыгрыша из базы
+        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+        columns = [desc[0] for desc in cursor.description]
+        giveaway = dict(zip(columns, cursor.fetchone()))
+        if not giveaway:
+            await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
+            return
+
+        # Определяем текущее значение text_type
+        current_text_type = giveaway['text_type']
+
+        # Определяем новое значение и текст для подтверждения
+        new_text_type = 1 if current_text_type == 0 else 0
+        action_text = (
+            f"Хотите убрать текст в конце поста?\n\n"
+            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+        ) if current_text_type == 0 else (
+            f"Хотите вернуть текст в конце поста?\n\n"
+            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+        )
+
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="✅ Да", callback_data=f"confirm_toggle_text_type:{giveaway_id}:{new_text_type}")
+        keyboard.button(text="❌ Нет", callback_data=f"edit_post:{giveaway_id}")
+        keyboard.adjust(2)
+
+        await bot.answer_callback_query(callback_query.id)
+        await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji>{action_text}",
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
+        )
+
+    @dp.callback_query(lambda c: c.data.startswith('confirm_toggle_text_type:'))
+    async def process_confirm_toggle_text_type(callback_query: CallbackQuery):
+        parts = callback_query.data.split(':')
+        giveaway_id = parts[1]
+        new_text_type = int(parts[2])
+
+        try:
+            cursor.execute(
+                "UPDATE giveaways SET text_type = %s WHERE id = %s",
+                (new_text_type, giveaway_id)
+            )
+            conn.commit()
+            await bot.answer_callback_query(callback_query.id, text="✅ Изменения сохранены!")
+            await _show_edit_menu(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
+        except Exception as e:
+            logger.error(f"🚫 Ошибка: {str(e)}")
+            conn.rollback()
+            await bot.answer_callback_query(callback_query.id, text="❌ Ошибка при сохранении изменений 😔")
+
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name:'))
     async def process_edit_name(callback_query: CallbackQuery, state: FSMContext):
@@ -1073,13 +1147,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             participant_count = await get_participant_count(giveaway_id, conn, cursor)
 
+            # Условно добавляем текст в зависимости от text_type
+            additional_info = (
+                f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+                f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+            ) if giveaway['text_type'] == 0 else ""
+
             post_text = f"""
 <b>{giveaway['name']}</b>
 
 {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+{additional_info}
 """
 
             keyboard = InlineKeyboardBuilder()
@@ -1593,13 +1672,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 return
 
             participant_count = await get_participant_count(giveaway_id, conn, cursor)
+            # Условно добавляем текст в зависимости от text_type
+            additional_info = (
+                f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+                f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+            ) if giveaway['text_type'] == 0 else ""
+
             post_text = f"""
 <b>{giveaway['name']}</b>
 
 {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)
+{additional_info}
 """
 
             keyboard = InlineKeyboardBuilder()
