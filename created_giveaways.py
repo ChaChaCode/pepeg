@@ -1144,8 +1144,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             conn.commit()
             logger.info(f"Состояние is_active для розыгрыша {giveaway_id} изменено на 'waiting'")
 
-            participant_count = await get_participant_count(giveaway_id, conn, cursor)
-
             # Условно добавляем текст в зависимости от text_type
             additional_info = (
                 f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
@@ -1162,7 +1160,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
-                text=f"🎉 Участвовать ({participant_count})",
+                text=f"🎉 Участвовать (0)",
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.button(
@@ -1670,7 +1668,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
                 return
 
-            participant_count = await get_participant_count(giveaway_id, conn, cursor)
             # Условно добавляем текст в зависимости от text_type
             additional_info = (
                 f"\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
@@ -1687,7 +1684,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
-                text=f"🎉 Участвовать ({participant_count})",
+                text=f"🎉 Участвовать",
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.adjust(1)
@@ -1803,14 +1800,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     )
                     conn.commit()
 
-                    counter_tasks = []
-                    for task_info in participant_counter_tasks:
-                        task = asyncio.create_task(
-                            start_participant_counter(bot, task_info['chat_id'], task_info['message_id'], giveaway_id,
-                                                      conn, cursor)
-                        )
-                        counter_tasks.append(task)
-
                     await bot.answer_callback_query(callback_query.id, text="✅ Розыгрыш запущен! 🎉")
 
                     channel_links = []
@@ -1873,38 +1862,3 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                                             text="Ошибка при публикации 😔")
         finally:
             user_selected_communities.pop(user_id, None)
-
-    async def get_participant_count(giveaway_id: str, conn, cursor) -> int:
-        try:
-            cursor.execute("SELECT COUNT(*) FROM participations WHERE giveaway_id = %s", (giveaway_id,))
-            count = cursor.fetchone()[0]
-            return count
-        except Exception as e:
-            logger.error(f"🚫 Ошибка подсчёта участников: {str(e)}")
-            return 0
-
-    async def update_participant_button(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, conn, cursor):
-        try:
-            count = await get_participant_count(giveaway_id, conn, cursor)
-            keyboard = InlineKeyboardBuilder()
-            keyboard.button(
-                text=f"🎉 Участвовать ({count})",
-                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
-            )
-            keyboard.adjust(1)
-            await bot.edit_message_reply_markup(
-                chat_id=chat_id,
-                message_id=message_id,
-                reply_markup=keyboard.as_markup()
-            )
-        except aiogram.exceptions.TelegramBadRequest as e:
-            if "message is not modified" not in str(e).lower():
-                logger.error(f"🚫 Ошибка обновления кнопки: {str(e)}")
-            # Если это "message is not modified", ничего не делаем и не логируем
-        except Exception as e:
-            logger.error(f"🚫 Ошибка обновления кнопки: {str(e)}")
-
-    async def start_participant_counter(bot: Bot, chat_id: int, message_id: int, giveaway_id: str, conn, cursor):
-        while True:
-            await update_participant_button(bot, chat_id, message_id, giveaway_id, conn, cursor)
-            await asyncio.sleep(60)
