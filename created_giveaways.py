@@ -1819,7 +1819,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     keyboard = InlineKeyboardBuilder()
                     keyboard.button(text="🏠 Назад", callback_data="back_to_main_menu")
 
-                    result_message = f"<b><tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Успешно опубликовано в {success_count} сообществах!</b>{channel_info}\n<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> Участники будут обновляться каждую минуту."
+                    result_message = f"<b><tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Успешно опубликовано в {success_count} сообществах!</b>{channel_info}\n<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> Участники будут обновляться каждые 10 мин."
                     if error_count > 0:
                         result_message += f"\n\n<b><tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ошибок: {error_count}</b>"
                         for error in error_messages:
