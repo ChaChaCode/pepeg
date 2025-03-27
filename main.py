@@ -16,8 +16,7 @@ from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
-from collections import defaultdict
-from datetime import datetime, timedelta
+
 logger = logging.getLogger(__name__)
 
 # Настройка логирования
@@ -52,71 +51,6 @@ cursor = conn.cursor()
 # Переменные для хранения данных
 user_selected_communities = {}
 paid_users = {}
-
-# Система ограничения частоты взаимодействий
-MAX_ACTIONS_PER_SECOND = 4  # Максимальное количество действий за секунду
-BLOCK_DURATION = 300  # 10 секунд блокировки
-user_requests = defaultdict(list)  # Словарь для отслеживания запросов пользователей
-blocked_users = {}  # Словарь для заблокированных пользователей
-notification_sent = {}  # Словарь для отслеживания, было ли отправлено уведомление о блокировке
-
-# Общий middleware для проверки лимита действий и логирования
-async def rate_limit_middleware(handler, event, data):
-    # Определяем тип события и получаем user_id
-    if isinstance(event, types.Message):
-        user_id = event.from_user.id
-        reply_method = event.reply
-    elif isinstance(event, CallbackQuery):
-        user_id = event.from_user.id
-        reply_method = lambda text: bot.send_message(event.message.chat.id, text)
-        # Логируем нажатие кнопки
-        logging.info(f"Пользователь {user_id} нажал кнопку с callback_data: '{event.data}'")
-    else:
-        return await handler(event, data)
-
-    current_time = datetime.now()
-
-    # Проверка на блокировку
-    if user_id in blocked_users:
-        if current_time < blocked_users[user_id]:
-            # Если уведомление уже отправлено, молчим
-            if user_id in notification_sent and notification_sent[user_id]:
-                if isinstance(event, CallbackQuery):
-                    await bot.answer_callback_query(event.id)  # Закрываем callback без ответа
-                return
-            # Отправляем уведомление и отмечаем, что оно отправлено
-            await reply_method("Слишком много запросов! Подождите 10 сек.")
-            notification_sent[user_id] = True
-            if isinstance(event, CallbackQuery):
-                await bot.answer_callback_query(event.id)  # Закрываем callback
-            return
-        else:
-            # Снимаем блокировку и сбрасываем флаг уведомления
-            del blocked_users[user_id]
-            if user_id in notification_sent:
-                del notification_sent[user_id]
-
-    # Очистка старых запросов (старше 1 секунды)
-    user_requests[user_id] = [t for t in user_requests[user_id] if (current_time - t).total_seconds() < 1]
-
-    # Добавление текущего запроса
-    user_requests[user_id].append(current_time)
-
-    # Проверка превышения лимита
-    if len(user_requests[user_id]) > MAX_ACTIONS_PER_SECOND:
-        blocked_users[user_id] = current_time + timedelta(seconds=BLOCK_DURATION)
-        await reply_method("Слишком много запросов! Подождите 10 сек.")
-        notification_sent[user_id] = True
-        if isinstance(event, CallbackQuery):
-            await bot.answer_callback_query(event.id)  # Закрываем callback
-        return
-
-    # Выполнение основного обработчика, если лимит не превышен
-    return await handler(event, data)
-
-# Применение middleware к сообщениям и callback-запросам
-dp.message.outer_middleware(rate_limit_middleware)
-dp.callback_query.outer_middleware(rate_limit_middleware)
 
 # Регистрация обработчиков из других модулей
 register_active_giveaways_handlers(dp, bot, conn, cursor)
@@ -305,7 +239,6 @@ async def periodic_username_check():
         await check_usernames(bot, conn, cursor)
         await asyncio.sleep(60)
 
-
 async def update_participant_counters(bot: Bot, conn, cursor):
     """
     Функция для обновления счетчика участников в кнопках розыгрышей.
@@ -421,7 +354,6 @@ async def main():
         cursor.close()
         conn.close()
         logging.info("Соединение с PostgreSQL закрыто.")
-
 
 if __name__ == '__main__':
     asyncio.run(main())
