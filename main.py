@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -17,6 +18,7 @@ from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
 from collections import defaultdict
 from datetime import datetime, timedelta
+logger = logging.getLogger(__name__)
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -303,18 +305,123 @@ async def periodic_username_check():
         await check_usernames(bot, conn, cursor)
         await asyncio.sleep(60)
 
+
+async def update_participant_counters(bot: Bot, conn, cursor):
+    """
+    Функция для обновления счетчика участников в кнопках розыгрышей.
+    Проверяет активные розыгрыши каждые 10 секунд, подсчитывает участников
+    и обновляет текст кнопки "Участвовать" с указанием количества участников.
+    """
+    # Словарь для хранения предыдущих значений счетчиков
+    previous_counts = {}
+
+    while True:
+        try:
+            # Получаем все активные розыгрыши
+            cursor.execute("SELECT * FROM giveaways WHERE is_active = %s", ('true',))
+            giveaways = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            giveaways = [dict(zip(columns, row)) for row in giveaways]
+
+            for giveaway in giveaways:
+                giveaway_id = giveaway['id']
+
+                # Подсчитываем количество участников для данного розыгрыша
+                cursor.execute(
+                    "SELECT COUNT(*) FROM participations WHERE giveaway_id = %s",
+                    (giveaway_id,)
+                )
+                participant_count = cursor.fetchone()[0]
+
+                # Получаем информацию о каналах, где опубликован розыгрыш
+                participant_counter_tasks = giveaway.get('participant_counter_tasks')
+                if participant_counter_tasks:
+                    # Преобразуем JSON в список, если это строка
+                    if isinstance(participant_counter_tasks, str):
+                        try:
+                            participant_counter_tasks = json.loads(participant_counter_tasks)
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Ошибка декодирования JSON для розыгрыша {giveaway_id}: {str(e)}")
+                            continue
+
+                    # Обновляем кнопку в каждом канале
+                    for task in participant_counter_tasks:
+                        chat_id = task.get('chat_id')
+                        message_id = task.get('message_id')
+
+                        if chat_id and message_id:
+                            # Создаем уникальный ключ для этого сообщения
+                            message_key = f"{giveaway_id}_{chat_id}_{message_id}"
+
+                            # Проверяем, изменилось ли количество участников
+                            previous_count = previous_counts.get(message_key, None)
+
+                            if previous_count == participant_count:
+                                # Если количество не изменилось, просто логируем это
+                                logger.info(
+                                    f"Количество участников для розыгрыша {giveaway_id} в канале {chat_id} не изменилось: {participant_count} участников")
+                                continue
+
+                            try:
+                                # Создаем новую клавиатуру с обновленным текстом
+                                keyboard = InlineKeyboardBuilder()
+
+                                # Добавляем кнопку "Участвовать" с количеством участников и URL
+                                keyboard.button(
+                                    text=f"🎉 Участвовать ({participant_count})",
+                                    url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
+                                )
+
+                                # Обновляем сообщение с новой клавиатурой
+                                await bot.edit_message_reply_markup(
+                                    chat_id=chat_id,
+                                    message_id=message_id,
+                                    reply_markup=keyboard.as_markup()
+                                )
+
+                                # Сохраняем новое количество участников
+                                previous_counts[message_key] = participant_count
+
+                                logger.info(
+                                    f"Обновлен счетчик участников для розыгрыша {giveaway_id} в канале {chat_id}: {participant_count} участников")
+                            except Exception as e:
+                                # Проверяем сообщение об ошибке
+                                if "message is not modified" in str(e).lower():
+                                    # Если сообщение не изменилось, обновляем счетчик в словаре
+                                    previous_counts[message_key] = participant_count
+                                    logger.info(
+                                        f"Количество участников для розыгрыша {giveaway_id} в канале {chat_id} не изменилось: {participant_count} участников")
+                                else:
+                                    logger.error(
+                                        f"Ошибка при обновлении счетчика участников в канале {chat_id}, сообщение {message_id}: {str(e)}")
+
+        except Exception as e:
+            logger.error(f"Ошибка в функции update_participant_counters: {str(e)}")
+
+        # Ждем 10 секунд перед следующей проверкой
+        await asyncio.sleep(60)
+
+# Обновленная функция main()
 async def main():
+    # Создаем задачи для проверки розыгрышей и обновления имен пользователей
     check_task = asyncio.create_task(check_and_end_giveaways(bot, conn, cursor))
     username_check_task = asyncio.create_task(periodic_username_check())
+
+    # Добавляем новую задачу для обновления счетчика участников
+    participant_counter_task = asyncio.create_task(update_participant_counters(bot, conn, cursor))
 
     try:
         await dp.start_polling(bot)
     finally:
+        # Отменяем все задачи при завершении работы бота
         check_task.cancel()
         username_check_task.cancel()
+        participant_counter_task.cancel()  # Отменяем новую задачу
+
         cursor.close()
         conn.close()
         logging.info("Соединение с PostgreSQL закрыто.")
+
 
 if __name__ == '__main__':
     asyncio.run(main())
