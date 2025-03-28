@@ -52,8 +52,7 @@ class GiveawayStates(StatesGroup):
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
-<blockquote expandable>
-- Цитата
+<blockquote expandable>- Цитата
 - Жирный: <b>текст</b>
 - Курсив: <i>текст</i>
 - Подчёркнутый: <u>текст</u>
@@ -63,7 +62,8 @@ FORMATTING_GUIDE = """
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
 - Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
-</blockquote>
+
+Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
 
 async def build_navigation_keyboard(state: FSMContext, current_state: State) -> InlineKeyboardBuilder:
@@ -96,14 +96,14 @@ async def build_navigation_keyboard(state: FSMContext, current_state: State) -> 
 
     # Сначала добавляем кнопку "Назад"
     if current_state in back_states:
-        keyboard.button(text="◀️ Назад", callback_data=back_states[current_state])
+        keyboard.button(text="🢀 Назад", callback_data=back_states[current_state])
         has_back = True
 
     # Затем добавляем кнопку "Далее"
     if current_state in next_states:
         next_state, callback, required_field = next_states[current_state]
         if required_field in data or current_state == GiveawayStates.waiting_for_media_choice:
-            keyboard.button(text="Далее ▶️", callback_data=callback)
+            keyboard.button(text="Далее 🢂", callback_data=callback)
             has_next = True
 
     # Добавляем кнопку "В меню"
@@ -845,7 +845,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
+            keyboard.button(text="🢀 Назад", callback_data="back_to_end_time")
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
 
@@ -877,7 +877,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
+        keyboard.button(text="🢀 Назад", callback_data="back_to_end_time")
         keyboard.button(text="В меню", callback_data="back_to_main_menu")
         keyboard.adjust(1)
 
@@ -947,7 +947,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except ValueError as ve:
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
+            keyboard.button(text="🢀 Назад", callback_data="back_to_end_time")
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
             await send_message_with_image(
@@ -1014,14 +1014,14 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
             keyboard.button(text="👀 Предпросмотр", callback_data=f"preview_giveaway:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_giveaway:{giveaway_id}")
-            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
+            keyboard.button(text="🢀 Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
             invite_info = f"\n😊 Приглашайте {giveaway['quantity_invite']} друзей для участия!" if giveaway.get(
                 'invite') else ""
             end_time_msk = giveaway['end_time'].strftime('%d.%m.%Y %H:%M')
             giveaway_info = f"""
-<b>{giveaway['name']}</b>
+{giveaway['name']}
 
 {giveaway['description']}
 
@@ -1139,7 +1139,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"Ошибка отображения розыгрыша: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
+            keyboard.button(text="🢀 Назад", callback_data="created_giveaways")
             await send_message_with_image(
                 bot, chat_id,
                 "❌ Ошибка загрузки розыгрыша. Попробуйте снова!",
