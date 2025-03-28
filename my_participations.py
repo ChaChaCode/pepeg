@@ -22,51 +22,52 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     async def process_my_participations(callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
-
-        # Get page number from callback data
-        current_page = 1
-        if callback_query.data.startswith('my_participations_page:'):
-            current_page = int(callback_query.data.split(':')[1])
+        current_page = int(callback_query.data.split(':')[1]) if callback_query.data.startswith(
+            'my_participations_page:') else 1
 
         try:
-            # Запрос для получения уникальных активных розыгрышей, в которых участвует пользователь
+            # Получаем общее количество уникальных активных розыгрышей, в которых участвует пользователь
             cursor.execute(
                 """
-                SELECT DISTINCT g.id AS giveaway_id, g.user_id AS creator_user_id, g.name, g.description, 
-                       g.end_time, g.media_type, g.media_file_id
+                SELECT COUNT(DISTINCT g.id) 
                 FROM participations p
                 JOIN giveaways g ON p.giveaway_id = g.id
-                WHERE p.user_id = %s AND g.is_active = 'true'
+                WHERE p.user_id = %s AND g.is_active = 'true' AND g.user_id != 1
                 """,
                 (user_id,)
             )
-            participations = cursor.fetchall()
+            total_participations = cursor.fetchone()[0]
+            if total_participations == 0:
+                await bot.answer_callback_query(callback_query.id,
+                                                text="Вы не участвуете ни в одном активном розыгрыше.")
+                return
+
+            total_pages = max(1, math.ceil(total_participations / ITEMS_PER_PAGE))
+            offset = (current_page - 1) * ITEMS_PER_PAGE
+
+            # Получаем только нужные записи для текущей страницы
+            cursor.execute(
+                """
+                SELECT DISTINCT g.id AS giveaway_id, g.user_id AS creator_user_id, g.name, g.description, 
+                               g.end_time, g.media_type, g.media_file_id
+                FROM participations p
+                JOIN giveaways g ON p.giveaway_id = g.id
+                WHERE p.user_id = %s AND g.is_active = 'true' AND g.user_id != 1
+                ORDER BY g.end_time
+                LIMIT %s OFFSET %s
+                """,
+                (user_id, ITEMS_PER_PAGE, offset)
+            )
+            current_participations = cursor.fetchall()
 
             # Преобразуем результат в список словарей
             columns = [desc[0] for desc in cursor.description]
-            participations = [dict(zip(columns, row)) for row in participations]
+            current_participations = [dict(zip(columns, row)) for row in current_participations]
 
-            # Фильтруем участия, где creator_user_id != 1
-            filtered_participations = [p for p in participations if p['creator_user_id'] != 1]
-
-            if not filtered_participations:
-                await bot.answer_callback_query(callback_query.id, text="Вы не участвуете ни в одном активном розыгрыше.")
-                return
-
-            total_participations = len(filtered_participations)
-            total_pages = math.ceil(total_participations / ITEMS_PER_PAGE)
-
-            # Calculate slice indices for current page
-            start_idx = (current_page - 1) * ITEMS_PER_PAGE
-            end_idx = start_idx + ITEMS_PER_PAGE
-
-            # Get participations for current page
-            current_participations = filtered_participations[start_idx:end_idx]
-
-            # Generate keyboard with pagination
+            # Генерируем клавиатуру с пагинацией
             keyboard = InlineKeyboardBuilder()
 
-            # Add participation buttons (each in its own row)
+            # Добавляем кнопки для участий
             for participation in current_participations:
                 clean_name = strip_html_tags(participation['name'])
                 if len(clean_name) > 64:
@@ -76,28 +77,31 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     callback_data=f"giveaway_{participation['giveaway_id']}"
                 ))
 
-            # Create navigation row
+            # Создаем навигационные кнопки с кольцевой логикой
             nav_buttons = []
-            if current_page > 1:
-                nav_buttons.append(types.InlineKeyboardButton(
-                    text="←",
-                    callback_data=f"my_participations_page:{current_page - 1}"
-                ))
             if total_pages > 1:
+                prev_page = current_page - 1 if current_page > 1 else total_pages
                 nav_buttons.append(types.InlineKeyboardButton(
-                    text=f"{current_page}/{total_pages}",
+                    text="🢀",
+                    callback_data=f"my_participations_page:{prev_page}"
+                ))
+
+                nav_buttons.append(types.InlineKeyboardButton(
+                    text=f"📄 {current_page}/{total_pages}",
                     callback_data="ignore"
                 ))
-            if current_page < total_pages:
+
+                next_page = current_page + 1 if current_page < total_pages else 1
                 nav_buttons.append(types.InlineKeyboardButton(
-                    text="→",
-                    callback_data=f"my_participations_page:{current_page + 1}"
+                    text="🢂",
+                    callback_data=f"my_participations_page:{next_page}"
                 ))
+
             if nav_buttons:
                 keyboard.row(*nav_buttons)
 
             keyboard.row(types.InlineKeyboardButton(
-                text="◀️ Назад",
+                text="🢀 Назад",
                 callback_data="back_to_main_menu"
             ))
 
@@ -107,6 +111,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             else:
                 message_text += ":"
 
+            await bot.answer_callback_query(callback_query.id)
             await send_message_with_image(
                 bot,
                 chat_id=callback_query.from_user.id,
@@ -152,7 +157,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 text="Открыть",
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
-            keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
+            keyboard.button(text="🢀 Назад к списку", callback_data="my_participations")
             keyboard.adjust(1)
 
             try:
