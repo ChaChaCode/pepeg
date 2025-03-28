@@ -17,8 +17,7 @@ logger = logging.getLogger(__name__)
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
-<blockquote expandable>
-- Цитата
+<blockquote expandable>- Цитата
 - Жирный: <b>текст</b>
 - Курсив: <i>текст</i>
 - Подчёркнутый: <u>текст</u>
@@ -356,7 +355,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
         result_message = f"""
 <b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
-<b>{giveaway['name']}</b>
+{giveaway['name']}
 
 <b>Победители:</b> 
 <blockquote expandable>
@@ -367,7 +366,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
         result_message = f"""
 <b>Розыгрыш завершен</b>
 
-<b>{giveaway['name']}</b>
+{giveaway['name']}
 
 К сожалению, в этом розыгрыше не было участников.
 """
