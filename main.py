@@ -332,7 +332,7 @@ async def update_participant_counters(bot: Bot, conn, cursor):
             logger.error(f"Ошибка в функции update_participant_counters: {str(e)}")
 
         # Ждем 10 секунд перед следующей проверкой
-        await asyncio.sleep(600)
+        await asyncio.sleep(60)
 
 # Обновленная функция main()
 async def main():
