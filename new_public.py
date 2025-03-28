@@ -287,10 +287,15 @@ def register_new_public(dp: Dispatcher, bot: Bot, conn, cursor):
             )
             existing = cursor.fetchone()
 
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
+            ])
+
             if existing:
                 await send_message_with_image(
                     bot, user_id,
                     f"{chat_type_display.capitalize()} \"{community_username}\" уже привязан к этому розыгрышу.",
+                    reply_markup=keyboard,
                     message_id=message_id
                 )
                 return
