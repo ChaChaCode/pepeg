@@ -384,7 +384,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
         result_message_for_creator = result_message
 
     channel_keyboard = InlineKeyboardBuilder()
-    channel_keyboard.button(text="Результаты", url=f"https://t.me/Snapi/app?startapp={giveaway['link']}")
+    channel_keyboard.button(text="Результаты", url=f"https://t.me/Snapi/app?startapp={giveaway['id']}")
 
     for chat_id in target_chat_ids:
         try:
@@ -454,7 +454,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text="Результаты",
-                url=f"https://t.me/Snapi/app?startapp={giveaway['link']}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway['id']}"
             )
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             await bot.send_message(
