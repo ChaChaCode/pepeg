@@ -12,6 +12,7 @@ import boto3
 from botocore.client import Config
 import io
 import re
+import uuid
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -41,6 +42,7 @@ MAX_DESCRIPTION_LENGTH = 850
 MAX_MEDIA_SIZE_MB = 10
 MAX_WINNERS = 100
 
+
 # Состояния FSM
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
@@ -49,6 +51,7 @@ class GiveawayStates(StatesGroup):
     waiting_for_media_upload = State()
     waiting_for_end_time = State()
     waiting_for_winner_count = State()
+
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
@@ -65,6 +68,7 @@ FORMATTING_GUIDE = """
 
 Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
+
 
 async def build_navigation_keyboard(state: FSMContext, current_state: State) -> InlineKeyboardBuilder:
     """Создает клавиатуру с кнопками навигации"""
@@ -94,28 +98,25 @@ async def build_navigation_keyboard(state: FSMContext, current_state: State) -> 
     has_next = False
     has_back = False
 
-    # Сначала добавляем кнопку "Назад"
     if current_state in back_states:
         keyboard.button(text="🢀 Назад", callback_data=back_states[current_state])
         has_back = True
 
-    # Затем добавляем кнопку "Далее"
     if current_state in next_states:
         next_state, callback, required_field = next_states[current_state]
         if required_field in data or current_state == GiveawayStates.waiting_for_media_choice:
             keyboard.button(text="Далее 🢂", callback_data=callback)
             has_next = True
 
-    # Добавляем кнопку "В меню"
     keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
-    # Если есть обе кнопки "Назад" и "Далее", размещаем их на одной строке
     if has_next and has_back:
-        keyboard.adjust(2, 1)  # 2 кнопки в первой строке, 1 во второй
+        keyboard.adjust(2, 1)
     else:
-        keyboard.adjust(1)  # Все кнопки в один столбец
+        keyboard.adjust(1)
 
     return keyboard
+
 
 def count_length_with_custom_emoji(text: str) -> int:
     emoji_pattern = r'<tg-emoji emoji-id="[^"]+">[^<]+</tg-emoji>'
@@ -124,6 +125,7 @@ def count_length_with_custom_emoji(text: str) -> int:
     for emoji in custom_emojis:
         cleaned_text = cleaned_text.replace(emoji, ' ')
     return len(cleaned_text)
+
 
 async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
     try:
@@ -147,21 +149,26 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
         logger.error(f"❌ Ошибка загрузки: {str(e)}")
         return False, f"Ошибка загрузки: {str(e)}"
 
+
 async def save_giveaway(conn, cursor, user_id: int, name: str, description: str, end_time: str,
-                       winner_count: int, media_type: str = None, media_file_id: str = None):
+                        winner_count: int, media_type: str = None, media_file_id: str = None):
     """Сохраняет данные розыгрыша в базу данных"""
     moscow_tz = pytz.timezone('Europe/Moscow')
     end_time_dt = datetime.strptime(end_time, "%d.%m.%Y %H:%M")
     end_time_tz = moscow_tz.localize(end_time_dt)
 
+    # Генерация уникальной ссылки
+    unique_code = str(uuid.uuid4())[:8]
+    giveaway_link = f"{unique_code}"
+
     try:
         cursor.execute(
             """
-            INSERT INTO giveaways (user_id, name, description, end_time, winner_count, is_active, media_type, media_file_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO giveaways (user_id, name, description, end_time, winner_count, is_active, media_type, media_file_id, link)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
-            (user_id, name, description, end_time_tz, winner_count, False, media_type, media_file_id)
+            (user_id, name, description, end_time_tz, winner_count, False, media_type, media_file_id, giveaway_link)
         )
         giveaway_id = cursor.fetchone()[0]
 
@@ -176,11 +183,12 @@ async def save_giveaway(conn, cursor, user_id: int, name: str, description: str,
             )
 
         conn.commit()
-        return True, giveaway_id
+        return True, giveaway_id, giveaway_link
     except Exception as e:
         logger.error(f"Ошибка сохранения: {str(e)}")
         conn.rollback()
-        return False, None
+        return False, None, None
+
 
 def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == 'create_giveaway')
@@ -221,7 +229,6 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
         description = data.get('description', '')
 
-        # Проверяем, есть ли описание
         if description:
             message_text = (
                 f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: <b>{description}</b>\n"
@@ -265,7 +272,6 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         description = data.get('description', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
 
-        # Проверяем, есть ли описание
         if description:
             message_text = (
                 f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: <b>{description}</b>\n"
@@ -310,21 +316,19 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         media_file_id = data.get('media_file_id_temp')
         media_type = data.get('media_type')
 
-        # Добавляем кнопки "Изменить"/"Добавить Медиа" и "🗑️ Удалить" (если есть медиа)
-        keyboard.button(text="Изменить" if media_file_id and media_type else "Добавить Медиа", callback_data="add_media")
+        keyboard.button(text="Изменить" if media_file_id and media_type else "Добавить Медиа",
+                        callback_data="add_media")
         if media_file_id and media_type:
             keyboard.button(text="🗑️ Удалить", callback_data="delete_media")
 
-        # Добавляем навигационные кнопки
         nav_keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_choice)
         for button in nav_keyboard.buttons:
             keyboard.button(text=button.text, callback_data=button.callback_data)
 
-        # Настраиваем расположение кнопок
         if media_file_id and media_type:
-            keyboard.adjust(2, 2, 1)  # 2 в первой строке, 2 во второй, 1 в третьей
+            keyboard.adjust(2, 2, 1)
         else:
-            keyboard.adjust(1, 2, 1)  # 1 в первой, 2 во второй, 1 в третьей
+            keyboard.adjust(1, 2, 1)
 
         message_text = (
             f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите изменить или удалить {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}?"
@@ -372,8 +376,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         reply_markup=keyboard.as_markup()
                     )
                 return
-            except TelegramBadRequest as e:
-                logger.error(f"Ошибка редактирования медиа: {str(e)}")
+            except TelegramBadRequest:
                 if media_type == 'photo':
                     sent_message = await bot.send_photo(
                         chat_id=message.chat.id,
@@ -419,21 +422,19 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         media_file_id = data.get('media_file_id_temp')
         media_type = data.get('media_type')
 
-        # Добавляем кнопки "Изменить"/"Добавить Медиа" и "🗑️ Удалить" (если есть медиа)
-        keyboard.button(text="Изменить" if media_file_id and media_type else "Добавить Медиа", callback_data="add_media")
+        keyboard.button(text="Изменить" if media_file_id and media_type else "Добавить Медиа",
+                        callback_data="add_media")
         if media_file_id and media_type:
             keyboard.button(text="🗑️ Удалить", callback_data="delete_media")
 
-        # Добавляем навигационные кнопки
         nav_keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_choice)
         for button in nav_keyboard.buttons:
             keyboard.button(text=button.text, callback_data=button.callback_data)
 
-        # Настраиваем расположение кнопок
         if media_file_id and media_type:
-            keyboard.adjust(2, 2, 1)  # 2 в первой строке, 2 во второй, 1 в третьей
+            keyboard.adjust(2, 2, 1)
         else:
-            keyboard.adjust(1, 2, 1)  # 1 в первой, 2 во второй, 1 в третьей
+            keyboard.adjust(1, 2, 1)
 
         message_text = (
             f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите изменить или удалить {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}?"
@@ -528,21 +529,16 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == "delete_media")
     async def delete_media(callback_query: CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(callback_query.id)
-        await state.update_data(media_file_id_temp=None, media_type=None)  # Удаляем медиа из состояния
+        await state.update_data(media_file_id_temp=None, media_type=None)
         await state.set_state(GiveawayStates.waiting_for_media_choice)
         data = await state.get_data()
         keyboard = InlineKeyboardBuilder()
 
-        # Добавляем кнопку "Добавить Медиа"
         keyboard.button(text="Добавить Медиа", callback_data="add_media")
-
-        # Добавляем навигационные кнопки
         nav_keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_choice)
         for button in nav_keyboard.buttons:
             keyboard.button(text=button.text, callback_data=button.callback_data)
-
-        # Настраиваем расположение кнопок
-        keyboard.adjust(1, 2, 1)  # 1 в первой, 2 во второй, 1 в третьей
+        keyboard.adjust(1, 2, 1)
 
         message_text = f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите добавить фото, GIF или видео? (до {MAX_MEDIA_SIZE_MB} МБ)"
         last_message_id = data.get('last_message_id')
@@ -590,7 +586,6 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         description = data.get('description', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
 
-        # Проверяем, есть ли описание
         if description:
             message_text = (
                 f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: <b>{description}</b>\n"
@@ -632,21 +627,19 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         media_file_id = data.get('media_file_id_temp')
         media_type = data.get('media_type')
 
-        # Добавляем кнопки "Изменить"/"Добавить Медиа" и "🗑️ Удалить" (если есть медиа)
-        keyboard.button(text="Изменить" if media_file_id and media_type else "Добавить Медиа", callback_data="add_media")
+        keyboard.button(text="Изменить" if media_file_id and media_type else "Добавить Медиа",
+                        callback_data="add_media")
         if media_file_id and media_type:
             keyboard.button(text="🗑️ Удалить", callback_data="delete_media")
 
-        # Добавляем навигационные кнопки
         nav_keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_choice)
         for button in nav_keyboard.buttons:
             keyboard.button(text=button.text, callback_data=button.callback_data)
 
-        # Настраиваем расположение кнопок
         if media_file_id and media_type:
-            keyboard.adjust(2, 2, 1)  # 2 в первой строке, 2 во второй, 1 в третьей
+            keyboard.adjust(2, 2, 1)
         else:
-            keyboard.adjust(1, 2, 1)  # 1 в первой, 2 во второй, 1 в третьей
+            keyboard.adjust(1, 2, 1)
 
         message_text = (
             f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Хотите изменить или удалить {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}?"
@@ -925,7 +918,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 if not success:
                     raise Exception(media_file_id)
 
-            success, giveaway_id = await save_giveaway(
+            success, giveaway_id, giveaway_link = await save_giveaway(
                 conn,
                 cursor,
                 message.from_user.id,
@@ -939,7 +932,8 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             if success:
                 await display_giveaway(bot, message.chat.id, giveaway_id, conn, cursor,
-                                       message_id=data.get('last_message_id'))
+                                       message_id=data.get('last_message_id'),
+                                       giveaway_link=giveaway_link)
                 await state.clear()
             else:
                 raise Exception("Не удалось сохранить розыгрыш")
@@ -998,7 +992,8 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 else:
                     raise te
 
-    async def display_giveaway(bot: Bot, chat_id: int, giveaway_id: int, conn, cursor, message_id: int = None):
+    async def display_giveaway(bot: Bot, chat_id: int, giveaway_id: int, conn, cursor, message_id: int = None,
+                               giveaway_link: str = None):
         try:
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
             columns = [desc[0] for desc in cursor.description]
@@ -1020,20 +1015,24 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             invite_info = f"\n😊 Приглашайте {giveaway['quantity_invite']} друзей для участия!" if giveaway.get(
                 'invite') else ""
             end_time_msk = giveaway['end_time'].strftime('%d.%m.%Y %H:%M')
+            link_to_show = giveaway_link if giveaway_link else giveaway.get('link', '')
+
+            # Используем стандартные эмодзи вместо кастомных
             giveaway_info = f"""
 {giveaway['name']}
 
 {giveaway['description']}
 
-<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {end_time_msk} (МСК)
+🥇 <b>Победителей:</b> {giveaway['winner_count']}
+🗓 <b>Конец:</b> {end_time_msk} (МСК)
+🔗 <b>Ссылка:</b> <a href="{link_to_show}">Принять участие</a>
 {invite_info}
 """
 
             media_file_id = giveaway.get('media_file_id')
             media_type = giveaway.get('media_type')
 
-            if media_file_id and media_type:  # Если есть медиа
+            if media_file_id and media_type:
                 if message_id:
                     try:
                         if media_type == 'photo':
@@ -1071,7 +1070,6 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                             )
                     except TelegramBadRequest as e:
                         logger.error(f"Ошибка редактирования медиа: {str(e)}")
-                        # Если редактирование не удалось, отправляем новое сообщение
                         if media_type == 'photo':
                             await bot.send_photo(
                                 chat_id=chat_id,
@@ -1121,7 +1119,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                             reply_markup=keyboard.as_markup(),
                             parse_mode='HTML'
                         )
-            else:  # Если медиа нет, используем заглушку
+            else:
                 if message_id:
                     await send_message_with_image(
                         bot, chat_id, giveaway_info,
