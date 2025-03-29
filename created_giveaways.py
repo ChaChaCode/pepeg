@@ -1160,8 +1160,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             # Условно добавляем текст в зависимости от text_type
             additional_info = (
-                f"\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
-                f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+                f"\n🥇 <b>Победителей:</b> {giveaway['winner_count']}\n"
+                f"🗓 <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
             ) if giveaway['text_type'] == 0 else ""
 
             post_text = f"""
@@ -1172,9 +1172,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 """
 
             keyboard = InlineKeyboardBuilder()
+            # Используем giveaway['link'] вместо giveaway_id в URL
             keyboard.button(
                 text=f"🎉 Участвовать (0)",
-                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway['link']}"
             )
             keyboard.button(
                 text="🢀 Назад",
@@ -1697,7 +1698,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text=f"🎉 Участвовать",
-                url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
+                url=f"https://t.me/Snapi/app?startapp={giveaway['link']}"
             )
             keyboard.adjust(1)
 
