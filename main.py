@@ -302,7 +302,7 @@ async def update_participant_counters(bot: Bot, conn, cursor):
                                 # Добавляем кнопку "Участвовать" с количеством участников и URL
                                 keyboard.button(
                                     text=f"🎉 Участвовать ({participant_count})",
-                                    url=f"https://t.me/Snapi/app?startapp={giveaway['link']}"
+                                    url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
                                 )
 
                                 # Обновляем сообщение с новой клавиатурой
