@@ -121,7 +121,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.answer_callback_query(callback_query.id)
 
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
         ])
 
         bot_info = await bot.get_me()
@@ -227,7 +227,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, conn, cursor):
 
         # Если есть активный процесс привязки, продолжаем как раньше
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
         ])
 
         if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
@@ -288,7 +288,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, conn, cursor):
             existing = cursor.fetchone()
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
             ])
 
             if existing:
@@ -306,7 +306,7 @@ def register_new_public(dp: Dispatcher, bot: Bot, conn, cursor):
             # Сообщество уже сохранено в bound_communities на фоне, поэтому здесь только привязка к розыгрышу
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Назад", callback_data=f"bind_communities:{giveaway_id}")]
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
             ])
 
             await send_message_with_image(
