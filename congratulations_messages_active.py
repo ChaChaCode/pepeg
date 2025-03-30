@@ -72,7 +72,7 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
         for place in range(1, winner_count + 1):
             keyboard.button(text=f"Место {place}", callback_data=f"congrats_message_active:{giveaway_id}:{place}")
         keyboard.button(text="Общее поздравление", callback_data=f"edit_common_congrats_active:{giveaway_id}")
-        keyboard.button(text="Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(1)
 
         message_text = f"<tg-emoji emoji-id='5467538555158943525'>💭</tg-emoji> Выберите место победителя для редактирования поздравления или общее поздравление для всех победителей."
@@ -133,7 +133,7 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             message_text += f"\n\nТекущее поздравление:\n{existing_message}"
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Назад", callback_data=f"message_winners_active:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
 
         try:
             sent_message = await send_message_with_image(
@@ -265,7 +265,7 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Изменить общее поздравление", callback_data=f"edit_common_congrats_active:{giveaway_id}")
-            keyboard.button(text="Назад", callback_data=f"message_winners_active:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
             keyboard.adjust(1)
 
             await send_message_with_image(
@@ -308,7 +308,7 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 message_text += f"\n\nТекущее общее поздравление:\n{existing_message}"
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Назад", callback_data=f"message_winners_active:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
 
             sent_message = await send_message_with_image(
                 bot,
