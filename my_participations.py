@@ -82,7 +82,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if total_pages > 1:
                 prev_page = current_page - 1 if current_page > 1 else total_pages
                 nav_buttons.append(types.InlineKeyboardButton(
-                    text="🢀",
+                    text="◀️",
                     callback_data=f"my_participations_page:{prev_page}"
                 ))
 
@@ -93,7 +93,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
                 next_page = current_page + 1 if current_page < total_pages else 1
                 nav_buttons.append(types.InlineKeyboardButton(
-                    text="🢂",
+                    text="▶️",
                     callback_data=f"my_participations_page:{next_page}"
                 ))
 
@@ -101,7 +101,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 keyboard.row(*nav_buttons)
 
             keyboard.row(types.InlineKeyboardButton(
-                text="🢀 Назад",
+                text="◀️ Назад",
                 callback_data="back_to_main_menu"
             ))
 
@@ -157,7 +157,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 text="Открыть",
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
-            keyboard.button(text="🢀 Назад к списку", callback_data="my_participations")
+            keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
             keyboard.adjust(1)
 
             try:
