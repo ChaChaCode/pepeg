@@ -8,7 +8,6 @@ import pytz
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import aiogram.exceptions
 import json
-import math
 import boto3
 from botocore.client import Config
 import requests
@@ -55,9 +54,29 @@ FORMATTING_GUIDE = """
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
 - Код: <code>текст</code>
-- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
+- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji></blockquote>
+"""
 
-Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
+FORMATTING_GUIDE2 = """
+Поддерживаемые форматы текста:
+<blockquote expandable>- Цитата
+- Жирный: <b>текст</b>
+- Курсив: <i>текст</i>
+- Подчёркнутый: <u>текст</u>
+- Зачёркнутый: <s>текст</s>
+- Моноширинный
+- Скрытый: <tg-spoiler>текст</tg-spoiler>
+- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
+- Код: <code>текст</code>
+- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji></blockquote>
+
+<b>Переменные</b>
+Используйте их для автоматической подстановки данных:  
+- <code>{win}</code> — количество победителей  
+- <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (МСК)  
+
+<b>Примечание</b>
+Максимальное количество кастомных эмодзи в одном сообщении — 100. Превышение этого лимита может привести к некорректному отображению.
 """
 
 def strip_html_tags(text: str) -> str:
@@ -170,17 +189,17 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         else:
             channel_info = "\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Розыгрыш ещё не опубликован</b>"
 
-        # Условно добавляем текст в зависимости от text_type
-        additional_info = (
-            f"\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
-        ) if giveaway['text_type'] == 0 else ""
+        # Подстановка переменных в описание
+        description = giveaway['description']
+        winner_count = str(giveaway['winner_count'])
+        end_time = (giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')  # МСК
+        formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
         giveaway_info = f"""
 {giveaway['name']}
 
-{giveaway['description']}
-{additional_info}
+{formatted_description}
+
 <tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
 {channel_info}
 """
@@ -331,28 +350,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         keyboard.button(text="🏆 Победители", callback_data=f"edit_winner_count_active:{giveaway_id}")
         keyboard.button(text="⏰ Дата", callback_data=f"change_end_date_active:{giveaway_id}")
         keyboard.button(text="🖼️ Медиа", callback_data=f"view_manage_media:{giveaway_id}")
-        # Добавляем кнопку "Убрать/Вернуть текст в конце"
-        text_type_label = "✂️ Убрать текст в конце" if giveaway['text_type'] == 0 else "📌 Вернуть текст в конце"
-        keyboard.button(text=text_type_label, callback_data=f"toggle_text_type_active:{giveaway_id}")
         keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1, 1)  # Корректируем расположение кнопок
 
-        invite_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Приглашайте {giveaway['quantity_invite']} друзей!" if giveaway['invite'] else ""
-        # Условно добавляем текст в зависимости от text_type
-        additional_info = (
-            f"\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
-        ) if giveaway['text_type'] == 0 else ""
-
         giveaway_info = f"""
-<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
-
 <b>Название:</b> {giveaway['name']}
-
 <b>Описание:</b> {giveaway['description']}
-{additional_info}
+
 <tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> <b>Медиа:</b> {'✅ Есть' if giveaway['media_type'] else '❌ Нет'}
-{invite_info}
+
+<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
 """
 
         try:
@@ -390,48 +397,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.send_message(user_id, "❌ Упс! Ошибка загрузки меню 😔 Попробуйте снова!", parse_mode='HTML')
-
-    @dp.callback_query(lambda c: c.data.startswith('toggle_text_type_active:'))
-    async def process_toggle_text_type_active(callback_query: CallbackQuery):
-        giveaway_id = callback_query.data.split(':')[1]
-
-        # Получаем данные розыгрыша из базы
-        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-        columns = [desc[0] for desc in cursor.description]
-        giveaway = dict(zip(columns, cursor.fetchone()))
-        if not giveaway:
-            await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
-            return
-
-        # Определяем текущее значение text_type
-        current_text_type = giveaway['text_type']
-
-        # Определяем новое значение и текст для подтверждения
-        new_text_type = 1 if current_text_type == 0 else 0
-        action_text = (
-            f"Хотите убрать этот текст в конце поста?\n\n"
-            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
-        ) if current_text_type == 0 else (
-            f"Хотите вернуть этот текст в конце поста?\n\n"
-            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
-        )
-
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="✅ Да", callback_data=f"confirm_toggle_text_type_active:{giveaway_id}:{new_text_type}")
-        keyboard.button(text="❌ Нет", callback_data=f"edit_active_post:{giveaway_id}")
-        keyboard.adjust(2)
-
-        await bot.answer_callback_query(callback_query.id)
-        await send_message_with_image(
-            bot,
-            callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji>{action_text}",
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML'
-        )
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_toggle_text_type_active:'))
     async def process_confirm_toggle_text_type_active(callback_query: CallbackQuery):
@@ -490,21 +455,29 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
             cursor.execute("SELECT COUNT(*) FROM participations WHERE giveaway_id = %s", (giveaway_id,))
             participants_count = cursor.fetchone()[0]
 
+            # Подстановка переменных
+            description = new_giveaway_data['description']
+            winner_count = str(new_giveaway_data['winner_count'])
+            end_time = datetime.fromisoformat(new_giveaway_data['end_time'])
+            formatted_end_time = (end_time + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')  # МСК
+            formatted_description = description.replace('{win}', winner_count).replace('{data}', formatted_end_time)
+
             # Условно добавляем текст в зависимости от text_type
             additional_info = (
                 f"\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {new_giveaway_data['winner_count']}\n"
-                f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(datetime.fromisoformat(new_giveaway_data['end_time']) + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+                f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {formatted_end_time} (МСК)"
             ) if new_giveaway_data['text_type'] == 0 else ""
 
             new_post_text = f"""
 <b>{new_giveaway_data['name']}</b>
 
-{new_giveaway_data['description']}
+{formatted_description}
 {additional_info}
 """
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=f"🎉 Участвовать ({participants_count})", url=f"https://t.me/Snapi/app?startapp={giveaway_id}")
+            keyboard.button(text=f"🎉 Участвовать ({participants_count})",
+                            url=f"https://t.me/Snapi/app?startapp={giveaway_id}")
 
             for message in published_messages:
                 chat_id = message['chat_id']
@@ -522,7 +495,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
                             await bot.edit_message_media(
                                 chat_id=chat_id,
                                 message_id=message_id,
-                                media=media_class(media=new_giveaway_data['media_file_id'], caption=new_post_text, parse_mode='HTML'),
+                                media=media_class(media=new_giveaway_data['media_file_id'], caption=new_post_text,
+                                                  parse_mode='HTML'),
                                 reply_markup=keyboard.as_markup()
                             )
                         else:
@@ -538,12 +512,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
                             )
                         except aiogram.exceptions.TelegramBadRequest as e:
                             if "there is no text in the message to edit" in str(e).lower():
-                                new_message = await bot.send_message(chat_id, text=new_post_text, reply_markup=keyboard.as_markup(), parse_mode='HTML')
+                                new_message = await bot.send_message(chat_id, text=new_post_text,
+                                                                     reply_markup=keyboard.as_markup(),
+                                                                     parse_mode='HTML')
                                 try:
                                     await bot.delete_message(chat_id=chat_id, message_id=message_id)
                                 except aiogram.exceptions.TelegramBadRequest:
                                     logger.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}")
-                                updated_messages = [msg for msg in published_messages if msg['message_id'] != message_id]
+                                updated_messages = [msg for msg in published_messages if
+                                                    msg['message_id'] != message_id]
                                 updated_messages.append({'chat_id': chat_id, 'message_id': new_message.message_id})
                                 cursor.execute(
                                     "UPDATE giveaways SET published_messages = %s WHERE id = %s",
@@ -659,7 +636,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Введите новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE}",
+            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Введите новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML'
@@ -680,7 +657,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
@@ -694,7 +671,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
             await send_message_with_image(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов для медиа)! Сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE}",
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов для медиа)! Сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}",
                 reply_markup=keyboard.as_markup(),
                 message_id=data['last_message_id'],
                 parse_mode='HTML'
