@@ -17,6 +17,13 @@ def strip_html_tags(text):
     clean_text = re.sub(r'<[^>]+>', '', text)
     return clean_text
 
+def replace_variables(description, winner_count, end_time):
+    """Заменяет переменные {win} и {data} в описании на актуальные значения."""
+    formatted_end_time = (end_time + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M (МСК)')
+    description = description.replace('{win}', str(winner_count))
+    description = description.replace('{data}', formatted_end_time)
+    return description
+
 def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
     async def process_my_participations(callback_query: CallbackQuery):
@@ -131,8 +138,12 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     async def process_giveaway_details(callback_query: CallbackQuery):
         giveaway_id = callback_query.data.split('_')[1]
         try:
-            # Запрос к таблице giveaways
-            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            # Запрос к таблице giveaways, включая winner_count
+            cursor.execute(
+                "SELECT id, name, description, end_time, media_type, media_file_id, winner_count "
+                "FROM giveaways WHERE id = %s",
+                (giveaway_id,)
+            )
             giveaway = cursor.fetchone()
 
             if not giveaway:
@@ -143,11 +154,18 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             columns = [desc[0] for desc in cursor.description]
             giveaway = dict(zip(columns, giveaway))
 
+            # Заменяем переменные в description
+            description_with_vars = replace_variables(
+                giveaway['description'],
+                giveaway['winner_count'],
+                giveaway['end_time']
+            )
+
             # Формируем текст с сохранением HTML-форматирования
             giveaway_info = f"""
 {giveaway['name']}
 
-{giveaway['description']}
+{description_with_vars}
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
 """
