@@ -105,13 +105,13 @@ async def build_navigation_keyboard(state: FSMContext, current_state: State) -> 
     has_back = False
 
     if current_state in back_states:
-        keyboard.button(text="🢀 Назад", callback_data=back_states[current_state])
+        keyboard.button(text="◀️ Назад", callback_data=back_states[current_state])
         has_back = True
 
     if current_state in next_states:
         next_state, callback, required_field = next_states[current_state]
         if required_field in data or current_state == GiveawayStates.waiting_for_media_choice:
-            keyboard.button(text="Далее 🢂", callback_data=callback)
+            keyboard.button(text="Далее ▶️", callback_data=callback)
             has_next = True
 
     keyboard.button(text="В меню", callback_data="back_to_main_menu")
@@ -837,7 +837,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="🢀 Назад", callback_data="back_to_end_time")
+            keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
 
@@ -869,7 +869,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="🢀 Назад", callback_data="back_to_end_time")
+        keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
         keyboard.button(text="В меню", callback_data="back_to_main_menu")
         keyboard.adjust(1)
 
@@ -939,7 +939,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except ValueError as ve:
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="🢀 Назад", callback_data="back_to_end_time")
+            keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
             await send_message_with_image(
@@ -1006,7 +1006,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
             keyboard.button(text="👀 Предпросмотр", callback_data=f"preview_giveaway:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_giveaway:{giveaway_id}")
-            keyboard.button(text="🢀 Назад", callback_data="created_giveaways")
+            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
             invite_info = f"\n😊 Приглашайте {giveaway['quantity_invite']} друзей для участия!" if giveaway.get(
@@ -1130,7 +1130,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"Ошибка отображения розыгрыша: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="🢀 Назад", callback_data="created_giveaways")
+            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             await send_message_with_image(
                 bot, chat_id,
                 "❌ Ошибка загрузки розыгрыша. Попробуйте снова!",
