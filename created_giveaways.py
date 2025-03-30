@@ -198,13 +198,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if total_pages > 1:
                 prev_page = current_page - 1 if current_page > 1 else total_pages
                 nav_buttons.append(
-                    InlineKeyboardButton(text="🢀", callback_data=f"created_giveaways_page:{prev_page}"))
+                    InlineKeyboardButton(text="◀️", callback_data=f"created_giveaways_page:{prev_page}"))
 
                 nav_buttons.append(InlineKeyboardButton(text=f"📄 {current_page}/{total_pages}", callback_data="ignore"))
 
                 next_page = current_page + 1 if current_page < total_pages else 1
                 nav_buttons.append(
-                    InlineKeyboardButton(text="🢂", callback_data=f"created_giveaways_page:{next_page}"))
+                    InlineKeyboardButton(text="▶️", callback_data=f"created_giveaways_page:{next_page}"))
 
             if nav_buttons:
                 keyboard.row(*nav_buttons)
@@ -257,7 +257,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
             keyboard.button(text="👀 Предпросмотр", callback_data=f"preview_giveaway:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_giveaway:{giveaway_id}")
-            keyboard.button(text="🢀 Назад", callback_data="created_giveaways")
+            keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
             invite_info = f"\n<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей) для участия!" if \
@@ -323,7 +323,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         if giveaway['invite']:
             keyboard.button(text="✏️ Изменить количество", callback_data=f"change_invite_quantity:{giveaway_id}")
             keyboard.button(text="🗑️ Убрать задание", callback_data=f"remove_invite_task:{giveaway_id}")
-            keyboard.button(text="🢀 Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
             keyboard.adjust(1)
             message_text = f"<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Задание 'Пригласить друга' уже активно!\n\nНужно пригласить {giveaway['quantity_invite']} друга(зей)"
         else:
@@ -349,7 +349,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await state.set_state(GiveawayStates.waiting_for_invite_quantity)
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="🢀 Назад", callback_data=f"add_invite_task:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"add_invite_task:{giveaway_id}")
 
         await bot.answer_callback_query(callback_query.id)
         await send_message_with_image(
@@ -367,7 +367,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await state.set_state(GiveawayStates.waiting_for_invite_quantity)
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="🢀 Назад", callback_data=f"add_invite_task:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"add_invite_task:{giveaway_id}")
 
         await bot.answer_callback_query(callback_query.id)
         await send_message_with_image(
@@ -424,7 +424,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Изменить количество", callback_data=f"change_invite_quantity:{giveaway_id}")
             keyboard.button(text="🗑️ Убрать задание", callback_data=f"remove_invite_task:{giveaway_id}")
-            keyboard.button(text="🢀 Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
             keyboard.adjust(1)
 
             await send_message_with_image(
@@ -439,7 +439,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except ValueError:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="🢀 Назад", callback_data=f"add_invite_task:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"add_invite_task:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.from_user.id,
@@ -470,7 +470,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         # Добавляем кнопку "Убрать текст в конце"
         text_type_label = "✂️ Убрать текст в конце" if giveaway['text_type'] == 0 else "📌 Вернуть текст в конце"
         keyboard.button(text=text_type_label, callback_data=f"toggle_text_type:{giveaway_id}")
-        keyboard.button(text="🢀 Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1, 1)  # Корректируем расположение кнопок
 
         invite_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласите {giveaway['quantity_invite']} друга(зей)!" if \
@@ -594,7 +594,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.answer_callback_query(callback_query.id)
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+        keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
         await send_message_with_image(
             bot,
@@ -613,7 +613,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.answer_callback_query(callback_query.id)
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+        keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
         await send_message_with_image(
             bot,
@@ -632,7 +632,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.answer_callback_query(callback_query.id)
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+        keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
         await send_message_with_image(
             bot,
@@ -653,7 +653,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if text_length > MAX_NAME_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -668,7 +668,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         # Проверка на лимит Telegram для подписи
         if text_length > MAX_CAPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -692,7 +692,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -714,7 +714,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if text_length > MAX_DESCRIPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -729,7 +729,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         # Проверка на лимит Telegram для подписи
         if text_length > MAX_CAPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -753,7 +753,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -775,7 +775,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if new_winner_count > MAX_WINNERS:
                 data = await state.get_data()
                 keyboard = InlineKeyboardBuilder()
-                keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
+                keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
                 await send_message_with_image(
                     bot,
                     message.chat.id,
@@ -788,7 +788,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             data = await state.get_data()
             giveaway_id = data['giveaway_id']
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -826,7 +826,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except ValueError:
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -839,7 +839,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             conn.rollback()
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -859,13 +859,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Изменить медиа", callback_data=f"change_media:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить медиа", callback_data=f"delete_media:{giveaway_id}")
-            keyboard.button(text="🢀 Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")
             keyboard.adjust(1)
             text = "<tg-emoji emoji-id='5352640560718949874'>🤨</tg-emoji> Что сделать с медиа?"
         else:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✅ Добавить", callback_data=f"add_media:{giveaway_id}")
-            keyboard.button(text="🢀 Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")
             keyboard.adjust(2)
             text = f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Добавить фото, GIF или видео? Максимум {MAX_MEDIA_SIZE_MB} МБ! 📎"
 
@@ -889,7 +889,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         last_message_id = data.get('last_bot_message_id') or callback_query.message.message_id
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="🢀 Назад", callback_data=f"manage_media:{giveaway_id}")]])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data=f"manage_media:{giveaway_id}")]])
 
         message = await send_message_with_image(
             bot,
@@ -914,7 +914,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     async def process_media_edit(message: types.Message, state: FSMContext):
         # Определяем keyboard заранее с базовой разметкой
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🢀 Назад", callback_data="back_to_edit_menu:0")]
+            [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_edit_menu:0")]
         ])
         try:
             data = await state.get_data()
@@ -924,7 +924,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             # Переопределяем keyboard с актуальным giveaway_id
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="🢀 Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")]])
+                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"back_to_edit_menu:{giveaway_id}")]])
 
             # Если last_message_id отсутствует, отправляем новое сообщение и обновляем его
             if last_message_id is None:
@@ -1123,7 +1123,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await callback_query.answer()
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+        keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
@@ -1177,7 +1177,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.button(
-                text="🢀 Назад",
+                text="◀️ Назад",
                 callback_data=f"view_created_giveaway:{giveaway_id}"
             )
             keyboard.adjust(1)
@@ -1238,7 +1238,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             new_end_time_tz = moscow_tz.localize(new_end_time)
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -1255,7 +1255,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
         except ValueError:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             html_message = f"""
 <tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты!\nИспользуйте ДД.ММ.ГГГГ ЧЧ:ММ
@@ -1274,7 +1274,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text=" 🢀 Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text=" ◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -1371,7 +1371,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         # Эти кнопки остаются всегда
         keyboard.button(text="➕ Новый паблик", callback_data=f"bind_new_community:{giveaway_id}")
-        keyboard.button(text="🢀 Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
         keyboard.adjust(1)
 
         # Изменяем текст сообщения, если нет сообществ
@@ -1475,7 +1475,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     callback_data = f"toggle_activate_community:{giveaway_id}:{community['community_id']}:id"
                 keyboard.button(text=display_name, callback_data=callback_data)
             keyboard.button(text="✅ Подтвердить", callback_data=f"confirm_activate_selection:{giveaway_id}")
-            keyboard.button(text="🢀 Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
             keyboard.adjust(1)
 
             await bot.answer_callback_query(callback_query.id)
@@ -1556,7 +1556,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="🚀 Опубликовать", callback_data=f"publish_giveaway:{giveaway_id}")
-        keyboard.button(text="🢀 Назад", callback_data=f"activate_giveaway:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"activate_giveaway:{giveaway_id}")
         keyboard.adjust(1)
 
         await bot.answer_callback_query(callback_query.id)
@@ -1657,7 +1657,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         participant_counter_tasks = []
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text=" 🢀 Отмена", callback_data=f"activate_giveaway:{giveaway_id}")
+        keyboard.button(text=" ◀️ Отмена", callback_data=f"activate_giveaway:{giveaway_id}")
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -1858,7 +1858,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.answer_callback_query(callback_query.id,
                                                 text="Не удалось опубликовать 😔")
                 error_keyboard = InlineKeyboardBuilder()
-                error_keyboard.button(text="🢀 Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+                error_keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
                 await send_message_with_image(
                     bot,
                     callback_query.from_user.id,
