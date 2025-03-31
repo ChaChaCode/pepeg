@@ -102,7 +102,7 @@ class SpamProtectionMiddleware(BaseMiddleware):
             logging.info(f"Пользователь {user_id}: {actions_count + 1} действий за последнюю секунду")
 
             # Проверяем лимит
-            if len(user_actions[user_id]) > 3:
+            if len(user_actions[user_id]) > 2:
                 blocked_users[user_id] = current_time + 60
                 logging.info(f"Пользователь {user_id} заблокирован за спам до {blocked_users[user_id]}")
                 if isinstance(event, types.Message):
