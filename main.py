@@ -16,6 +16,9 @@ from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
 from aiogram.fsm.context import FSMContext
+from collections import defaultdict
+from time import time
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +55,76 @@ cursor = conn.cursor()
 user_selected_communities = {}
 paid_users = {}
 
+# Система защиты от спама
+user_actions = defaultdict(list)
+blocked_users = {}
+
+
+# Middleware для проверки спама
+class SpamProtectionMiddleware(BaseMiddleware):
+    async def __call__(self, handler, event, data):
+        user_id = None
+        if isinstance(event, types.Message):
+            user_id = event.from_user.id
+        elif isinstance(event, CallbackQuery):
+            user_id = event.from_user.id
+
+        if user_id:
+            current_time = time()
+
+            # Проверяем блокировку
+            if user_id in blocked_users:
+                if current_time < blocked_users[user_id]:
+                    logging.info(f"Пользователь {user_id} заблокирован до {blocked_users[user_id]}")
+                    if isinstance(event, types.Message):
+                        remaining_time = int(blocked_users[user_id] - time())
+                        await event.reply(f"Вы временно заблокированы за спам. Осталось {remaining_time} секунд.")
+                    elif isinstance(event, CallbackQuery):
+                        remaining_time = int(blocked_users[user_id] - time())
+                        await bot.answer_callback_query(
+                            event.id,
+                            f"Вы временно заблокированы за спам. Осталось {remaining_time} секунд.",
+                            show_alert=True
+                        )
+                    return
+                else:
+                    logging.info(f"Блокировка пользователя {user_id} истекла")
+                    del blocked_users[user_id]
+                    user_actions[user_id].clear()
+
+            # Очищаем действия старше 1 секунды
+            user_actions[user_id] = [t for t in user_actions[user_id] if current_time - t < 1]
+            actions_count = len(user_actions[user_id])
+
+            # Добавляем текущее действие
+            user_actions[user_id].append(current_time)
+
+            logging.info(f"Пользователь {user_id}: {actions_count + 1} действий за последнюю секунду")
+
+            # Проверяем лимит
+            if len(user_actions[user_id]) > 3:
+                blocked_users[user_id] = current_time + 60
+                logging.info(f"Пользователь {user_id} заблокирован за спам до {blocked_users[user_id]}")
+                if isinstance(event, types.Message):
+                    remaining_time = int(blocked_users[user_id] - time())
+                    await event.reply(f"Вы временно заблокированы за спам. Осталось {remaining_time} секунд.")
+                elif isinstance(event, CallbackQuery):
+                    remaining_time = int(blocked_users[user_id] - time())
+                    await bot.answer_callback_query(
+                        event.id,
+                        f"Вы временно заблокированы за спам. Осталось {remaining_time} секунд.",
+                        show_alert=True
+                    )
+                return
+
+        # Передаем управление следующему обработчику
+        return await handler(event, data)
+
+
+# Регистрация middleware
+dp.message.middleware(SpamProtectionMiddleware())
+dp.callback_query.middleware(SpamProtectionMiddleware())
+
 # Регистрация обработчиков из других модулей
 register_active_giveaways_handlers(dp, bot, conn, cursor)
 register_create_giveaway_handlers(dp, bot, conn, cursor)
@@ -61,12 +134,12 @@ register_congratulations_messages(dp, bot, conn, cursor)
 register_congratulations_messages_active(dp, bot, conn, cursor)
 register_new_public(dp, bot, conn, cursor)
 
+
 # Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
 
-    # Проверяем наличие любых розыгрышей пользователя
     cursor.execute(
         """
         SELECT COUNT(*) FROM giveaways 
@@ -76,7 +149,6 @@ async def cmd_start(message: types.Message):
     )
     has_any_giveaways = cursor.fetchone()[0] > 0
 
-    # Проверяем наличие активных розыгрышей, созданных пользователем
     cursor.execute(
         """
         SELECT COUNT(*) FROM giveaways 
@@ -86,7 +158,6 @@ async def cmd_start(message: types.Message):
     )
     has_active_giveaways = cursor.fetchone()[0] > 0
 
-    # Проверяем наличие участий в активных розыгрышах
     cursor.execute(
         """
         SELECT COUNT(*) 
@@ -102,11 +173,9 @@ async def cmd_start(message: types.Message):
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
 
-    # Добавляем "Мои розыгрыши", если есть любые розыгрыши
     if has_any_giveaways:
         keyboard.button(text="📋 Мои розыгрыши", callback_data="created_giveaways")
 
-    # Добавляем "Мои участия", только если пользователь участвует в активных розыгрышах
     if has_active_participations:
         keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
 
@@ -119,6 +188,7 @@ async def cmd_start(message: types.Message):
         reply_markup=keyboard.as_markup()
     )
 
+
 # Обработчик возврата в главное меню
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
@@ -127,7 +197,6 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 
     user_id = callback_query.from_user.id
 
-    # Проверяем наличие любых розыгрышей пользователя
     cursor.execute(
         """
         SELECT COUNT(*) FROM giveaways 
@@ -137,7 +206,6 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     )
     has_any_giveaways = cursor.fetchone()[0] > 0
 
-    # Проверяем наличие активных розыгрышей, созданных пользователем
     cursor.execute(
         """
         SELECT COUNT(*) FROM giveaways 
@@ -147,7 +215,6 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     )
     has_active_giveaways = cursor.fetchone()[0] > 0
 
-    # Проверяем наличие участий в активных розыгрышах
     cursor.execute(
         """
         SELECT COUNT(*) 
@@ -163,11 +230,9 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
 
-    # Добавляем "Мои розыгрыши", если есть любые розыгрыши
     if has_any_giveaways:
         keyboard.button(text="📋 Мои розыгрыши", callback_data="created_giveaways")
 
-    # Добавляем "Мои участия", только если пользователь участвует в активных розыгрышах
     if has_active_participations:
         keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
 
@@ -180,6 +245,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         reply_markup=keyboard.as_markup(),
         message_id=callback_query.message.message_id
     )
+
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -234,23 +300,18 @@ async def cmd_help(message: types.Message):
         logging.error(f"Ошибка в cmd_help: {e}")
         await message.reply("Произошла ошибка при выполнении команды /help.")
 
+
 async def periodic_username_check():
     while True:
         await check_usernames(bot, conn, cursor)
         await asyncio.sleep(60)
 
+
 async def update_participant_counters(bot: Bot, conn, cursor):
-    """
-    Функция для обновления счетчика участников в кнопках розыгрышей.
-    Проверяет активные розыгрыши каждые 10 секунд, подсчитывает участников
-    и обновляет текст кнопки "Участвовать" с указанием количества участников.
-    """
-    # Словарь для хранения предыдущих значений счетчиков
     previous_counts = {}
 
     while True:
         try:
-            # Получаем все активные розыгрыши
             cursor.execute("SELECT * FROM giveaways WHERE is_active = %s", ('true',))
             giveaways = cursor.fetchall()
             columns = [desc[0] for desc in cursor.description]
@@ -259,17 +320,14 @@ async def update_participant_counters(bot: Bot, conn, cursor):
             for giveaway in giveaways:
                 giveaway_id = giveaway['id']
 
-                # Подсчитываем количество участников для данного розыгрыша
                 cursor.execute(
                     "SELECT COUNT(*) FROM participations WHERE giveaway_id = %s",
                     (giveaway_id,)
                 )
                 participant_count = cursor.fetchone()[0]
 
-                # Получаем информацию о каналах, где опубликован розыгрыш
                 participant_counter_tasks = giveaway.get('participant_counter_tasks')
                 if participant_counter_tasks:
-                    # Преобразуем JSON в список, если это строка
                     if isinstance(participant_counter_tasks, str):
                         try:
                             participant_counter_tasks = json.loads(participant_counter_tasks)
@@ -277,50 +335,35 @@ async def update_participant_counters(bot: Bot, conn, cursor):
                             logger.error(f"Ошибка декодирования JSON для розыгрыша {giveaway_id}: {str(e)}")
                             continue
 
-                    # Обновляем кнопку в каждом канале
                     for task in participant_counter_tasks:
                         chat_id = task.get('chat_id')
                         message_id = task.get('message_id')
 
                         if chat_id and message_id:
-                            # Создаем уникальный ключ для этого сообщения
                             message_key = f"{giveaway_id}_{chat_id}_{message_id}"
-
-                            # Проверяем, изменилось ли количество участников
                             previous_count = previous_counts.get(message_key, None)
 
                             if previous_count == participant_count:
-                                # Если количество не изменилось, просто логируем это
                                 logger.info(
                                     f"Количество участников для розыгрыша {giveaway_id} в канале {chat_id} не изменилось: {participant_count} участников")
                                 continue
 
                             try:
-                                # Создаем новую клавиатуру с обновленным текстом
                                 keyboard = InlineKeyboardBuilder()
-
-                                # Добавляем кнопку "Участвовать" с количеством участников и URL
                                 keyboard.button(
                                     text=f"🎉 Участвовать ({participant_count})",
                                     url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
                                 )
-
-                                # Обновляем сообщение с новой клавиатурой
                                 await bot.edit_message_reply_markup(
                                     chat_id=chat_id,
                                     message_id=message_id,
                                     reply_markup=keyboard.as_markup()
                                 )
-
-                                # Сохраняем новое количество участников
                                 previous_counts[message_key] = participant_count
-
                                 logger.info(
                                     f"Обновлен счетчик участников для розыгрыша {giveaway_id} в канале {chat_id}: {participant_count} участников")
                             except Exception as e:
-                                # Проверяем сообщение об ошибке
                                 if "message is not modified" in str(e).lower():
-                                    # Если сообщение не изменилось, обновляем счетчик в словаре
                                     previous_counts[message_key] = participant_count
                                     logger.info(
                                         f"Количество участников для розыгрыша {giveaway_id} в канале {chat_id} не изменилось: {participant_count} участников")
@@ -331,29 +374,24 @@ async def update_participant_counters(bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"Ошибка в функции update_participant_counters: {str(e)}")
 
-        # Ждем 10 секунд перед следующей проверкой
         await asyncio.sleep(60)
 
-# Обновленная функция main()
+
 async def main():
-    # Создаем задачи для проверки розыгрышей и обновления имен пользователей
     check_task = asyncio.create_task(check_and_end_giveaways(bot, conn, cursor))
     username_check_task = asyncio.create_task(periodic_username_check())
-
-    # Добавляем новую задачу для обновления счетчика участников
     participant_counter_task = asyncio.create_task(update_participant_counters(bot, conn, cursor))
 
     try:
         await dp.start_polling(bot)
     finally:
-        # Отменяем все задачи при завершении работы бота
         check_task.cancel()
         username_check_task.cancel()
-        participant_counter_task.cancel()  # Отменяем новую задачу
-
+        participant_counter_task.cancel()
         cursor.close()
         conn.close()
         logging.info("Соединение с PostgreSQL закрыто.")
+
 
 if __name__ == '__main__':
     asyncio.run(main())
