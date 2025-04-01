@@ -4,6 +4,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image
 import json
@@ -34,6 +35,7 @@ FORMATTING_GUIDE = """
 Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
 
+
 # States for the FSM
 class GiveawayStates(StatesGroup):
     waiting_for_name = State()
@@ -53,10 +55,16 @@ class GiveawayStates(StatesGroup):
     creating_giveaway = State()
     binding_communities = State()
 
+
 def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cursor):
-    @dp.callback_query(lambda c: c.data.startswith('message_winners_active:'))
+    @dp.callback_query(
+        lambda c: c.data.startswith('message_winners_active:') or c.data.startswith('message_winners_active_page:'))
     async def process_message_winners_active(callback_query: types.CallbackQuery):
-        giveaway_id = callback_query.data.split(':')[1]
+        """Обработка выбора места для редактирования поздравлений с пагинацией."""
+        data_parts = callback_query.data.split(':')
+        giveaway_id = data_parts[1]
+        current_page = int(data_parts[2]) if len(data_parts) > 2 else 1
+        ITEMS_PER_PAGE = 20
 
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
         giveaway = cursor.fetchone()
@@ -67,18 +75,50 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
         giveaway = dict(zip(columns, giveaway))
 
         winner_count = giveaway['winner_count']
+        total_pages = max(1, (winner_count + ITEMS_PER_PAGE - 1) // ITEMS_PER_PAGE)
+        start_place = (current_page - 1) * ITEMS_PER_PAGE + 1
+        end_place = min(current_page * ITEMS_PER_PAGE, winner_count)
 
-        # Формируем клавиатуру с ограничением до 5 мест
+        # Формируем клавиатуру
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Общие поздравления", callback_data=f"congrats_message_active:{giveaway_id}:all")
-        for place in range(1, min(winner_count, 5) + 1):  # Показываем до 5 мест
-            keyboard.button(text=f"Место {place}", callback_data=f"congrats_message_active:{giveaway_id}:{place}")
-        if winner_count > 5:  # Если мест больше 5, добавляем "Показать еще"
-            keyboard.button(text="Показать еще", callback_data=f"show_more_winners:{giveaway_id}")
-        keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
+
+        # Добавляем кнопки мест и общее поздравление
+        buttons = []
+        buttons.append(InlineKeyboardButton(
+            text="Общие поздравления",
+            callback_data=f"congrats_message_active:{giveaway_id}:all"
+        ))
+        for place in range(start_place, end_place + 1):
+            buttons.append(InlineKeyboardButton(
+                text=f"Место {place}",
+                callback_data=f"congrats_message_active:{giveaway_id}:{place}"
+            ))
+
+        # Применяем adjust только к кнопкам мест
+        for button in buttons:
+            keyboard.add(button)
         keyboard.adjust(1)
 
-        message_text = f"<tg-emoji emoji-id='5467538555158943525'>💭</tg-emoji> Выберите место победителя для редактирования поздравления или общее поздравление для всех победителей."
+        # Добавляем навигационные кнопки в одном ряду
+        if total_pages > 1:
+            prev_page = current_page - 1 if current_page > 1 else total_pages
+            next_page = current_page + 1 if current_page < total_pages else 1
+            keyboard.row(
+                InlineKeyboardButton(text="◀️", callback_data=f"message_winners_active_page:{giveaway_id}:{prev_page}"),
+                InlineKeyboardButton(text=f"📄 {current_page}/{total_pages}", callback_data="ignore"),
+                InlineKeyboardButton(text="▶️", callback_data=f"message_winners_active_page:{giveaway_id}:{next_page}")
+            )
+
+        # Добавляем кнопку "Назад" в отдельном ряду
+        keyboard.row(
+            InlineKeyboardButton(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
+        )
+
+        message_text = (
+            f"<tg-emoji emoji-id='5467538555158943525'>💭</tg-emoji> "
+            f"Выберите место победителя для редактирования поздравления или общее поздравление для всех победителей.\n"
+            f"Отображаются места {start_place}-{end_place} из {winner_count}."
+        )
 
         await send_message_with_image(
             bot,
@@ -88,6 +128,7 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             message_id=callback_query.message.message_id,
             parse_mode='HTML'
         )
+        await callback_query.answer()
 
     def extract_message(obj: Union[str, Dict, List]) -> Union[str, None]:
         if isinstance(obj, str):
@@ -110,105 +151,6 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 return obj[0]['message']
 
         return None
-
-    @dp.callback_query(lambda c: c.data.startswith('show_more_winners:'))
-    async def process_show_more_winners(callback_query: types.CallbackQuery):
-        giveaway_id = callback_query.data.split(':')[1]
-
-        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-        giveaway = cursor.fetchone()
-        if not giveaway:
-            await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
-            return
-        columns = [desc[0] for desc in cursor.description]
-        giveaway = dict(zip(columns, giveaway))
-
-        winner_count = giveaway['winner_count']
-
-        # Формируем клавиатуру с отображением всех мест и кнопкой "Свернуть"
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Общие поздравления", callback_data=f"congrats_message_active:{giveaway_id}:all")
-        for place in range(1, winner_count + 1):  # Показываем все места
-            keyboard.button(text=f"Место {place}", callback_data=f"congrats_message_active:{giveaway_id}:{place}")
-        keyboard.button(text="Свернуть", callback_data=f"collapse_winners:{giveaway_id}")
-        keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
-        keyboard.adjust(1)
-
-        message_text = f"<tg-emoji emoji-id='5467538555158943525'>💭</tg-emoji> Выберите место победителя для редактирования поздравления или общее поздравление для всех победителей."
-
-        try:
-            # Пробуем редактировать подпись, так как send_message_with_image отправляет медиа
-            await bot.edit_message_caption(
-                chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
-                caption=message_text,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
-            )
-        except Exception as e:
-            logger.error(f"Error editing message caption: {str(e)}")
-            try:
-                # Если редактирование не удалось, отправляем новое сообщение
-                await send_message_with_image(
-                    bot,
-                    callback_query.from_user.id,
-                    message_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            except Exception as e2:
-                logger.error(f"Error sending fallback message: {str(e2)}")
-                await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при обновлении сообщения.")
-
-    @dp.callback_query(lambda c: c.data.startswith('collapse_winners:'))
-    async def process_collapse_winners(callback_query: types.CallbackQuery):
-        giveaway_id = callback_query.data.split(':')[1]
-
-        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-        giveaway = cursor.fetchone()
-        if not giveaway:
-            await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
-            return
-        columns = [desc[0] for desc in cursor.description]
-        giveaway = dict(zip(columns, giveaway))
-
-        winner_count = giveaway['winner_count']
-
-        # Формируем клавиатуру с возвратом к 5 местам
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="Общие поздравления", callback_data=f"congrats_message_active:{giveaway_id}:all")
-        for place in range(1, min(winner_count, 5) + 1):  # Показываем до 5 мест
-            keyboard.button(text=f"Место {place}", callback_data=f"congrats_message_active:{giveaway_id}:{place}")
-        if winner_count > 5:  # Если мест больше 5, добавляем "Показать еще"
-            keyboard.button(text="Показать еще", callback_data=f"show_more_winners:{giveaway_id}")
-        keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
-        keyboard.adjust(1)
-
-        message_text = f"<tg-emoji emoji-id='5467538555158943525'>💭</tg-emoji> Выберите место победителя для редактирования поздравления или общее поздравление для всех победителей."
-
-        try:
-            # Пробуем редактировать подпись
-            await bot.edit_message_caption(
-                chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
-                caption=message_text,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
-            )
-        except Exception as e:
-            logger.error(f"Error editing message caption: {str(e)}")
-            try:
-                # Если редактирование не удалось, отправляем новое сообщение
-                await send_message_with_image(
-                    bot,
-                    callback_query.from_user.id,
-                    message_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            except Exception as e2:
-                logger.error(f"Error sending fallback message: {str(e2)}")
-                await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при обновлении сообщения.")
 
     @dp.callback_query(lambda c: c.data.startswith('congrats_message_active:'))
     async def process_congrats_message_active(callback_query: types.CallbackQuery, state: FSMContext):
@@ -366,7 +308,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             logger.info(f"Final message_text: {message_text}")
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="Изменить общее поздравление", callback_data=f"edit_common_congrats_active:{giveaway_id}")
+            keyboard.button(text="Изменить общее поздравление",
+                            callback_data=f"edit_common_congrats_active:{giveaway_id}")
             keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
             keyboard.adjust(1)
 
