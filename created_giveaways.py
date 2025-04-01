@@ -162,6 +162,7 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
 def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрирует обработчики для управления розыгрышами 🎁"""
 
+    # Обновленная функция "Мои розыгрыши" с пагинацией
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
     async def process_created_giveaways(callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
@@ -169,28 +170,27 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
 
         try:
-            # Получаем общее количество розыгрышей
             cursor.execute(
                 """
                 SELECT COUNT(*) FROM giveaways 
-                WHERE user_id = %s AND is_active IN ('false', 'waiting', 'true')
+                WHERE user_id = %s AND (is_active IN ('true', 'waiting') OR (is_active = 'false' AND is_completed = 'false'))
                 """,
                 (user_id,)
             )
             total_giveaways = cursor.fetchone()[0]
             if total_giveaways == 0:
                 await bot.answer_callback_query(callback_query.id,
-                                                text="📭 Пока нет розыгрышей? Создайте свой первый! 🚀")
+                                                text="📭 Пока нет розыгрышей? Создай свой первый! 🚀")
                 return
 
             total_pages = max(1, math.ceil(total_giveaways / ITEMS_PER_PAGE))
             offset = (current_page - 1) * ITEMS_PER_PAGE
 
-            # Получаем только нужные записи для текущей страницы
             cursor.execute(
                 """
-                SELECT * FROM giveaways 
-                WHERE user_id = %s AND is_active IN ('false', 'waiting', 'true')
+                SELECT id, name, is_active 
+                FROM giveaways 
+                WHERE user_id = %s AND (is_active IN ('true', 'waiting') OR (is_active = 'false' AND is_completed = 'false'))
                 ORDER BY CASE is_active 
                     WHEN 'true' THEN 0 
                     WHEN 'waiting' THEN 1 
@@ -203,12 +203,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             current_giveaways = cursor.fetchall()
 
             keyboard = InlineKeyboardBuilder()
-            for giveaway in current_giveaways:
-                name = str(giveaway[2]) if giveaway[2] is not None else "Без названия"
-                clean_name = strip_html_tags(name)[:61] + "..." if len(name) > 64 else strip_html_tags(name)
-                status_indicator = "✅ " if giveaway[6] == 'true' else ""
-                callback_data = (f"view_active_giveaway:{giveaway[0]}" if giveaway[6] == 'true'
-                                 else f"view_created_giveaway:{giveaway[0]}")
+            for giveaway_id, name, is_active in current_giveaways:
+                name = str(name) if name is not None else "Без названия"
+                clean_name = name[:61] + "..." if len(name) > 64 else name
+                status_indicator = "✅ " if is_active == 'true' else ""
+                callback_data = (f"view_active_giveaway:{giveaway_id}" if is_active == 'true'
+                                 else f"view_created_giveaway:{giveaway_id}")
                 keyboard.row(InlineKeyboardButton(
                     text=f"{status_indicator}{clean_name}",
                     callback_data=callback_data
@@ -219,27 +219,25 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 prev_page = current_page - 1 if current_page > 1 else total_pages
                 nav_buttons.append(
                     InlineKeyboardButton(text="◀️", callback_data=f"created_giveaways_page:{prev_page}"))
-
                 nav_buttons.append(InlineKeyboardButton(text=f"📄 {current_page}/{total_pages}", callback_data="ignore"))
-
                 next_page = current_page + 1 if current_page < total_pages else 1
                 nav_buttons.append(
                     InlineKeyboardButton(text="▶️", callback_data=f"created_giveaways_page:{next_page}"))
 
             if nav_buttons:
                 keyboard.row(*nav_buttons)
-            keyboard.row(InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu"))
+            keyboard.row(InlineKeyboardButton(text="🏠 В меню", callback_data="back_to_main_menu"))
 
-            # Для проверки активных розыгрышей делаем отдельный легкий запрос
             cursor.execute(
                 "SELECT EXISTS(SELECT 1 FROM giveaways WHERE user_id = %s AND is_active = 'true')",
                 (user_id,)
             )
             has_active = cursor.fetchone()[0]
             message_text = (
-                "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!\n\n"
+                "<tg-emoji emoji-id='546296723743465'>🎉</tg-emoji> Твои розыгрыши:\n\n"
                 "✅ - Активный розыгрыш" if has_active else
-                "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!")
+                "<tg-emoji emoji-id='546296723743465'>🎉</tg-emoji> Твои розыгрыши:\n"
+            )
 
             await bot.answer_callback_query(callback_query.id)
             await send_message_with_image(
@@ -252,7 +250,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
-                                            text="Упс! Что-то пошло не так 😔")
+                                            text="Упс! Что-то сломалось 😔")
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: types.CallbackQuery):
