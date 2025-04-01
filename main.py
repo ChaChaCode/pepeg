@@ -1,12 +1,18 @@
 import asyncio
 import json
 import logging
+from collections import defaultdict
+from time import time
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.filters import Command
 import psycopg2
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.fsm.context import FSMContext
+from aiogram.dispatcher.middlewares.base import BaseMiddleware
+
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -15,10 +21,7 @@ from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
-from aiogram.fsm.context import FSMContext
-from collections import defaultdict
-from time import time
-from aiogram.dispatcher.middlewares.base import BaseMiddleware
+from history_practical import register_history_handlers  # Новый импорт
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +61,6 @@ paid_users = {}
 # Система защиты от спама
 user_actions = defaultdict(list)
 blocked_users = {}
-
 
 # Middleware для проверки спама
 class SpamProtectionMiddleware(BaseMiddleware):
@@ -120,12 +122,12 @@ class SpamProtectionMiddleware(BaseMiddleware):
         # Передаем управление следующему обработчику
         return await handler(event, data)
 
-
 # Регистрация middleware
 dp.message.middleware(SpamProtectionMiddleware())
 dp.callback_query.middleware(SpamProtectionMiddleware())
 
-# Регистрация обработчиков из других модулей
+# Регистрация обработчиков из модулей
+register_history_handlers(dp, bot, conn, cursor)
 register_active_giveaways_handlers(dp, bot, conn, cursor)
 register_create_giveaway_handlers(dp, bot, conn, cursor)
 register_created_giveaways_handlers(dp, bot, conn, cursor)
@@ -134,8 +136,6 @@ register_congratulations_messages(dp, bot, conn, cursor)
 register_congratulations_messages_active(dp, bot, conn, cursor)
 register_new_public(dp, bot, conn, cursor)
 
-
-# Обработчик команды /start
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
@@ -170,6 +170,15 @@ async def cmd_start(message: types.Message):
     has_active_participations = cursor.fetchone()[0] > 0
     logging.info(f"User {user_id} - has_active_participations: {has_active_participations}")
 
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM giveaways 
+        WHERE user_id = %s AND is_completed = 'true'
+        """,
+        (user_id,)
+    )
+    has_completed_giveaways = cursor.fetchone()[0] > 0
+
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
 
@@ -178,6 +187,9 @@ async def cmd_start(message: types.Message):
 
     if has_active_participations:
         keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
+
+    if has_completed_giveaways:
+        keyboard.button(text="📜 История розыгрышей", callback_data="giveaway_history")
 
     keyboard.adjust(1)
 
@@ -188,8 +200,6 @@ async def cmd_start(message: types.Message):
         reply_markup=keyboard.as_markup()
     )
 
-
-# Обработчик возврата в главное меню
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     await state.clear()
@@ -227,6 +237,15 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     has_active_participations = cursor.fetchone()[0] > 0
     logging.info(f"User {user_id} - has_active_participations: {has_active_participations}")
 
+    cursor.execute(
+        """
+        SELECT COUNT(*) FROM giveaways 
+        WHERE user_id = %s AND is_completed = 'true'
+        """,
+        (user_id,)
+    )
+    has_completed_giveaways = cursor.fetchone()[0] > 0
+
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
 
@@ -235,6 +254,9 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 
     if has_active_participations:
         keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
+
+    if has_completed_giveaways:
+        keyboard.button(text="📜 История розыгрышей", callback_data="giveaway_history")
 
     keyboard.adjust(1)
 
@@ -245,7 +267,6 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         reply_markup=keyboard.as_markup(),
         message_id=callback_query.message.message_id
     )
-
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -300,12 +321,10 @@ async def cmd_help(message: types.Message):
         logging.error(f"Ошибка в cmd_help: {e}")
         await message.reply("Произошла ошибка при выполнении команды /help.")
 
-
 async def periodic_username_check():
     while True:
         await check_usernames(bot, conn, cursor)
         await asyncio.sleep(60)
-
 
 async def update_participant_counters(bot: Bot, conn, cursor):
     previous_counts = {}
@@ -376,7 +395,6 @@ async def update_participant_counters(bot: Bot, conn, cursor):
 
         await asyncio.sleep(60)
 
-
 async def main():
     check_task = asyncio.create_task(check_and_end_giveaways(bot, conn, cursor))
     username_check_task = asyncio.create_task(periodic_username_check())
@@ -391,7 +409,6 @@ async def main():
         cursor.close()
         conn.close()
         logging.info("Соединение с PostgreSQL закрыто.")
-
 
 if __name__ == '__main__':
     asyncio.run(main())
