@@ -150,8 +150,12 @@ async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
                                               giveaway_id, conn, cursor)
 
         # Update giveaway status to mark it as completed
-        await update_giveaway_status(conn, cursor, giveaway_id, 'false')
-        logger.info(f"Giveaway {giveaway_id} marked as completed (is_active = 'false')")
+        cursor.execute(
+            "UPDATE giveaways SET is_active = %s, is_completed = %s WHERE id = %s",
+            ('false', 'true', giveaway_id)
+        )
+        conn.commit()
+        logger.info(f"Giveaway {giveaway_id} marked as completed (is_active = 'false', is_completed = 'true')")
 
         # Save winners (if any)
         if winners:
@@ -169,20 +173,20 @@ async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
         # Notify winners and publish results
         await notify_winners_and_publish_results(bot, conn, cursor, giveaway, winners)
 
-        # Create a new giveaway with the same details (for future use)
+        # Create a new giveaway template with the same details (for future use)
         new_giveaway = giveaway.copy()
-        new_giveaway.pop('id', None)  # Удаляем старый ID, чтобы создать новую запись с новым ID
+        new_giveaway.pop('id', None)  # Remove old ID to create a new record
         new_giveaway['is_active'] = 'false'
+        new_giveaway['is_completed'] = 'false'  # This is a template, not a completed giveaway
         new_giveaway['created_at'] = None
         new_giveaway['end_time'] = giveaway['end_time']
 
-        # Преобразуем все поля, которые могут содержать словари или списки, в JSON-строки
+        # Convert fields that may contain dicts or lists to JSON strings
         for key, value in new_giveaway.items():
             if isinstance(value, (dict, list)):
                 logger.debug(f"Converting field {key} to JSON string: {value}")
                 new_giveaway[key] = json.dumps(value)
 
-        # Логируем содержимое new_giveaway перед вставкой
         logger.debug(f"Prepared new_giveaway for insertion: {new_giveaway}")
 
         columns = list(new_giveaway.keys())
@@ -192,7 +196,7 @@ async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
             list(new_giveaway.values())
         )
         new_giveaway_id = cursor.fetchone()[0]
-        logger.info(f"Created new giveaway with id {new_giveaway_id} based on giveaway {giveaway_id}")
+        logger.info(f"Created new giveaway template with id {new_giveaway_id} based on giveaway {giveaway_id}")
 
         # Copy congratulations to the new giveaway
         cursor.execute("SELECT * FROM congratulations WHERE giveaway_id = %s", (giveaway_id,))
@@ -210,18 +214,9 @@ async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
                     list(congrat_dict.values())
                 )
             conn.commit()
-            logger.info(f"Copied congratulations to new giveaway {new_giveaway_id}")
+            logger.info(f"Copied congratulations to new giveaway template {new_giveaway_id}")
 
-        # Update the original giveaway to set ONLY user_id = 1
-        logger.debug(f"Updating giveaway {giveaway_id} with user_id=1")
-        cursor.execute(
-            "UPDATE giveaways SET user_id = %s WHERE id = %s",
-            (1, giveaway_id)
-        )
-        conn.commit()
-        logger.info(f"Updated giveaway {giveaway_id}: set user_id to 1")
-
-        logger.info(f"Giveaway {giveaway_id} ended and duplicated with new id {new_giveaway_id}")
+        logger.info(f"Giveaway {giveaway_id} ended and duplicated as template with new id {new_giveaway_id}")
 
     except Exception as e:
         logger.error(f"Error in end_giveaway for giveaway {giveaway_id}: {str(e)}")
