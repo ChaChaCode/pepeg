@@ -38,31 +38,17 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
 
     try:
         if message_id:
-            try:
-                return await bot.edit_message_media(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    media=types.InputMediaPhoto(
-                        media=image,
-                        caption=text,
-                        parse_mode=parse_mode,
-                        caption_entities=entities
-                    ),
-                    reply_markup=reply_markup
-                )
-            except aiogram.exceptions.TelegramBadRequest as e:
-                if "DOCUMENT_INVALID" in str(e):
-                    logger.warning(f"Cannot edit message {message_id} due to DOCUMENT_INVALID. Sending a new message instead.")
-                    await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                    return await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=image,
-                        caption=text,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode,
-                        caption_entities=entities
-                    )
-                raise
+            return await bot.edit_message_media(
+                chat_id=chat_id,
+                message_id=message_id,
+                media=types.InputMediaPhoto(
+                    media=image,
+                    caption=text,
+                    parse_mode=parse_mode,
+                    caption_entities=entities
+                ),
+                reply_markup=reply_markup
+            )
         else:
             return await bot.send_photo(
                 chat_id=chat_id,
