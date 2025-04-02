@@ -31,7 +31,7 @@ s3_client = boto3.client(
     's3',
     region_name=YANDEX_REGION,
     aws_access_key_id=YANDEX_ACCESS_KEY,
-    aws_secret_key=YANDEX_SECRET_KEY,
+    aws_secret_access_key=YANDEX_SECRET_KEY,
     endpoint_url=YANDEX_ENDPOINT_URL,
     config=Config(signature_version='s3v4')
 )
