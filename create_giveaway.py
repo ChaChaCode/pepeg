@@ -81,7 +81,7 @@ FORMATTING_GUIDE2 = """
 <b>Переменные</b>
 Используйте их для автоматической подстановки данных:  
 - <code>{win}</code> — количество победителей  
-- <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (МСК)  
+- <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (по МСК)  
 
 <b>Примечание</b>
 Максимальное количество кастомных эмодзи в одном сообщении — 100. Превышение этого лимита может привести к некорректному отображению.
@@ -420,7 +420,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                             reply_markup=keyboard.as_markup(),
                             parse_mode='HTML'
                         )
-                    await state.update_data(last_message_id=sent_message.message_id)
+                        await state.update_data(last_message_id=sent_message.message_id)
                 except Exception as send_error:
                     logger.error(f"Ошибка отправки нового медиа: {str(send_error)}")
                     sent_message = await send_message_with_image(
@@ -544,7 +544,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         reply_markup=keyboard.as_markup(),
                         parse_mode='HTML'
                     )
-                await state.update_data(last_message_id=sent_message.message_id)
+                    await state.update_data(last_message_id=sent_message.message_id)
         else:
             await send_message_with_image(
                 bot, callback_query.from_user.id,
@@ -739,7 +739,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         reply_markup=keyboard.as_markup(),
                         parse_mode='HTML'
                     )
-                await state.update_data(last_message_id=sent_message.message_id)
+                    await state.update_data(last_message_id=sent_message.message_id)
         else:
             await send_message_with_image(
                 bot, callback_query.from_user.id,
