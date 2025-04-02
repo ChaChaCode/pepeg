@@ -13,7 +13,7 @@ from botocore.client import Config
 import requests
 import re
 from aiogram.types import CallbackQuery
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Tuple, Any
 
 # Настройка логирования 📝
 logging.basicConfig(level=logging.INFO)
@@ -208,7 +208,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         keyboard.button(text="✏️ Редактировать", callback_data=f"edit_active_post:{giveaway_id}")
         keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners_active:{giveaway_id}")
         keyboard.button(text="⏹️ Завершить", callback_data=f"confirm_force_end_giveaway:{giveaway_id}")
-        keyboard.button(text="🔗 Открыть", url=f"https://t.me/Snapi/app?startapp={giveaway_id}")
+        keyboard.button(text="📱 Открыть", url=f"https://t.me/Snapi/app?startapp={giveaway_id}")
         keyboard.button(text="◀️ Назад", callback_data="created_giveaways")  # Исправлено на active_giveaways
         keyboard.adjust(1)
 
@@ -336,13 +336,14 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         giveaway_id = callback_query.data.split(':')[1]
         await _show_edit_menu_active(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
 
-    async def _show_edit_menu_active(user_id: int, giveaway_id: str, message_id: Optional[int] = None) -> None:
-        """Показывает меню редактирования активного розыгрыша ✏️"""
-        giveaways = fetch_giveaway_data(cursor, "SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-        if not giveaways:
+    async def _show_edit_menu_active(user_id: int, giveaway_id: str, message_id: int = None) -> None:
+        """Показывает меню редактирования созданного розыгрыша ✏️"""
+        cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+        columns = [desc[0] for desc in cursor.description]
+        giveaway = dict(zip(columns, cursor.fetchone()))
+        if not giveaway:
             await bot.send_message(user_id, "🔍 Розыгрыш не найден 😕")
             return
-        giveaway = giveaways[0]
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="📝 Название", callback_data=f"edit_name_active:{giveaway_id}")
@@ -353,11 +354,28 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1, 1)  # Корректируем расположение кнопок
 
+        # Определяем тип медиа для отображения
+        media_display = "Медиа: отсутствует"
+        if giveaway['media_type']:
+            if giveaway['media_type'] == 'photo':
+                media_display = "Медиа: фото"
+            elif giveaway['media_type'] == 'gif':
+                media_display = "Медиа: gif"
+            elif giveaway['media_type'] == 'video':
+                media_display = "Медиа: видео"
+
+        # Определяем дополнительную информацию и собираем giveaway_info
+        dop_info = (
+            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> <b>{media_display}</b>\n"
+            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+        )
+
         giveaway_info = f"""
 <b>Название:</b> {giveaway['name']}
 <b>Описание:</b> {giveaway['description']}
 
-<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> <b>Медиа:</b> {'✅ Есть' if giveaway['media_type'] else '❌ Нет'}
+{dop_info}
 
 <tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
 """
@@ -541,13 +559,17 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         await state.set_state(EditGiveawayStates.waiting_for_new_name_active)
         await bot.answer_callback_query(callback_query.id)
 
+        cursor.execute("SELECT name FROM giveaways WHERE id = %s", (giveaway_id,))
+        current_name = cursor.fetchone()[0]
+
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Введите новое название (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}",
+            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: <b>{current_name}</b>\n\n"
+            f"Если хотите изменить, отправьте новое название (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML'
@@ -564,7 +586,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         if text_length > MAX_NAME_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -578,7 +600,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         if text_length > MAX_CAPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -612,7 +634,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -630,13 +652,17 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         await state.set_state(EditGiveawayStates.waiting_for_new_description_active)
         await bot.answer_callback_query(callback_query.id)
 
+        cursor.execute("SELECT description FROM giveaways WHERE id = %s", (giveaway_id,))
+        current_description = cursor.fetchone()[0]
+
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Введите новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}",
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: <b>{current_description}</b>\n\n"
+            f"Если хотите изменить, отправьте новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML'
@@ -652,7 +678,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         if text_length > MAX_DESCRIPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -666,7 +692,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         if text_length > MAX_CAPTION_LENGTH:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
                 bot,
@@ -700,7 +726,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -718,15 +744,20 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         await state.set_state(EditGiveawayStates.waiting_for_new_winner_count_active)
         await bot.answer_callback_query(callback_query.id)
 
+        cursor.execute("SELECT winner_count FROM giveaways WHERE id = %s", (giveaway_id,))
+        current_winner_count = cursor.fetchone()[0]
+
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}! Введите число",
+            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Текущее количество победителей: <b>{current_winner_count}</b>\n\n"
+            f"Если хотите изменить, укажите новое число (максимум {MAX_WINNERS}):",
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
 
     @dp.message(EditGiveawayStates.waiting_for_new_winner_count_active)
@@ -737,7 +768,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         try:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -795,7 +826,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         except ValueError:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -806,7 +837,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -822,12 +853,18 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         await state.set_state(EditGiveawayStates.waiting_for_new_end_time_active)
         await callback_query.answer()
 
+        cursor.execute("SELECT end_time FROM giveaways WHERE id = %s", (giveaway_id,))
+        current_end_time = cursor.fetchone()[0]
+        formatted_end_time = (current_end_time + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')  # МСК
+
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""
-Укажите новую дату окончания в формате ДД.ММ.ГГГГ ЧЧ:ММ
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Текущее время окончания: <b>{formatted_end_time}</b> (МСК)
+
+Если хотите изменить, укажите новую дату завершения в формате ДД.ММ.ГГГГ ЧЧ:ММ
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
@@ -853,7 +890,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         try:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -886,9 +923,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except ValueError:
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             html_message = f"""
-<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неверный формат!\nИспользуйте ДД.ММ.ГГГГ ЧЧ:ММ
+<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неверный формат!\nИспользуйте ДД.ММ.ГГГГ ЧЧ:ММ по МСК
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
@@ -903,7 +940,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -948,15 +985,21 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_media_active)
 
+        cursor.execute("SELECT media_type FROM giveaways WHERE id = %s", (giveaway_id,))
+        current_media_type = cursor.fetchone()[0]
+        media_display = "отсутствует" if not current_media_type else current_media_type
+
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"view_manage_media:{giveaway_id}")
 
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!",
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: <b>{media_display}</b>\n\n"
+            f"Отправьте новое фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!",
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML'
         )
         await bot.answer_callback_query(callback_query.id)
 
@@ -968,7 +1011,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
 
         try:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -1043,7 +1086,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_active_post:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
