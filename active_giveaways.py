@@ -31,7 +31,7 @@ s3_client = boto3.client(
     's3',
     region_name=YANDEX_REGION,
     aws_access_key_id=YANDEX_ACCESS_KEY,
-    aws_secret_access_key=YANDEX_SECRET_KEY,
+    aws_secret_key=YANDEX_SECRET_KEY,
     endpoint_url=YANDEX_ENDPOINT_URL,
     config=Config(signature_version='s3v4')
 )
@@ -416,41 +416,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.send_message(user_id, "❌ Упс! Ошибка загрузки меню 😔 Попробуйте снова!", parse_mode='HTML')
 
-    @dp.callback_query(lambda c: c.data.startswith('confirm_toggle_text_type_active:'))
-    async def process_confirm_toggle_text_type_active(callback_query: CallbackQuery):
-        parts = callback_query.data.split(':')
-        giveaway_id = parts[1]
-        new_text_type = int(parts[2])
-
-        try:
-            cursor.execute(
-                "UPDATE giveaways SET text_type = %s WHERE id = %s",
-                (new_text_type, giveaway_id)
-            )
-            conn.commit()
-
-            # Получаем обновленные данные розыгрыша
-            giveaways = fetch_giveaway_data(cursor, "SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-            giveaway_data = giveaways[0]
-            giveaway_dict = {
-                'id': giveaway_data['id'],
-                'name': giveaway_data['name'],
-                'description': giveaway_data['description'],
-                'end_time': giveaway_data['end_time'].isoformat(),
-                'winner_count': giveaway_data['winner_count'],
-                'media_type': giveaway_data['media_type'],
-                'media_file_id': giveaway_data['media_file_id'],
-                'text_type': giveaway_data['text_type']
-            }
-            await update_published_posts_active(giveaway_id, giveaway_dict)
-
-            await bot.answer_callback_query(callback_query.id, text="✅ Изменения сохранены!")
-            await _show_edit_menu_active(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
-        except Exception as e:
-            logger.error(f"🚫 Ошибка: {str(e)}")
-            conn.rollback()
-            await bot.answer_callback_query(callback_query.id, text="❌ Ошибка при сохранении изменений 😔")
-
     async def send_new_giveaway_message(chat_id: int, giveaway: Dict[str, Any], giveaway_info: str, keyboard: InlineKeyboardBuilder) -> None:
         """Отправляет новое сообщение о розыгрыше 📬"""
         if giveaway['media_type'] and giveaway['media_file_id']:
@@ -480,11 +445,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
             formatted_end_time = (end_time + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')  # МСК
             formatted_description = description.replace('{win}', winner_count).replace('{data}', formatted_end_time)
 
-            # Условно добавляем текст в зависимости от text_type
+            # Добавляем дополнительную информацию
             additional_info = (
                 f"\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {new_giveaway_data['winner_count']}\n"
                 f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {formatted_end_time} (МСК)"
-            ) if new_giveaway_data['text_type'] == 0 else ""
+            )
 
             new_post_text = f"""
 <b>{new_giveaway_data['name']}</b>
@@ -626,8 +591,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
                 'end_time': giveaway_data['end_time'].isoformat(),
                 'winner_count': giveaway_data['winner_count'],
                 'media_type': giveaway_data['media_type'],
-                'media_file_id': giveaway_data['media_file_id'],
-                'text_type': giveaway_data['text_type']
+                'media_file_id': giveaway_data['media_file_id']
             }
             await update_published_posts_active(giveaway_id, giveaway_dict)
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
@@ -718,8 +682,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn: Any, curs
                 'end_time': giveaway_data['end_time'].isoformat(),
                 'winner_count': giveaway_data['winner_count'],
                 'media_type': giveaway_data['media_type'],
-                'media_file_id': giveaway_data['media_file_id'],
-                'text_type': giveaway_data['text_type']
+                'media_file_id': giveaway_data['media_file_id']
             }
             await update_published_posts_active(giveaway_id, giveaway_dict)
             await _show_edit_menu_active(message.from_user.id, giveaway_id, data['last_message_id'])
