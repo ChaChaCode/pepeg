@@ -157,7 +157,6 @@ def register_history_handlers(dp, bot: Bot, conn, cursor):
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
             keyboard.button(text="📜 Назад к списку", callback_data="giveaway_history")
-            keyboard.button(text="🏠 В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
 
             await bot.answer_callback_query(callback_query.id)
