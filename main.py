@@ -14,6 +14,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
 from utils import send_message_with_image, check_and_end_giveaways, check_usernames
+from history_practical import register_history_handlers  # Новый импорт
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
 from created_giveaways import register_created_giveaways_handlers
@@ -21,7 +22,6 @@ from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
-from history_practical import register_history_handlers  # Новый импорт
 
 logger = logging.getLogger(__name__)
 
