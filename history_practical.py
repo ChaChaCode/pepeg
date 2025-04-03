@@ -78,7 +78,10 @@ def register_history_handlers(dp, bot: Bot, conn, cursor):
                 keyboard.row(*nav_buttons)
             keyboard.row(InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu"))
 
-            message_text = "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Завершенные розыгрыши:"
+            message_text = (
+                "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Завершенные розыгрыши\n\n"
+                f"Всего было завершено {total_giveaways} розыгрышей"
+            )
 
             await bot.answer_callback_query(callback_query.id)
             await send_message_with_image(
