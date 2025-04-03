@@ -169,28 +169,29 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
 
         try:
-            # Получаем общее количество розыгрышей
+            # Получаем общее количество незавершенных розыгрышей
             cursor.execute(
                 """
                 SELECT COUNT(*) FROM giveaways 
-                WHERE user_id = %s AND is_active IN ('false', 'waiting', 'true')
+                WHERE user_id = %s AND is_completed = false
                 """,
                 (user_id,)
             )
             total_giveaways = cursor.fetchone()[0]
+
             if total_giveaways == 0:
                 await bot.answer_callback_query(callback_query.id,
-                                                text="📭 Пока нет розыгрышей? Создайте свой первый! 🚀")
+                                                text="📭 Пока нет незавершенных розыгрышей? Создайте свой первый! 🚀")
                 return
 
             total_pages = max(1, math.ceil(total_giveaways / ITEMS_PER_PAGE))
             offset = (current_page - 1) * ITEMS_PER_PAGE
 
-            # Получаем только нужные записи для текущей страницы
+            # Получаем только незавершенные розыгрыши для текущей страницы
             cursor.execute(
                 """
                 SELECT * FROM giveaways 
-                WHERE user_id = %s AND is_active IN ('false', 'waiting', 'true')
+                WHERE user_id = %s AND is_completed = false
                 ORDER BY CASE is_active 
                     WHEN 'true' THEN 0 
                     WHEN 'waiting' THEN 1 
@@ -230,16 +231,19 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 keyboard.row(*nav_buttons)
             keyboard.row(InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu"))
 
-            # Для проверки активных розыгрышей делаем отдельный легкий запрос
+            # Для проверки активных розыгрышей среди незавершенных
             cursor.execute(
-                "SELECT EXISTS(SELECT 1 FROM giveaways WHERE user_id = %s AND is_active = 'true')",
+                "SELECT EXISTS(SELECT 1 FROM giveaways WHERE user_id = %s AND is_active = 'true' AND is_completed = false)",
                 (user_id,)
             )
             has_active = cursor.fetchone()[0]
             message_text = (
-                "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!\n\n"
+                f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!\n"
+                f"Всего розыгрышей: {total_giveaways}\n\n"
                 "✅ - Активный розыгрыш" if has_active else
-                "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!")
+                f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!\n"
+                f"Всего розыгрышей: {total_giveaways}"
+            )
 
             await bot.answer_callback_query(callback_query.id)
             await send_message_with_image(
