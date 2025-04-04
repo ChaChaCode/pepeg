@@ -36,10 +36,10 @@ dp = Dispatcher(storage=storage)
 
 # Конфигурация PostgreSQL
 db_config = {
-    "host": "195.200.26.251",
+    "host": "91.84.97.19",
     "port": 5432,
-    "database": "mydatabase",
-    "user": "app_user",
+    "database": "snapidb",
+    "user": "postgres",
     "password": "moxy1337"
 }
 
