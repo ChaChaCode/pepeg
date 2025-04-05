@@ -1,7 +1,6 @@
 import logging
 from aiogram import Bot, types
 from aiogram.types import FSInputFile, Message, InputMediaPhoto, InputMediaAnimation, InputMediaVideo
-import random
 import aiogram.exceptions
 import asyncio
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -10,6 +9,8 @@ from aiogram.enums import ChatMemberStatus
 from datetime import datetime
 import pytz
 import json
+import random
+import string
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -30,6 +31,13 @@ FORMATTING_GUIDE = """
 
 Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
+
+def generate_unique_code(cursor) -> str:
+    while True:
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+        cursor.execute("SELECT COUNT(*) FROM giveaways WHERE id = %s", (code,))
+        if cursor.fetchone()[0] == 0:
+            return code
 
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
                                   parse_mode: str = 'HTML', entities=None) -> Message | None:
@@ -173,9 +181,9 @@ async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
         # Notify winners and publish results
         await notify_winners_and_publish_results(bot, conn, cursor, giveaway, winners)
 
-        # Create a new giveaway template with the same details (for future use)
+        # Create a new giveaway template with the same details and a new unique ID
         new_giveaway = giveaway.copy()
-        new_giveaway.pop('id', None)  # Remove old ID to create a new record
+        new_giveaway.pop('id', None)  # Remove old ID
         new_giveaway['is_active'] = 'false'
         new_giveaway['is_completed'] = 'false'  # This is a template, not a completed giveaway
         new_giveaway['created_at'] = None
@@ -189,14 +197,18 @@ async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
 
         logger.debug(f"Prepared new_giveaway for insertion: {new_giveaway}")
 
+        # Generate a new unique ID
+        new_giveaway_id = generate_unique_code(cursor)
+        new_giveaway['id'] = new_giveaway_id
+
         columns = list(new_giveaway.keys())
         placeholders = ', '.join(['%s'] * len(columns))
         cursor.execute(
             f"INSERT INTO giveaways ({', '.join(columns)}) VALUES ({placeholders}) RETURNING id",
             list(new_giveaway.values())
         )
-        new_giveaway_id = cursor.fetchone()[0]
-        logger.info(f"Created new giveaway template with id {new_giveaway_id} based on giveaway {giveaway_id}")
+        inserted_id = cursor.fetchone()[0]
+        logger.info(f"Created new giveaway template with id {inserted_id} based on giveaway {giveaway_id}")
 
         # Copy congratulations to the new giveaway
         cursor.execute("SELECT * FROM congratulations WHERE giveaway_id = %s", (giveaway_id,))
@@ -443,7 +455,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
     congrats_messages = {row[0]: row[1] for row in congrats_rows}
 
     # Указываем effect_id для сообщений победителям
-    WINNER_EFFECT_ID = "5123046001510188023"
+    WINNER_EFFECT_ID = "5046509860389126442"
 
     for index, winner in enumerate(winners, start=1):
         try:
