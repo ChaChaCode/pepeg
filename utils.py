@@ -32,7 +32,7 @@ FORMATTING_GUIDE = """
 """
 
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
-                                parse_mode: str = 'HTML', entities=None, effect_id: str = None) -> Message | None:
+                                  parse_mode: str = 'HTML', entities=None) -> Message | None:
     image_path = 'image/pepes.png'  # Replace with your image path
     image = FSInputFile(image_path)
 
@@ -56,8 +56,7 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
                 caption=text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
-                caption_entities=entities,
-                message_effect_id=effect_id  # Добавляем effect_id для новых сообщений
+                caption_entities=entities
             )
     except Exception as e:
         logger.error(f"Error in send_message_with_image: {str(e)}")
@@ -77,8 +76,7 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
                     text=text,
                     reply_markup=reply_markup,
                     parse_mode=parse_mode,
-                    entities=entities,
-                    message_effect_id=effect_id  # Добавляем effect_id для текстовых сообщений
+                    entities=entities
                 )
         except Exception as text_e:
             logger.error(f"Error sending/editing text message: {str(text_e)}")
@@ -445,7 +443,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
     congrats_messages = {row[0]: row[1] for row in congrats_rows}
 
     # Указываем effect_id для сообщений победителям
-    WINNER_EFFECT_ID = "5283179205691990448"
+    WINNER_EFFECT_ID = "5123046001510188023"
 
     for index, winner in enumerate(winners, start=1):
         try:
