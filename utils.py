@@ -32,7 +32,7 @@ FORMATTING_GUIDE = """
 """
 
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
-                                  parse_mode: str = 'HTML', entities=None) -> Message | None:
+                                parse_mode: str = 'HTML', entities=None, effect_id: str = None) -> Message | None:
     image_path = 'image/pepes.png'  # Replace with your image path
     image = FSInputFile(image_path)
 
@@ -56,7 +56,8 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
                 caption=text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
-                caption_entities=entities
+                caption_entities=entities,
+                message_effect_id=effect_id  # Добавляем effect_id для новых сообщений
             )
     except Exception as e:
         logger.error(f"Error in send_message_with_image: {str(e)}")
@@ -76,7 +77,8 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
                     text=text,
                     reply_markup=reply_markup,
                     parse_mode=parse_mode,
-                    entities=entities
+                    entities=entities,
+                    message_effect_id=effect_id  # Добавляем effect_id для текстовых сообщений
                 )
         except Exception as text_e:
             logger.error(f"Error sending/editing text message: {str(text_e)}")
@@ -442,6 +444,9 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
     congrats_rows = cursor.fetchall()
     congrats_messages = {row[0]: row[1] for row in congrats_rows}
 
+    # Указываем effect_id для сообщений победителям
+    WINNER_EFFECT_ID = "5283179205691990448"
+
     for index, winner in enumerate(winners, start=1):
         try:
             congrats_message = congrats_messages.get(index,
@@ -456,8 +461,10 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
                 chat_id=winner['user_id'],
                 text=congrats_message,
                 reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
+                parse_mode='HTML',
+                message_effect_id=WINNER_EFFECT_ID  # Добавляем эффект
             )
+            logger.info(f"Sent winning message with effect_id {WINNER_EFFECT_ID} to user {winner['user_id']}")
         except Exception as e:
             logger.error(f"Error notifying winner {winner['user_id']}: {e}")
 
