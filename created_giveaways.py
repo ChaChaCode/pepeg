@@ -1734,10 +1734,10 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
             post_text = f"""
-{giveaway['name']}
+    {giveaway['name']}
 
-{formatted_description}
-"""
+    {formatted_description}
+    """
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
@@ -1892,7 +1892,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         result_message,
                         reply_markup=keyboard.as_markup(),
                         message_id=callback_query.message.message_id,
-                        parse_mode='HTML'
+                        parse_mode='HTML',
+                        effect_id='5192784725525152419'  # Добавляем effect_id для этого сообщения
                     )
                 except Exception as e:
                     logger.error(f"🚫 Ошибка активации: {str(e)}")
