@@ -388,10 +388,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
             new_post_text = f"""
-    {giveaway['name']}
+{giveaway['name']}
 
-    {formatted_description}
-    """
+{formatted_description}
+"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
