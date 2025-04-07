@@ -1,6 +1,6 @@
 import logging
-from aiogram import Bot, types
-from aiogram.types import FSInputFile, Message, InputMediaPhoto, InputMediaAnimation, InputMediaVideo
+from aiogram import Bot
+from aiogram.types import Message, LinkPreviewOptions
 import aiogram.exceptions
 import asyncio
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -39,55 +39,48 @@ def generate_unique_code(cursor) -> str:
         if cursor.fetchone()[0] == 0:
             return code
 
+async def get_file_url(bot: Bot, file_id: str) -> str:
+    """Получает URL файла по его file_id."""
+    try:
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+        file_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
+        return file_url
+    except Exception as e:
+        logger.error(f"🚫 Ошибка получения URL файла {file_id}: {str(e)}")
+        raise
+
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
-                                  parse_mode: str = 'HTML', entities=None) -> Message | None:
-    image_path = 'image/pepes.png'  # Replace with your image path
-    image = FSInputFile(image_path)
+                                 parse_mode: str = 'HTML', entities=None, image_url: str = None) -> Message | None:
+    # Если image_url не передан, используем дефолтное изображение
+    image_url = image_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+    # Используем HTML-разметку с тегом <a> и символом  
+    full_text = f"<a href=\"{image_url}\"> </a>\n\n{text}"
+    # Настраиваем LinkPreviewOptions с show_above_text=True
+    link_preview_options = LinkPreviewOptions(show_above_text=True)
 
     try:
         if message_id:
-            return await bot.edit_message_media(
+            return await bot.edit_message_text(
                 chat_id=chat_id,
                 message_id=message_id,
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=text,
-                    parse_mode=parse_mode,
-                    caption_entities=entities
-                ),
-                reply_markup=reply_markup
-            )
-        else:
-            return await bot.send_photo(
-                chat_id=chat_id,
-                photo=image,
-                caption=text,
+                text=full_text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
-                caption_entities=entities
+                entities=entities,
+                link_preview_options=link_preview_options
+            )
+        else:
+            return await bot.send_message(
+                chat_id=chat_id,
+                text=full_text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode,
+                entities=entities,
+                link_preview_options=link_preview_options
             )
     except Exception as e:
         logger.error(f"Error in send_message_with_image: {str(e)}")
-        try:
-            if message_id:
-                return await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
-                    entities=entities
-                )
-            else:
-                return await bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode,
-                    entities=entities
-                )
-        except Exception as text_e:
-            logger.error(f"Error sending/editing text message: {str(text_e)}")
         return None
 
 async def check_and_end_giveaways(bot: Bot, conn, cursor):
@@ -110,18 +103,15 @@ async def check_and_end_giveaways(bot: Bot, conn, cursor):
                             continue
                     if end_time <= now:
                         try:
-                            await end_giveaway(bot, conn, cursor, giveaway['id'])
+                            await end_giveaway(bot, giveaway['id'], conn, cursor)
                         except Exception as e:
                             logger.error(f"Error ending giveaway {giveaway['id']}: {str(e)}")
-            # Убираем логирование "No active giveaways found"
-            # else:
-            #     logger.info("No active giveaways found")
         except Exception as e:
             logger.error(f"Error fetching active giveaways: {str(e)}")
 
         await asyncio.sleep(30)  # Check every 30 seconds
 
-async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
+async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator: bool = True):
     try:
         # Fetch giveaway details
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
@@ -179,7 +169,7 @@ async def end_giveaway(bot: Bot, conn, cursor, giveaway_id: str):
             logger.info(f"Saved {len(winners)} winners for giveaway {giveaway_id}")
 
         # Notify winners and publish results
-        await notify_winners_and_publish_results(bot, conn, cursor, giveaway, winners)
+        await notify_winners_and_publish_results(bot, conn, cursor, giveaway, winners, notify_creator=notify_creator)
 
         # Create a new giveaway template with the same details and a new unique ID
         new_giveaway = giveaway.copy()
@@ -322,7 +312,7 @@ async def get_giveaway_communities(conn, cursor, giveaway_id: str) -> List[Dict[
         return []
 
 async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: Dict[str, Any],
-                                             winners: List[Dict[str, Any]]):
+                                             winners: List[Dict[str, Any]], notify_creator: bool = True):
     participant_counter_tasks = giveaway.get('participant_counter_tasks')
     target_chat_ids = []
     channel_links = []
@@ -393,59 +383,34 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
     channel_keyboard = InlineKeyboardBuilder()
     channel_keyboard.button(text="Результаты", url=f"https://t.me/Snapi/app?startapp={giveaway['id']}")
 
+    # Определяем URL изображения для публикации в каналах
+    image_url = None
+    if giveaway['media_type'] and giveaway['media_file_id']:
+        image_url = giveaway['media_file_id']
+        if not image_url.startswith('http'):
+            image_url = await get_file_url(bot, giveaway['media_file_id'])
+
     for chat_id in target_chat_ids:
         try:
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                media_types = {
-                    'photo': InputMediaPhoto,
-                    'gif': InputMediaAnimation,
-                    'video': InputMediaVideo
-                }
-                media_type = media_types.get(giveaway['media_type'])
-                if media_type:
-                    try:
-                        if giveaway['media_type'] == 'photo':
-                            await bot.send_photo(
-                                chat_id=int(chat_id),
-                                photo=giveaway['media_file_id'],
-                                caption=result_message,
-                                reply_markup=channel_keyboard.as_markup(),
-                                parse_mode='HTML'
-                            )
-                        elif giveaway['media_type'] == 'gif':
-                            await bot.send_animation(
-                                chat_id=int(chat_id),
-                                animation=giveaway['media_file_id'],
-                                caption=result_message,
-                                reply_markup=channel_keyboard.as_markup(),
-                                parse_mode='HTML'
-                            )
-                        elif giveaway['media_type'] == 'video':
-                            await bot.send_video(
-                                chat_id=int(chat_id),
-                                video=giveaway['media_file_id'],
-                                caption=result_message,
-                                reply_markup=channel_keyboard.as_markup(),
-                                parse_mode='HTML'
-                            )
-                    except aiogram.exceptions.TelegramBadRequest as e:
-                        if "message caption is too long" in str(e).lower():
-                            logger.warning(f"Caption too long for media in chat {chat_id}, sending as text instead")
-                            await bot.send_message(
-                                chat_id=int(chat_id),
-                                text=result_message,
-                                reply_markup=channel_keyboard.as_markup(),
-                                parse_mode='HTML'
-                            )
-                        else:
-                            raise
+            if image_url:
+                await send_message_with_image(
+                    bot,
+                    chat_id=int(chat_id),
+                    text=result_message,
+                    reply_markup=channel_keyboard.as_markup(),
+                    parse_mode='HTML',
+                    image_url=image_url
+                )
             else:
+                # Если медиа нет, отправляем сообщение без изображения
                 await bot.send_message(
                     chat_id=int(chat_id),
                     text=result_message,
                     reply_markup=channel_keyboard.as_markup(),
                     parse_mode='HTML'
                 )
+        except aiogram.exceptions.TelegramBadRequest as e:
+            logger.error(f"Error publishing results in chat {chat_id}: {e}")
         except Exception as e:
             logger.error(f"Error publishing results in chat {chat_id}: {e}")
 
@@ -478,21 +443,32 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
         except Exception as e:
             logger.error(f"Error notifying winner {winner['user_id']}: {e}")
 
-    creator_id = giveaway.get('user_id')
-    if creator_id:
-        creator_keyboard = InlineKeyboardBuilder()
-        creator_keyboard.button(text="В меню", callback_data="back_to_main_menu")
+    if notify_creator:
+        creator_id = giveaway.get('user_id')
+        if creator_id:
+            creator_keyboard = InlineKeyboardBuilder()
+            creator_keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
-        try:
-            await send_message_with_image(
-                bot,
-                chat_id=creator_id,
-                text=result_message_for_creator,
-                reply_markup=creator_keyboard.as_markup(),
-                parse_mode='HTML'
-            )
-        except Exception as e:
-            logger.error(f"Error notifying creator {creator_id}: {str(e)}")
+            try:
+                if image_url:
+                    await send_message_with_image(
+                        bot,
+                        chat_id=creator_id,
+                        text=result_message_for_creator,
+                        reply_markup=creator_keyboard.as_markup(),
+                        parse_mode='HTML',
+                        image_url=image_url
+                    )
+                else:
+                    # Если медиа нет, отправляем сообщение без изображения
+                    await bot.send_message(
+                        chat_id=creator_id,
+                        text=result_message_for_creator,
+                        reply_markup=creator_keyboard.as_markup(),
+                        parse_mode='HTML'
+                    )
+            except Exception as e:
+                logger.error(f"Error notifying creator {creator_id}: {str(e)}")
 
 async def check_usernames(bot: Bot, conn, cursor):
     try:
