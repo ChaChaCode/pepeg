@@ -1,7 +1,7 @@
 import logging
 import math
 import re
-from aiogram import Bot, types
+from aiogram import Bot
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
@@ -12,6 +12,17 @@ logger = logging.getLogger(__name__)
 def strip_html_tags(text: str) -> str:
     """Удаляет HTML-теги из текста 🧹"""
     return re.sub(r'<[^>]+>', '', text)
+
+async def get_file_url(bot: Bot, file_id: str) -> str:
+    """Получает URL файла по его file_id."""
+    try:
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+        file_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
+        return file_url
+    except Exception as e:
+        logger.error(f"🚫 Ошибка получения URL файла {file_id}: {str(e)}")
+        raise
 
 def register_history_handlers(dp, bot: Bot, conn, cursor):
     """Регистрация обработчиков для истории розыгрышей."""
@@ -84,12 +95,13 @@ def register_history_handlers(dp, bot: Bot, conn, cursor):
             )
 
             await bot.answer_callback_query(callback_query.id)
-            await send_message_with_image(
-                bot,
-                user_id,
-                message_text,
+            # Отправляем сообщение без изображения
+            await bot.edit_message_text(
+                chat_id=user_id,
+                message_id=callback_query.message.message_id,
+                text=message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id
+                parse_mode='HTML'
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
@@ -146,7 +158,6 @@ def register_history_handlers(dp, bot: Bot, conn, cursor):
 
             # Формирование информации о розыгрыше
             giveaway_info = (
-                f"<b>{name}</b>\n\n"
                 f"{description or 'Описание отсутствует'}\n\n"
                 f"<b>Дата завершения:</b> {end_time_str}\n"
                 f"<b>Количество победителей:</b> {winner_count}\n\n"
@@ -164,30 +175,27 @@ def register_history_handlers(dp, bot: Bot, conn, cursor):
 
             await bot.answer_callback_query(callback_query.id)
 
-            # Отправка сообщения с медиа или без
+            # Проверяем наличие медиа
             if media_type and media_file_id:
-                media_types = {
-                    'photo': types.InputMediaPhoto,
-                    'gif': types.InputMediaAnimation,
-                    'video': types.InputMediaVideo
-                }
-                await bot.edit_message_media(
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.message_id,
-                    media=media_types[media_type](
-                        media=media_file_id,
-                        caption=giveaway_info,
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
-                )
-            else:
+                image_url = media_file_id
+                if not image_url.startswith('http'):
+                    image_url = await get_file_url(bot, media_file_id)
                 await send_message_with_image(
                     bot,
                     user_id,
                     giveaway_info,
                     reply_markup=keyboard.as_markup(),
                     message_id=callback_query.message.message_id,
+                    parse_mode='HTML',
+                    image_url=image_url
+                )
+            else:
+                # Если медиа нет, отправляем сообщение без изображения
+                await bot.edit_message_text(
+                    chat_id=user_id,
+                    message_id=callback_query.message.message_id,
+                    text=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
                     parse_mode='HTML'
                 )
 
