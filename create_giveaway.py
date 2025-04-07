@@ -1,12 +1,10 @@
 from aiogram import Dispatcher, Bot, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, FSInputFile
+from aiogram.types import CallbackQuery, LinkPreviewOptions
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from aiogram.exceptions import TelegramBadRequest
 from datetime import datetime
 import pytz
-from utils import send_message_with_image
 import logging
 import boto3
 from botocore.client import Config
@@ -37,9 +35,9 @@ s3_client = boto3.client(
 )
 
 # Константы
-MAX_CAPTION_LENGTH = 850
+MAX_CAPTION_LENGTH = 2500
 MAX_NAME_LENGTH = 50
-MAX_DESCRIPTION_LENGTH = 850
+MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 10
 MAX_WINNERS = 100
 
@@ -121,48 +119,44 @@ async def build_navigation_keyboard(state: FSMContext, current_state: State) -> 
     has_back = False
     has_delete = False
 
-    # Добавляем кнопку "Удалить медиа" первой, если медиа загружено и мы на этапе медиа
-    if current_state == GiveawayStates.waiting_for_media_upload and 'media_file_id_temp' in data:
+    # Добавляем кнопку "Удалить" только если есть загруженное медиа (media_url) и мы на этапе загрузки медиа
+    if current_state == GiveawayStates.waiting_for_media_upload and data.get('media_url'):
         keyboard.button(text="🗑️ Удалить", callback_data="delete_media")
         has_delete = True
 
-    # Добавляем кнопку "Назад", если она доступна
     if current_state in back_states:
         keyboard.button(text="◀️ Назад", callback_data=back_states[current_state])
         has_back = True
 
-    # Добавляем кнопку "Далее", если она доступна
     if current_state in next_states:
         next_state, callback, required_field = next_states[current_state]
         if required_field in data or required_field is None:
             keyboard.button(text="Далее ▶️", callback_data=callback)
             has_next = True
 
-    # Добавляем кнопку "В меню" последней
     keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
-    # Настраиваем расположение кнопок
+    # Корректируем расположение кнопок в зависимости от их наличия
     if has_delete:
         if has_back and has_next:
-            keyboard.adjust(1, 2, 1)  # Удалить (1), Назад + Далее (2), В меню (1)
+            keyboard.adjust(1, 2, 1)  # Удалить отдельно, Назад и Далее вместе, В меню отдельно
         elif has_back or has_next:
-            keyboard.adjust(1, 1, 1)  # Удалить (1), Назад или Далее (1), В меню (1)
+            keyboard.adjust(1, 1, 1)  # Удалить, Назад или Далее, В меню
         else:
-            keyboard.adjust(1, 1)     # Удалить (1), В меню (1)
+            keyboard.adjust(1, 1)  # Удалить, В меню
     else:
         if has_back and has_next:
-            keyboard.adjust(2, 1)     # Назад + Далее (2), В меню (1)
+            keyboard.adjust(2, 1)  # Назад и Далее вместе, В меню отдельно
         else:
-            keyboard.adjust(1, 1)     # Назад или Далее (1), В меню (1) или только В меню (1)
+            keyboard.adjust(1, 1)  # Назад или В меню
 
     return keyboard
 
 def count_length_with_custom_emoji(text: str) -> int:
-    emoji_pattern = r'<tg-emoji emoji-id="[^"]+">[^<]+</tg-emoji>'
-    custom_emojis = re.findall(emoji_pattern, text)
-    cleaned_text = text
-    for emoji in custom_emojis:
-        cleaned_text = cleaned_text.replace(emoji, ' ')
+    # Регулярное выражение для удаления всех HTML-тегов
+    tag_pattern = r'<[^>]+>'
+    # Удаляем все теги из текста
+    cleaned_text = re.sub(tag_pattern, '', text)
     return len(cleaned_text)
 
 async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
@@ -228,16 +222,17 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.answer_callback_query(callback_query.id)
         await state.set_state(GiveawayStates.waiting_for_name)
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
-        image = FSInputFile('image/name.png')
-        await bot.edit_message_media(
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
+        message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
+
+        await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            media=types.InputMediaPhoto(
-                media=image,
-                caption=f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}",
-                parse_mode='HTML'
-            ),
-            reply_markup=keyboard.as_markup()
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
         await state.update_data(last_message_id=callback_query.message.message_id)
 
@@ -249,17 +244,17 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         if text_length > MAX_NAME_LENGTH:
             data = await state.get_data()
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
-            image = FSInputFile('image/name.png')
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
+            error_text = f"<a href=\"{image_url}\"> </a>\n\n⚠️ Название слишком длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
+            await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data['last_message_id'],
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=f"⚠️ Название слишком длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
             return
 
@@ -268,29 +263,28 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
         description = data.get('description', '')
-        image = FSInputFile('image/opis.png')
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         if description:
             message_text = (
-                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
+                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
                 f"Если хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE2}"
             )
         else:
             message_text = (
-                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
+                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
                 f"{FORMATTING_GUIDE2}"
             )
 
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-        await bot.edit_message_media(
+        await bot.edit_message_text(
             chat_id=message.chat.id,
             message_id=data['last_message_id'],
-            media=types.InputMediaPhoto(
-                media=image,
-                caption=message_text,
-                parse_mode='HTML'
-            ),
-            reply_markup=keyboard.as_markup()
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.callback_query(lambda c: c.data == "back_to_name")
@@ -300,16 +294,17 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         name = data.get('name', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
-        image = FSInputFile('image/name.png')
-        await bot.edit_message_media(
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
+        message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: {name}\n\nЕсли хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE}"
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
+
+        await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            media=types.InputMediaPhoto(
-                media=image,
-                caption=f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: {name}\n\nЕсли хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE}",
-                parse_mode='HTML'
-            ),
-            reply_markup=keyboard.as_markup()
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.callback_query(lambda c: c.data == "next_to_description")
@@ -319,28 +314,27 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         description = data.get('description', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
-        image = FSInputFile('image/opis.png')
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         if description:
             message_text = (
-                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
+                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
                 f"Если хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE2}"
             )
         else:
             message_text = (
-                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
+                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
                 f"{FORMATTING_GUIDE2}"
             )
 
-        await bot.edit_message_media(
+        await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            media=types.InputMediaPhoto(
-                media=image,
-                caption=message_text,
-                parse_mode='HTML'
-            ),
-            reply_markup=keyboard.as_markup()
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.message(GiveawayStates.waiting_for_description)
@@ -351,17 +345,17 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         if text_length > MAX_DESCRIPTION_LENGTH:
             data = await state.get_data()
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
-            image = FSInputFile('image/opis.png')
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+            error_text = f"<a href=\"{image_url}\"> </a>\n\n⚠️ Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
+            link_preview_options = LinkPreviewOptions(is_above_text=True)
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
+            await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data['last_message_id'],
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=f"⚠️ Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
             return
 
@@ -369,102 +363,31 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await state.set_state(GiveawayStates.waiting_for_media_upload)
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
-        media_file_id = data.get('media_file_id_temp')
+        media_url = data.get('media_url')  # Используем media_url вместо media_file_id_temp
         media_type = data.get('media_type')
+        placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         message_text = (
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. Отправьте новое или нажмите \"Далее\"."
-            if media_file_id and media_type else
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
+            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
+            f"\n\nВы можете отправить новое медиа или удалить текущее."
+            if media_url and media_type else
+            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
 
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-
-        try:
-            if media_file_id and media_type:
-                if media_type == 'photo':
-                    await bot.edit_message_media(
-                        chat_id=message.chat.id,
-                        message_id=data['last_message_id'],
-                        media=types.InputMediaPhoto(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif media_type == 'gif':
-                    await bot.edit_message_media(
-                        chat_id=message.chat.id,
-                        message_id=data['last_message_id'],
-                        media=types.InputMediaAnimation(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif media_type == 'video':
-                    await bot.edit_message_media(
-                        chat_id=message.chat.id,
-                        message_id=data['last_message_id'],
-                        media=types.InputMediaVideo(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-            else:
-                image = FSInputFile('image/media.png')
-                await bot.edit_message_media(
-                    chat_id=message.chat.id,
-                    message_id=data['last_message_id'],
-                    media=types.InputMediaPhoto(
-                        media=image,
-                        caption=message_text,
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
-                )
-        except TelegramBadRequest as e:
-            logger.error(f"Ошибка редактирования медиа: {str(e)}")
-            # Fallback на отправку нового сообщения, если редактирование невозможно
-            if media_file_id and media_type:
-                if media_type == 'photo':
-                    sent_message = await bot.send_photo(
-                        chat_id=message.chat.id,
-                        photo=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                elif media_type == 'gif':
-                    sent_message = await bot.send_animation(
-                        chat_id=message.chat.id,
-                        animation=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                elif media_type == 'video':
-                    sent_message = await bot.send_video(
-                        chat_id=message.chat.id,
-                        video=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-            else:
-                image = FSInputFile('image/media.png')
-                sent_message = await bot.send_photo(
-                    chat_id=message.chat.id,
-                    photo=image,
-                    caption=message_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-                await state.update_data(last_message_id=sent_message.message_id)
+        await bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=data['last_message_id'],
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
+        )
 
     @dp.callback_query(lambda c: c.data == "back_to_description")
     async def back_to_description(callback_query: CallbackQuery, state: FSMContext):
@@ -473,28 +396,27 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         description = data.get('description', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
-        image = FSInputFile('image/opis.png')
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         if description:
             message_text = (
-                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
+                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
                 f"Если хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE2}"
             )
         else:
             message_text = (
-                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
+                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
                 f"{FORMATTING_GUIDE2}"
             )
 
-        await bot.edit_message_media(
+        await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            media=types.InputMediaPhoto(
-                media=image,
-                caption=message_text,
-                parse_mode='HTML'
-            ),
-            reply_markup=keyboard.as_markup()
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.callback_query(lambda c: c.data == "next_to_media_upload")
@@ -503,183 +425,151 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await state.set_state(GiveawayStates.waiting_for_media_upload)
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
-        media_file_id = data.get('media_file_id_temp')
-        media_type = data.get('media_type')
+        placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)  # Исправлено с is_above_text
 
+        media_url = data.get('media_url')
+        media_type = data.get('media_type')
         message_text = (
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. Отправьте новое или нажмите \"Далее\"."
-            if media_file_id and media_type else
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
+            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
+            f"\n\nВы можете отправить новое медиа или удалить текущее."
+            if media_url and media_type else
+            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
 
-        if media_file_id and media_type:
-            try:
-                if media_type == 'photo':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaPhoto(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif media_type == 'gif':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaAnimation(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif media_type == 'video':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaVideo(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-            except TelegramBadRequest as e:
-                logger.error(f"Ошибка редактирования медиа: {str(e)}")
-                if media_type == 'photo':
-                    sent_message = await bot.send_photo(
-                        chat_id=callback_query.from_user.id,
-                        photo=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                elif media_type == 'gif':
-                    sent_message = await bot.send_animation(
-                        chat_id=callback_query.from_user.id,
-                        animation=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                elif media_type == 'video':
-                    sent_message = await bot.send_video(
-                        chat_id=callback_query.from_user.id,
-                        video=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                    await state.update_data(last_message_id=sent_message.message_id)
-        else:
-            image = FSInputFile('image/media.png')
-            await bot.edit_message_media(
-                chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=message_text,
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
-            )
+        await bot.edit_message_text(
+            chat_id=callback_query.from_user.id,
+            message_id=callback_query.message.message_id,
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
+        )
 
     @dp.callback_query(lambda c: c.data == "delete_media")
     async def delete_media(callback_query: CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(callback_query.id)
-        await state.update_data(media_file_id_temp=None, media_type=None)
+        await state.update_data(media_url=None, media_type=None)
         data = await state.get_data()
+        # Пересоздаем клавиатуру после удаления медиа
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
-        image = FSInputFile('image/media.png')
+        placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)  # Исправлено с is_above_text
 
         message_text = (
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
+            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
 
-        await bot.edit_message_media(
+        await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            media=types.InputMediaPhoto(
-                media=image,
-                caption=message_text,
-                parse_mode='HTML'
-            ),
-            reply_markup=keyboard.as_markup()
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.message(GiveawayStates.waiting_for_media_upload)
     async def process_media_upload(message: types.Message, state: FSMContext):
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
+        placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)  # Исправлено с is_above_text
 
         if message.photo:
             file_id = message.photo[-1].file_id
             media_type = 'photo'
+            file_ext = 'jpg'
         elif message.animation:
             file_id = message.animation.file_id
             media_type = 'gif'
+            file_ext = 'mp4'
         elif message.video:
             file_id = message.video.file_id
             media_type = 'video'
+            file_ext = 'mp4'
         else:
-            image = FSInputFile('image/media.png')
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
+            error_text = (
+                f"<a href=\"{placeholder_url}\"> </a>\n\n"
+                f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> "
+                f"Отправьте фото, GIF или видео или нажмите \"Далее\" для пропуска!"
+            )
+            await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data['last_message_id'],
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption="<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Отправьте фото, GIF или видео или нажмите \"Далее\" для пропуска!",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
             return
 
         file = await bot.get_file(file_id)
         if file.file_size / (1024 * 1024) > MAX_MEDIA_SIZE_MB:
-            image = FSInputFile('image/media.png')
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
+            error_text = (
+                f"<a href=\"{placeholder_url}\"> </a>\n\n"
+                f"🤯 Файл слишком большой! Максимум {MAX_MEDIA_SIZE_MB} МБ"
+            )
+            await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data['last_message_id'],
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=f"🤯 Файл слишком большой! Максимум {MAX_MEDIA_SIZE_MB} МБ",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
             return
 
-        await state.update_data(media_type=media_type, media_file_id_temp=file_id)
-        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-        await process_end_time_request(message.chat.id, state, data['last_message_id'])
+        file_content = await bot.download_file(file.file_path)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        filename = f"{timestamp}_{message.message_id}.{file_ext}"
+        success, media_url = await upload_to_storage(file_content.read(), filename)
 
-    async def process_end_time_request(chat_id: int, state: FSMContext, message_id: int):
-        await state.set_state(GiveawayStates.waiting_for_end_time)
-        data = await state.get_data()
-        end_time = data.get('end_time', '')
-        keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_end_time)
-        current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
+        if not success:
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            error_text = (
+                f"<a href=\"{placeholder_url}\"> </a>\n\n"
+                f"❌ Ошибка загрузки медиа: {media_url}"
+            )
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=data['last_message_id'],
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
+            )
+            return
+
+        # Сохраняем URL и тип медиа в состоянии
+        await state.update_data(media_url=media_url, media_type=media_type)
+
+        # Пересоздаем клавиатуру после обновления состояния
+        keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
+
+        # Обновляем сообщение с превью загруженного медиа
         message_text = (
-            f"Текущее время окончания: <b>{end_time}</b>\n\n"
-            f"Если хотите изменить, укажите новую дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b> по МСК\n\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
-            if end_time else
-            f"Когда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
+            f"<a href=\"{media_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
+            f"\n\nВы можете отправить новое медиа или удалить текущее."
         )
-
-        await send_message_with_image(
-            bot, chat_id,
-            message_text,
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        await bot.edit_message_text(
+            chat_id=message.chat.id,
+            message_id=data['last_message_id'],
+            text=message_text,
             reply_markup=keyboard.as_markup(),
-            message_id=message_id,
-            parse_mode='HTML'
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.callback_query(lambda c: c.data == "next_to_end_time")
@@ -690,22 +580,24 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         end_time = data.get('end_time', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_end_time)
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
         message_text = (
-            f"Текущее время окончания: <b>{end_time}</b>\n\n"
+            f"<a href=\"{image_url}\"> </a>\n\nТекущее время окончания: <b>{end_time}</b>\n\n"
             f"Если хотите изменить, укажите новую дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b> по МСК\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
             if end_time else
-            f"Когда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
+            f"<a href=\"{image_url}\"> </a>\n\nКогда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
         )
 
-        await send_message_with_image(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
+        await bot.edit_message_text(
+            chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            parse_mode='HTML'
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.callback_query(lambda c: c.data == "back_to_media_upload")
@@ -714,94 +606,37 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await state.set_state(GiveawayStates.waiting_for_media_upload)
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
-        media_file_id = data.get('media_file_id_temp')
-        media_type = data.get('media_type')
+        placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)  # Исправлено с is_above_text
 
+        media_url = data.get('media_url')
+        media_type = data.get('media_type')
         message_text = (
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. Отправьте новое или нажмите \"Далее\"."
-            if media_file_id and media_type else
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
+            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
+            f"\n\nВы можете отправить новое медиа или удалить текущее."
+            if media_url and media_type else
+            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
+            f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
 
-        if media_file_id and media_type:
-            try:
-                if media_type == 'photo':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaPhoto(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif media_type == 'gif':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaAnimation(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-                elif media_type == 'video':
-                    await bot.edit_message_media(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id,
-                        media=types.InputMediaVideo(
-                            media=media_file_id,
-                            caption=message_text,
-                            parse_mode='HTML'
-                        ),
-                        reply_markup=keyboard.as_markup()
-                    )
-            except TelegramBadRequest as e:
-                logger.error(f"Ошибка редактирования медиа: {str(e)}")
-                if media_type == 'photo':
-                    sent_message = await bot.send_photo(
-                        chat_id=callback_query.from_user.id,
-                        photo=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                elif media_type == 'gif':
-                    sent_message = await bot.send_animation(
-                        chat_id=callback_query.from_user.id,
-                        animation=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                elif media_type == 'video':
-                    sent_message = await bot.send_video(
-                        chat_id=callback_query.from_user.id,
-                        video=media_file_id,
-                        caption=message_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                    await state.update_data(last_message_id=sent_message.message_id)
-        else:
-            image = FSInputFile('image/media.png')
-            await bot.edit_message_media(
-                chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=message_text,
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
-            )
+        await bot.edit_message_text(
+            chat_id=callback_query.from_user.id,
+            message_id=callback_query.message.message_id,
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
+        )
 
     @dp.message(GiveawayStates.waiting_for_end_time)
     async def process_end_time(message: types.Message, state: FSMContext):
         data = await state.get_data()
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         try:
             end_time_dt = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
@@ -819,31 +654,34 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
 
-            await send_message_with_image(
-                bot, message.chat.id,
-                f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!",
-                reply_markup=keyboard.as_markup(),
+            message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!"
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
                 message_id=data['last_message_id'],
-                parse_mode='HTML'
+                text=message_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
 
         except ValueError as e:
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_end_time)
-            # Проверяем тип ошибки
             if "day is out of range for month" in str(e):
                 error_msg = "⚠️ День находится вне диапазона для месяца"
             elif "does not match format" in str(e):
                 error_msg = "⚠️ Неверный формат даты! Используйте ДД.ММ.ГГГГ ЧЧ:ММ (например, 31.03.2025 12:00)"
             else:
-                error_msg = str(e)  # Для других случаев ValueError, например, "Дата окончания должна быть в будущем!"
+                error_msg = str(e)
 
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await send_message_with_image(
-                bot, message.chat.id,
-                f"{error_msg}\n🗓 Сейчас в Москве: <code>{current_time}</code>",
-                reply_markup=keyboard.as_markup(),
+            error_text = f"<a href=\"{image_url}\"> </a>\n\n{error_msg}\n🗓 Сейчас в Москве: <code>{current_time}</code>"
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
                 message_id=data['last_message_id'],
-                parse_mode='HTML'
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
 
     @dp.callback_query(lambda c: c.data == "next_to_winner_count")
@@ -851,19 +689,22 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.answer_callback_query(callback_query.id)
         await state.set_state(GiveawayStates.waiting_for_winner_count)
         data = await state.get_data()
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
         keyboard.button(text="В меню", callback_data="back_to_main_menu")
         keyboard.adjust(1)
 
-        await send_message_with_image(
-            bot,
-            callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!",
-            reply_markup=keyboard.as_markup(),
+        message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!"
+        await bot.edit_message_text(
+            chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            parse_mode='HTML'
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.callback_query(lambda c: c.data == "back_to_end_time")
@@ -874,27 +715,33 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         end_time = data.get('end_time', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_end_time)
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
+
         message_text = (
-            f"Текущее время окончания: <b>{end_time}</b>\n\n"
+            f"<a href=\"{image_url}\"> </a>\n\nТекущее время окончания: <b>{end_time}</b>\n\n"
             f"Если хотите изменить, укажите новую дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b> по МСК\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
             if end_time else
-            f"Когда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
+            f"<a href=\"{image_url}\"> </a>\n\nКогда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
         )
 
-        await send_message_with_image(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
+        await bot.edit_message_text(
+            chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
-            parse_mode='HTML'
+            text=message_text,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options=link_preview_options
         )
 
     @dp.message(GiveawayStates.waiting_for_winner_count)
     async def process_winner_count(message: types.Message, state: FSMContext):
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        data = await state.get_data()
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         try:
             winner_count = int(message.text)
@@ -903,29 +750,22 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if winner_count > MAX_WINNERS:
                 raise ValueError(f"Максимум {MAX_WINNERS} победителей")
 
-            data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
-            await send_message_with_image(
-                bot,
-                message.chat.id,
-                "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Создаём ваш розыгрыш...",
+            message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Создаём ваш розыгрыш..."
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
                 message_id=data.get('last_message_id'),
+                text=message_text,
                 reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
 
-            media_file_id = None
-            if data.get('media_file_id_temp'):
-                file = await bot.get_file(data['media_file_id_temp'])
-                file_content = await bot.download_file(file.file_path)
-                file_ext = {'photo': 'jpg', 'gif': 'gif', 'video': 'mp4'}[data['media_type']]
-                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f"{timestamp}_{message.message_id}.{file_ext}"
-                success, media_file_id = await upload_to_storage(file_content.read(), filename)
-                if not success:
-                    raise Exception(media_file_id)
+            # Используем уже загруженный URL вместо загрузки заново
+            media_url = data.get('media_url')
+            media_type = data.get('media_type')
 
             success, giveaway_id = await save_giveaway(
                 conn,
@@ -935,8 +775,8 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 data['description'],
                 data['end_time'],
                 winner_count,
-                data.get('media_type'),
-                media_file_id
+                media_type,
+                media_url  # Используем media_url вместо media_file_id
             )
 
             if success:
@@ -947,65 +787,42 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 raise Exception("Не удалось сохранить розыгрыш")
 
         except ValueError as ve:
-            data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
 
-            # Проверяем, что это ошибка преобразования в int
             if "invalid literal for int()" in str(ve):
                 error_msg = "⚠️ Введите число! Например, 1, 5 или 10"
             else:
                 error_msg = str(ve) if str(ve) else f"Введите число от 1 до {MAX_WINNERS}"
 
-            await send_message_with_image(
-                bot,
-                message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {error_msg}",
+            error_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {error_msg}"
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
                 message_id=data.get('last_message_id'),
+                text=error_text,
                 reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
             )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="🔄 Попробовать снова", callback_data="create_giveaway")
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
-            error_message = f"❌ Ошибка: {str(e) if str(e) else 'Что-то пошло не так'}"
+            error_message = f"<a href=\"{image_url}\"> </a>\n\n❌ Ошибка: {str(e) if str(e) else 'Что-то пошло не так'}"
 
-            try:
-                await bot.edit_message_text(
-                    chat_id=message.chat.id,
-                    message_id=data.get('last_message_id'),
-                    text=error_message,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            except TelegramBadRequest as te:
-                if "there is no text in the message to edit" in str(te):
-                    try:
-                        await bot.edit_message_caption(
-                            chat_id=message.chat.id,
-                            message_id=data.get('last_message_id'),
-                            caption=error_message,
-                            reply_markup=keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
-                    except Exception as edit_caption_error:
-                        logger.error(f"Не удалось отредактировать подпись: {str(edit_caption_error)}")
-                        await send_message_with_image(
-                            bot,
-                            message.chat.id,
-                            error_message,
-                            reply_markup=keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
-                else:
-                    raise te
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=data.get('last_message_id'),
+                text=error_message,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
+            )
 
     async def display_giveaway(bot: Bot, chat_id: int, giveaway_id: str, conn, cursor, message_id: int = None):
         try:
@@ -1029,128 +846,60 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             description = giveaway['description']
             winner_count = str(giveaway['winner_count'])
             end_time = giveaway['end_time'].strftime('%d.%m.%Y %H:%M (МСК)') if giveaway['end_time'] else "Не указано"
-
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
-            giveaway_info = f"""
-{giveaway['name']}
-
-{formatted_description}
-"""
-
+            # Определяем URL для отображения
             media_file_id = giveaway.get('media_file_id')
-            media_type = giveaway.get('media_type')
-
-            if media_file_id and media_type:
-                if message_id:
-                    try:
-                        if media_type == 'photo':
-                            await bot.edit_message_media(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                media=types.InputMediaPhoto(
-                                    media=media_file_id,
-                                    caption=giveaway_info,
-                                    parse_mode='HTML'
-                                ),
-                                reply_markup=keyboard.as_markup()
-                            )
-                        elif media_type == 'gif':
-                            await bot.edit_message_media(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                media=types.InputMediaAnimation(
-                                    media=media_file_id,
-                                    caption=giveaway_info,
-                                    parse_mode='HTML'
-                                ),
-                                reply_markup=keyboard.as_markup()
-                            )
-                        elif media_type == 'video':
-                            await bot.edit_message_media(
-                                chat_id=chat_id,
-                                message_id=message_id,
-                                media=types.InputMediaVideo(
-                                    media=media_file_id,
-                                    caption=giveaway_info,
-                                    parse_mode='HTML'
-                                ),
-                                reply_markup=keyboard.as_markup()
-                            )
-                    except TelegramBadRequest as e:
-                        logger.error(f"Ошибка редактирования медиа: {str(e)}")
-                        if media_type == 'photo':
-                            await bot.send_photo(
-                                chat_id=chat_id,
-                                photo=media_file_id,
-                                caption=giveaway_info,
-                                reply_markup=keyboard.as_markup(),
-                                parse_mode='HTML'
-                            )
-                        elif media_type == 'gif':
-                            await bot.send_animation(
-                                chat_id=chat_id,
-                                animation=media_file_id,
-                                caption=giveaway_info,
-                                reply_markup=keyboard.as_markup(),
-                                parse_mode='HTML'
-                            )
-                        elif media_type == 'video':
-                            await bot.send_video(
-                                chat_id=chat_id,
-                                video=media_file_id,
-                                caption=giveaway_info,
-                                reply_markup=keyboard.as_markup(),
-                                parse_mode='HTML'
-                            )
-                else:
-                    if media_type == 'photo':
-                        await bot.send_photo(
-                            chat_id=chat_id,
-                            photo=media_file_id,
-                            caption=giveaway_info,
-                            reply_markup=keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
-                    elif media_type == 'gif':
-                        await bot.send_animation(
-                            chat_id=chat_id,
-                            animation=media_file_id,
-                            caption=giveaway_info,
-                            reply_markup=keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
-                    elif media_type == 'video':
-                        await bot.send_video(
-                            chat_id=chat_id,
-                            video=media_file_id,
-                            caption=giveaway_info,
-                            reply_markup=keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
+            if media_file_id:
+                # Если есть пользовательский медиафайл, используем его URL
+                image_url = media_file_id  # Предполагается, что media_file_id уже содержит публичный URL из Yandex Cloud
             else:
-                if message_id:
-                    await send_message_with_image(
-                        bot, chat_id, giveaway_info,
-                        reply_markup=keyboard.as_markup(),
-                        message_id=message_id,
-                        parse_mode='HTML'
-                    )
-                else:
-                    await send_message_with_image(
-                        bot, chat_id, giveaway_info,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
+                # Иначе используем дефолтное изображение
+                image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+
+            giveaway_info = f"<a href=\"{image_url}\"> </a>\n\n{formatted_description}"
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
+
+            if message_id:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
+            else:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
 
         except Exception as e:
             logger.error(f"Ошибка отображения розыгрыша: {str(e)}")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
-            await send_message_with_image(
-                bot, chat_id,
-                "❌ Ошибка загрузки розыгрыша. Попробуйте снова!",
-                reply_markup=keyboard.as_markup(),
-                message_id=message_id if message_id else None,
-                parse_mode='HTML'
-            )
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+            error_text = f"<a href=\"{image_url}\"> </a>\n\n❌ Ошибка загрузки розыгрыша. Попробуйте снова!"
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
+
+            if message_id:
+                await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=error_text,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
+            else:
+                await bot.send_message(
+                    chat_id=chat_id,
+                    text=error_text,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
