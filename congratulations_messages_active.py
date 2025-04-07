@@ -8,6 +8,7 @@ from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from utils import send_message_with_image
 import json
+import re
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -18,6 +19,9 @@ dp = Dispatcher(storage=storage)
 
 user_selected_communities = {}
 paid_users: Dict[int, str] = {}
+
+# Константы для ограничения длины текста
+MAX_CONGRATS_LENGTH = 1000  # Максимальная длина поздравительного сообщения
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
@@ -32,9 +36,13 @@ FORMATTING_GUIDE = """
 - Код: <code>текст</code>
 - Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
 
-Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
-"""
+<b>Переменные</b>
+Используйте их для автоматической подстановки данных:  
+- <code>{win}</code> — количество победителей  
+- <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (по МСК)  
 
+Примечание: Максимальная длина текста — 1000 символов. Максимум 100 кастомных эмодзи в сообщении.</blockquote>
+"""
 
 # States for the FSM
 class GiveawayStates(StatesGroup):
@@ -55,6 +63,11 @@ class GiveawayStates(StatesGroup):
     creating_giveaway = State()
     binding_communities = State()
 
+# Функция для подсчета длины текста без HTML-тегов
+def count_length_with_custom_emoji(text: str) -> int:
+    tag_pattern = r'<[^>]+>'
+    cleaned_text = re.sub(tag_pattern, '', text)
+    return len(cleaned_text)
 
 def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(
@@ -79,14 +92,11 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
         start_place = (current_page - 1) * ITEMS_PER_PAGE + 1
         end_place = min(current_page * ITEMS_PER_PAGE, winner_count)
 
-        # Формируем клавиатуру
         keyboard = InlineKeyboardBuilder()
-
-        # Добавляем кнопки мест и общее поздравление
         buttons = []
         buttons.append(InlineKeyboardButton(
             text="Общие поздравления",
-            callback_data=f"congrats_message_active:{giveaway_id}:all"
+            callback_data=f"edit_common_congrats_active:{giveaway_id}"
         ))
         for place in range(start_place, end_place + 1):
             buttons.append(InlineKeyboardButton(
@@ -94,12 +104,10 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 callback_data=f"congrats_message_active:{giveaway_id}:{place}"
             ))
 
-        # Применяем adjust только к кнопкам мест
         for button in buttons:
             keyboard.add(button)
         keyboard.adjust(1)
 
-        # Добавляем навигационные кнопки в одном ряду
         if total_pages > 1:
             prev_page = current_page - 1 if current_page > 1 else total_pages
             next_page = current_page + 1 if current_page < total_pages else 1
@@ -109,7 +117,6 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 InlineKeyboardButton(text="▶️", callback_data=f"message_winners_active_page:{giveaway_id}:{next_page}")
             )
 
-        # Добавляем кнопку "Назад" в отдельном ряду
         keyboard.row(
             InlineKeyboardButton(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         )
@@ -172,7 +179,10 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
         await state.update_data(giveaway_id=giveaway_id, place=place)
         await state.set_state(GiveawayStates.waiting_for_congrats_message_active)
 
-        message_text = f"<tg-emoji emoji-id='5253742260054409879'>✉️</tg-emoji> Напишите своё поздравление для победителя, занявшего {place} место."
+        message_text = (
+            f"<tg-emoji emoji-id='5253742260054409879'>✉️</tg-emoji> Напишите своё поздравление для победителя, занявшего {place} место "
+            f"(до {MAX_CONGRATS_LENGTH} символов).\n{FORMATTING_GUIDE}"
+        )
         if existing_message:
             message_text += f"\n\nТекущее поздравление:\n{existing_message}"
 
@@ -216,9 +226,27 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
         original_message_id = data.get('original_message_id')
 
         formatted_text = message.html_text if message.text else ""
+        text_length = count_length_with_custom_emoji(formatted_text)
+
+        if text_length > MAX_CONGRATS_LENGTH:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
+            error_message = (
+                f"⚠️ Поздравление слишком длинное! Максимум {MAX_CONGRATS_LENGTH} символов, сейчас {text_length}. "
+                f"Сократите текст!\n{FORMATTING_GUIDE}"
+            )
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                error_message,
+                reply_markup=keyboard.as_markup(),
+                message_id=original_message_id,
+                parse_mode='HTML'
+            )
+            return
 
         try:
-            # Save the new congratulation message
             cursor.execute(
                 "DELETE FROM congratulations WHERE giveaway_id = %s AND place = %s",
                 (giveaway_id, place)
@@ -232,7 +260,6 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             )
             conn.commit()
 
-            # Не очищаем состояние, чтобы пользователь мог продолжить редактирование
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Готово", callback_data=f"message_winners_active:{giveaway_id}")
             keyboard.adjust(1)
@@ -348,7 +375,10 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             await state.update_data(giveaway_id=giveaway_id)
             await state.set_state(GiveawayStates.waiting_for_common_congrats_message_active)
 
-            message_text = f"Напишите общее поздравление для всех победителей."
+            message_text = (
+                f"Напишите общее поздравление для всех победителей (до {MAX_CONGRATS_LENGTH} символов).\n"
+                f"{FORMATTING_GUIDE}"
+            )
             if existing_message:
                 message_text += f"\n\nТекущее общее поздравление:\n{existing_message}"
 
@@ -380,6 +410,25 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
         original_message_id = data.get('original_message_id')
 
         formatted_text = message.html_text if message.text else ""
+        text_length = count_length_with_custom_emoji(formatted_text)
+
+        if text_length > MAX_CONGRATS_LENGTH:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
+            error_message = (
+                f"⚠️ Поздравление слишком длинное! Максимум {MAX_CONGRATS_LENGTH} символов, сейчас {text_length}. "
+                f"Сократите текст!\n{FORMATTING_GUIDE}"
+            )
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                error_message,
+                reply_markup=keyboard.as_markup(),
+                message_id=original_message_id,
+                parse_mode='HTML'
+            )
+            return
 
         try:
             cursor.execute(
@@ -404,7 +453,6 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
 
             conn.commit()
 
-            # Не очищаем состояние, чтобы пользователь мог продолжить редактирование
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="Готово", callback_data=f"message_winners_active:{giveaway_id}")
             keyboard.adjust(1)
