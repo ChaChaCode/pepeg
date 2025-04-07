@@ -1,4 +1,4 @@
-from utils import end_giveaway, send_message_with_image
+from utils import end_giveaway, send_message_with_image, select_random_winners
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.context import FSMContext
@@ -6,13 +6,12 @@ from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime, timedelta
 import pytz
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-import aiogram.exceptions
 import json
 import boto3
 from botocore.client import Config
 import requests
 import re
-from aiogram.types import CallbackQuery, FSInputFile
+from aiogram.types import CallbackQuery
 from typing import Dict, List, Tuple, Any
 
 # Настройка логирования 📝
@@ -37,11 +36,12 @@ s3_client = boto3.client(
 )
 
 # Константы ⚙️
-MAX_CAPTION_LENGTH = 850
+MAX_CAPTION_LENGTH = 2500
 MAX_NAME_LENGTH = 50
-MAX_DESCRIPTION_LENGTH = 850
+MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 10
 MAX_WINNERS = 100
+DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'  # Заглушка
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
@@ -84,12 +84,10 @@ def strip_html_tags(text: str) -> str:
     return re.sub(r'<[^>]+>', '', text)
 
 def count_length_with_custom_emoji(text: str) -> int:
-    """Подсчитывает длину текста, считая кастомные эмодзи как 1 символ."""
-    emoji_pattern = r'<tg-emoji emoji-id="[^"]+">[^<]+</tg-emoji>'
-    custom_emojis = re.findall(emoji_pattern, text)
-    cleaned_text = text
-    for emoji in custom_emojis:
-        cleaned_text = cleaned_text.replace(emoji, ' ')
+    # Регулярное выражение для удаления всех HTML-тегов
+    tag_pattern = r'<[^>]+>'
+    # Удаляем все теги из текста
+    cleaned_text = re.sub(tag_pattern, '', text)
     return len(cleaned_text)
 
 def fetch_giveaway_data(cursor: Any, query: str, params: Tuple) -> List[Dict[str, Any]]:
@@ -155,6 +153,17 @@ def get_json_field(cursor, query, params):
         return result  # Если данные уже список, используем их как есть
     raise ValueError(f"Неподдерживаемый тип данных для JSON-поля: {type(result)}")
 
+async def get_file_url(bot: Bot, file_id: str) -> str:
+    """Получает URL файла по его file_id."""
+    try:
+        file = await bot.get_file(file_id)
+        file_path = file.file_path
+        file_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
+        return file_url
+    except Exception as e:
+        logger.error(f"🚫 Ошибка получения URL файла {file_id}: {str(e)}")
+        raise
+
 def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрирует обработчики для управления активными розыгрышами 🎁"""
 
@@ -199,8 +208,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
             giveaway_info = f"""
-{giveaway['name']}
-
 {formatted_description}
 
 <tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
@@ -216,31 +223,27 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.adjust(1)
 
             await bot.answer_callback_query(callback_query.id)
+
+            # Проверяем наличие медиа
+            image_url = None
             if giveaway['media_type'] and giveaway['media_file_id']:
-                media_types = {
-                    'photo': types.InputMediaPhoto,
-                    'gif': types.InputMediaAnimation,
-                    'video': types.InputMediaVideo
-                }
-                await bot.edit_message_media(
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.message_id,
-                    media=media_types[giveaway['media_type']](
-                        media=giveaway['media_file_id'],
-                        caption=giveaway_info,
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
-                )
+                image_url = giveaway['media_file_id']
+                if not image_url.startswith('http'):
+                    image_url = await get_file_url(bot, giveaway['media_file_id'])
             else:
-                await send_message_with_image(
-                    bot,
-                    callback_query.from_user.id,
-                    giveaway_info,
-                    reply_markup=keyboard.as_markup(),
-                    message_id=callback_query.message.message_id,
-                    parse_mode='HTML'
-                )
+                # Используем заглушку для сообщения в меню
+                image_url = DEFAULT_IMAGE_URL
+
+            await send_message_with_image(
+                bot,
+                callback_query.from_user.id,
+                giveaway_info,
+                reply_markup=keyboard.as_markup(),
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=image_url
+            )
+
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка загрузки розыгрыша 😔")
@@ -254,28 +257,68 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.adjust(2)
 
         await bot.answer_callback_query(callback_query.id)
+        # Используем заглушку для сообщения
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
             "<tg-emoji emoji-id='5445267414562389170'>🗑</tg-emoji> Вы уверены, что хотите завершить розыгрыш?",
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=DEFAULT_IMAGE_URL
         )
 
     @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
     async def process_force_end_giveaway(callback_query: CallbackQuery):
         giveaway_id = callback_query.data.split(':')[1]
         try:
+            # Используем заглушку для сообщения
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
                 "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Завершаем розыгрыш...",
-                message_id=callback_query.message.message_id
+                reply_markup=None,
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
-            await end_giveaway(bot=bot, giveaway_id=giveaway_id, conn=conn, cursor=cursor)
 
-            cursor.execute("SELECT participant_counter_tasks FROM giveaways WHERE id = %s", (giveaway_id,))
-            participant_counter_tasks = get_json_field(cursor, "SELECT participant_counter_tasks FROM giveaways WHERE id = %s", (giveaway_id,)) if cursor.fetchone()[0] else []
+            # Получаем данные о розыгрыше
+            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            columns = [desc[0] for desc in cursor.description]
+            giveaway = dict(zip(columns, cursor.fetchone()))
+            if not giveaway:
+                raise Exception("Розыгрыш не найден")
+
+            # Получаем участников
+            participants = []
+            limit = 1000
+            offset = 0
+            while True:
+                cursor.execute(
+                    "SELECT user_id FROM participations WHERE giveaway_id = %s LIMIT %s OFFSET %s",
+                    (giveaway_id, limit, offset)
+                )
+                batch = cursor.fetchall()
+                if not batch:
+                    break
+                participants.extend([{'user_id': row[0]} for row in batch])
+                offset += limit
+                if len(batch) < limit:
+                    break
+
+            # Выбираем победителей
+            winners = await select_random_winners(
+                bot, participants, min(len(participants), giveaway['winner_count']), giveaway_id, conn, cursor
+            )
+
+            # Завершаем розыгрыш с параметром notify_creator=False
+            await end_giveaway(bot=bot, giveaway_id=giveaway_id, conn=conn, cursor=cursor, notify_creator=False)
+
+            # Формируем сообщение в том же формате, что в notify_winners_and_publish_results
+            participant_counter_tasks = get_json_field(cursor,
+                                                       "SELECT participant_counter_tasks FROM giveaways WHERE id = %s",
+                                                       (giveaway_id,))
             channel_links = []
             if participant_counter_tasks:
                 unique_chat_ids = set(task['chat_id'] for task in participant_counter_tasks)
@@ -289,22 +332,93 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         logger.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
                         channel_links.append("Неизвестный канал")
 
-            channel_info = f"\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}" if channel_links else ""
+            if winners:
+                winners_formatted = []
+                for idx, winner in enumerate(winners, start=1):
+                    medal = ""
+                    if idx == 1:
+                        medal = "<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> "
+                    elif idx == 2:
+                        medal = "<tg-emoji emoji-id='5447203607294265305'>🥈</tg-emoji> "
+                    elif idx == 3:
+                        medal = "<tg-emoji emoji-id='5453902265922376865'>🥉</tg-emoji> "
+                    winners_formatted.append(
+                        f"{medal}{idx}. <a href='tg://user?id={winner['user_id']}'>@{winner['username']}</a>")
+
+                winners_list = '\n'.join(winners_formatted)
+                result_message = f"""
+<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
+
+{giveaway['name']}
+
+<b>Победители:</b> 
+<blockquote expandable>
+{winners_list}
+</blockquote>
+"""
+            else:
+                result_message = f"""
+<b>Розыгрыш завершен</b>
+
+{giveaway['name']}
+
+К сожалению, в этом розыгрыше не было участников.
+"""
+
+            if winners and len(winners) < giveaway['winner_count']:
+                result_message += f"""
+Не все призовые места были распределены.
+"""
+
+            if channel_links:
+                result_message += f"""
+<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
+"""
+
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
+            # Определяем URL изображения
+            image_url = None
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                image_url = giveaway['media_file_id']
+                if not image_url.startswith('http'):
+                    image_url = await get_file_url(bot, giveaway['media_file_id'])
+
             await bot.answer_callback_query(callback_query.id)
-            await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Розыгрыш завершён!{channel_info}",
-                reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id,
-                parse_mode='HTML'
-            )
+            if image_url:
+                await send_message_with_image(
+                    bot,
+                    callback_query.from_user.id,
+                    result_message,
+                    reply_markup=keyboard.as_markup(),
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML',
+                    image_url=image_url
+                )
+            else:
+                # Если медиа нет, отправляем сообщение без изображения
+                await bot.edit_message_text(
+                    chat_id=callback_query.from_user.id,
+                    message_id=callback_query.message.message_id,
+                    text=result_message,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML'
+                )
+
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка при завершении 😔")
+            # Используем заглушку для сообщения об ошибке
+            await send_message_with_image(
+                bot,
+                callback_query.from_user.id,
+                "Ошибка при завершении 😔",
+                reply_markup=None,
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_active_post:'))
     async def process_edit_active_post(callback_query: CallbackQuery):
@@ -316,7 +430,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         columns = [desc[0] for desc in cursor.description]
         giveaway = dict(zip(columns, cursor.fetchone()))
         if not giveaway:
-            await bot.send_message(user_id, "🔍 Розыгрыш не найден 😕")
+            # Используем заглушку для сообщения
+            await send_message_with_image(
+                bot,
+                user_id,
+                "🔍 Розыгрыш не найден 😕",
+                reply_markup=None,
+                message_id=message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
+            )
             return
 
         keyboard = InlineKeyboardBuilder()
@@ -337,7 +460,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         giveaway_info = f"""
 <b>Название:</b> {giveaway['name']}
-<b>Описание:</b> {giveaway['description']}
+<b>Описание:\n</b> {giveaway['description']}
 
 {dop_info}
 
@@ -345,34 +468,37 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 """
 
         try:
+            # Проверяем наличие медиа
+            image_url = None
             if giveaway['media_type'] and giveaway['media_file_id']:
-                media_types = {
-                    'photo': types.InputMediaPhoto,
-                    'gif': types.InputMediaAnimation,
-                    'video': types.InputMediaVideo
-                }
-                await bot.edit_message_media(
-                    chat_id=user_id,
-                    message_id=message_id,
-                    media=media_types[giveaway['media_type']](
-                        media=giveaway['media_file_id'],
-                        caption=giveaway_info,
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
-                )
+                image_url = giveaway['media_file_id']
+                if not image_url.startswith('http'):
+                    image_url = await get_file_url(bot, giveaway['media_file_id'])
             else:
-                await send_message_with_image(
-                    bot,
-                    user_id,
-                    giveaway_info,
-                    reply_markup=keyboard.as_markup(),
-                    message_id=message_id,
-                    parse_mode='HTML'
-                )
+                # Используем заглушку для меню редактирования
+                image_url = DEFAULT_IMAGE_URL
+
+            await send_message_with_image(
+                bot,
+                user_id,
+                giveaway_info,
+                reply_markup=keyboard.as_markup(),
+                message_id=message_id,
+                parse_mode='HTML',
+                image_url=image_url
+            )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.send_message(user_id, "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Ошибка загрузки меню 😔")
+            # Используем заглушку для сообщения об ошибке
+            await send_message_with_image(
+                bot,
+                user_id,
+                "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Ошибка загрузки меню 😔",
+                reply_markup=None,
+                message_id=message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
+            )
 
     async def update_published_posts_active(giveaway_id: str, giveaway: Dict[str, Any]):
         try:
@@ -388,8 +514,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
             new_post_text = f"""
-{giveaway['name']}
-
 {formatted_description}
 """
 
@@ -401,23 +525,22 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             for message in published_messages:
                 try:
+                    # Проверяем наличие медиа
                     if giveaway['media_type'] and giveaway['media_file_id']:
-                        media_types = {
-                            'photo': types.InputMediaPhoto,
-                            'gif': types.InputMediaAnimation,
-                            'video': types.InputMediaVideo
-                        }
-                        await bot.edit_message_media(
-                            chat_id=message['chat_id'],
+                        image_url = giveaway['media_file_id']
+                        if not image_url.startswith('http'):
+                            image_url = await get_file_url(bot, giveaway['media_file_id'])
+                        await send_message_with_image(
+                            bot,
+                            message['chat_id'],
+                            new_post_text,
+                            reply_markup=keyboard.as_markup(),
                             message_id=message['message_id'],
-                            media=media_types[giveaway['media_type']](
-                                media=giveaway['media_file_id'],
-                                caption=new_post_text,
-                                parse_mode='HTML'
-                            ),
-                            reply_markup=keyboard.as_markup()
+                            parse_mode='HTML',
+                            image_url=image_url
                         )
                     else:
+                        # Для постов не используем заглушку
                         await bot.edit_message_text(
                             chat_id=message['chat_id'],
                             message_id=message['message_id'],
@@ -448,28 +571,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             f"Отправьте новое название (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
         )
 
-        try:
-            image = FSInputFile('image/opis.png')
-            await bot.edit_message_media(
-                chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=message_text,
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
-            )
-        except aiogram.exceptions.TelegramBadRequest:
-            image = FSInputFile('image/opis.png')
-            sent_message = await bot.send_photo(
-                chat_id=callback_query.from_user.id,
-                photo=image,
-                caption=message_text,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
-            )
-            await state.update_data(last_message_id=sent_message.message_id)
+        # Используем заглушку для сообщения
+        await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=DEFAULT_IMAGE_URL
+        )
 
         await bot.answer_callback_query(callback_query.id)
 
@@ -486,29 +597,29 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if not new_name or text_length > MAX_NAME_LENGTH:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
-                chat_id=message.chat.id,
+            # Используем заглушку для сообщения
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название должно быть от 1 до {MAX_NAME_LENGTH} символов! Сейчас: {text_length}\n{FORMATTING_GUIDE}",
+                reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/name.png'),
-                    caption=f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название должно быть от 1 до {MAX_NAME_LENGTH} символов! Сейчас: {text_length}\n{FORMATTING_GUIDE}",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             return
 
         if text_length > MAX_CAPTION_LENGTH:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
-                chat_id=message.chat.id,
+            # Используем заглушку для сообщения
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {text_length}\n{FORMATTING_GUIDE}",
+                reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/name.png'),
-                    caption=f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {text_length}\n{FORMATTING_GUIDE}",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             return
 
@@ -525,15 +636,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
-                chat_id=message.chat.id,
+            # Используем заглушку для сообщения об ошибке
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить название 😔",
+                reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/name.png'),
-                    caption="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить название 😔",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_description_active:'))
@@ -553,28 +664,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             f"Отправьте новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}"
         )
 
-        try:
-            image = FSInputFile('image/opis.png')
-            await bot.edit_message_media(
-                chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
-                media=types.InputMediaPhoto(
-                    media=image,
-                    caption=message_text,
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
-            )
-        except aiogram.exceptions.TelegramBadRequest:
-            image = FSInputFile('image/opis.png')
-            sent_message = await bot.send_photo(
-                chat_id=callback_query.from_user.id,
-                photo=image,
-                caption=message_text,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
-            )
-            await state.update_data(last_message_id=sent_message.message_id)
+        # Используем заглушку для сообщения
+        await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=DEFAULT_IMAGE_URL
+        )
 
         await bot.answer_callback_query(callback_query.id)
 
@@ -591,29 +690,29 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if not new_description or text_length > MAX_DESCRIPTION_LENGTH:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
-                chat_id=message.chat.id,
+            # Используем заглушку для сообщения
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание должно быть от 1 до {MAX_DESCRIPTION_LENGTH} символов! Сейчас: {text_length}\n{FORMATTING_GUIDE2}",
+                reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/opis.png'),
-                    caption=f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание должно быть от 1 до {MAX_DESCRIPTION_LENGTH} символов! Сейчас: {text_length}\n{FORMATTING_GUIDE2}",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             return
 
         if text_length > MAX_CAPTION_LENGTH:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
-                chat_id=message.chat.id,
+            # Используем заглушку для сообщения
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {text_length}\n{FORMATTING_GUIDE2}",
+                reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/opis.png'),
-                    caption=f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {text_length}\n{FORMATTING_GUIDE2}",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             return
 
@@ -630,15 +729,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
-                chat_id=message.chat.id,
+            # Используем заглушку для сообщения об ошибке
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить описание 😔",
+                reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/opis.png'),
-                    caption="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить описание 😔",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_winner_count_active:'))
@@ -653,6 +752,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
+        # Используем заглушку для сообщения
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
@@ -660,7 +760,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             f"Укажите новое число (максимум {MAX_WINNERS}):",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
-            parse_mode='HTML'
+            parse_mode='HTML',
+            image_url=DEFAULT_IMAGE_URL
         )
         await bot.answer_callback_query(callback_query.id)
 
@@ -679,12 +780,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 keyboard = InlineKeyboardBuilder()
                 keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                # Используем заглушку для сообщения
                 await send_message_with_image(
                     bot,
                     message.chat.id,
                     f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Слишком много победителей! Максимум {MAX_WINNERS}",
                     reply_markup=keyboard.as_markup(),
-                    message_id=last_message_id
+                    message_id=last_message_id,
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
                 )
                 return
 
@@ -715,12 +819,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            # Используем заглушку для сообщения
             await send_message_with_image(
                 bot,
                 message.chat.id,
                 "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число! Например, 3",
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
@@ -728,12 +835,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            # Используем заглушку для сообщения об ошибке
             await send_message_with_image(
                 bot,
                 message.chat.id,
                 "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить победителей 😔",
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
     @dp.callback_query(lambda c: c.data.startswith('change_end_date_active:'))
@@ -757,13 +867,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
+        # Используем заглушку для сообщения
         await send_message_with_image(
             bot,
             callback_query.from_user.id,
             html_message,
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
-            parse_mode='HTML'
+            parse_mode='HTML',
+            image_url=DEFAULT_IMAGE_URL
         )
         await bot.answer_callback_query(callback_query.id)
 
@@ -801,25 +913,30 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
+            # Используем заглушку для сообщения
             await send_message_with_image(
                 bot,
                 message.chat.id,
                 html_message,
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            # Используем заглушку для сообщения об ошибке
             await send_message_with_image(
                 bot,
                 message.chat.id,
                 "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить дату 😔",
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
     @dp.callback_query(lambda c: c.data.startswith('manage_media_active:'))
@@ -835,66 +952,32 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         if giveaway['media_type']:
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_media_active:{giveaway_id}")
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-
+        keyboard.adjust(1, 1)
         message_text = (
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {giveaway['media_type']}.\n\nОтправьте новое или удалите текущее."
             if giveaway['media_type'] else
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!"
         )
 
-        try:
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                media_types = {
-                    'photo': types.InputMediaPhoto,
-                    'gif': types.InputMediaAnimation,
-                    'video': types.InputMediaVideo
-                }
-                await bot.edit_message_media(
-                    chat_id=callback_query.from_user.id,
-                    message_id=callback_query.message.message_id,
-                    media=media_types[giveaway['media_type']](
-                        media=giveaway['media_file_id'],
-                        caption=message_text,
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
-                )
-            else:
-                image = FSInputFile('image/media.png')
-                await bot.edit_message_media(
-                    chat_id=callback_query.from_user.id,
-                    message_id=callback_query.message.message_id,
-                    media=types.InputMediaPhoto(
-                        media=image,
-                        caption=message_text,
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
-                )
-        except aiogram.exceptions.TelegramBadRequest:
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                media_types = {
-                    'photo': bot.send_photo,
-                    'gif': bot.send_animation,
-                    'video': bot.send_video
-                }
-                sent_message = await media_types[giveaway['media_type']](
-                    chat_id=callback_query.from_user.id,
-                    **{giveaway['media_type']: giveaway['media_file_id']},
-                    caption=message_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            else:
-                image = FSInputFile('image/media.png')
-                sent_message = await bot.send_photo(
-                    chat_id=callback_query.from_user.id,
-                    photo=image,
-                    caption=message_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            await state.update_data(last_message_id=sent_message.message_id)
+        # Проверяем наличие медиа
+        image_url = None
+        if giveaway['media_type'] and giveaway['media_file_id']:
+            image_url = giveaway['media_file_id']
+            if not image_url.startswith('http'):
+                image_url = await get_file_url(bot, giveaway['media_file_id'])
+        else:
+            # Используем заглушку для сообщения в меню
+            image_url = DEFAULT_IMAGE_URL
+
+        await send_message_with_image(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=image_url
+        )
 
         await bot.answer_callback_query(callback_query.id)
 
@@ -915,22 +998,22 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             elif message.animation:
                 file_id = message.animation.file_id
                 media_type = 'gif'
-                file_ext = 'gif'
+                file_ext = 'mp4'
             elif message.video:
                 file_id = message.video.file_id
                 media_type = 'video'
                 file_ext = 'mp4'
             else:
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-                await bot.edit_message_media(
-                    chat_id=message.chat.id,
+                # Используем заглушку для сообщения
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Отправьте фото, GIF или видео!",
+                    reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
-                    media=types.InputMediaPhoto(
-                        media=FSInputFile('image/media.png'),
-                        caption="<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Отправьте фото, GIF или видео!",
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
                 )
                 return
 
@@ -940,15 +1023,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             if file_size_mb > MAX_MEDIA_SIZE_MB:
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-                await bot.edit_message_media(
-                    chat_id=message.chat.id,
+                # Используем заглушку для сообщения
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой! Максимум {MAX_MEDIA_SIZE_MB} МБ",
+                    reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
-                    media=types.InputMediaPhoto(
-                        media=FSInputFile('image/media.png'),
-                        caption=f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой! Максимум {MAX_MEDIA_SIZE_MB} МБ",
-                        parse_mode='HTML'
-                    ),
-                    reply_markup=keyboard.as_markup()
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
                 )
                 return
 
@@ -975,15 +1058,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_media(
-                chat_id=message.chat.id,
+            # Используем заглушку для сообщения об ошибке
+            await send_message_with_image(
+                bot,
+                message.chat.id,
+                "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось загрузить медиа 😔",
+                reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/media.png'),
-                    caption="<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось загрузить медиа 😔",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
     @dp.callback_query(lambda c: c.data.startswith('delete_media_active:'))
@@ -1002,18 +1085,28 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-            await bot.edit_message_media(
-                chat_id=callback_query.from_user.id,
+            # Используем заглушку для сообщения
+            await send_message_with_image(
+                bot,
+                callback_query.from_user.id,
+                f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!",
+                reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
-                media=types.InputMediaPhoto(
-                    media=FSInputFile('image/media.png'),
-                    caption=f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!",
-                    parse_mode='HTML'
-                ),
-                reply_markup=keyboard.as_markup()
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             await bot.answer_callback_query(callback_query.id, text="Медиа удалено ✅")
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.answer_callback_query(callback_query.id, text="Не удалось удалить медиа 😔")
+            # Используем заглушку для сообщения об ошибке
+            await send_message_with_image(
+                bot,
+                callback_query.from_user.id,
+                "Не удалось удалить медиа 😔",
+                reply_markup=None,
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
+            )
