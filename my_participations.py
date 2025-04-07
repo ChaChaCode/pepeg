@@ -7,6 +7,7 @@ from utils import send_message_with_image
 import math
 import re
 from datetime import timedelta
+from aiogram.types import LinkPreviewOptions
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
@@ -161,14 +162,14 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 giveaway['end_time']
             )
 
-            # Формируем текст с сохранением HTML-форматирования
-            giveaway_info = f"""
-{giveaway['name']}
-
-{description_with_vars}
-
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}
-"""
+            # Формируем текст с превью медиа
+            placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+            media_url = giveaway['media_file_id'] if giveaway['media_file_id'] and giveaway['media_type'] else placeholder_url
+            giveaway_info = (
+                f"<a href=\"{media_url}\"> </a>\n\n"
+                f"{description_with_vars}\n\n"
+                f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}"
+            )
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
@@ -186,63 +187,22 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 else:
                     raise
 
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                try:
-                    if giveaway['media_type'] == 'photo':
-                        await bot.edit_message_media(
-                            chat_id=callback_query.message.chat.id,
-                            message_id=callback_query.message.message_id,
-                            media=types.InputMediaPhoto(
-                                media=giveaway['media_file_id'],
-                                caption=giveaway_info,
-                                parse_mode='HTML'
-                            ),
-                            reply_markup=keyboard.as_markup()
-                        )
-                    elif giveaway['media_type'] == 'gif':
-                        await bot.edit_message_media(
-                            chat_id=callback_query.message.chat.id,
-                            message_id=callback_query.message.message_id,
-                            media=types.InputMediaAnimation(
-                                media=giveaway['media_file_id'],
-                                caption=giveaway_info,
-                                parse_mode='HTML'
-                            ),
-                            reply_markup=keyboard.as_markup()
-                        )
-                    elif giveaway['media_type'] == 'video':
-                        await bot.edit_message_media(
-                            chat_id=callback_query.message.chat.id,
-                            message_id=callback_query.message.message_id,
-                            media=types.InputMediaVideo(
-                                media=giveaway['media_file_id'],
-                                caption=giveaway_info,
-                                parse_mode='HTML'
-                            ),
-                            reply_markup=keyboard.as_markup()
-                        )
-                except TelegramBadRequest as e:
-                    if "message to edit not found" in str(e):
-                        logger.warning(f"Message to edit not found: {e}")
-                        await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
-                    else:
-                        raise
-            else:
-                try:
-                    await send_message_with_image(
-                        bot,
-                        callback_query.from_user.id,
-                        giveaway_info,
-                        reply_markup=keyboard.as_markup(),
-                        message_id=callback_query.message.message_id,
-                        parse_mode='HTML'
-                    )
-                except TelegramBadRequest as e:
-                    if "message to edit not found" in str(e):
-                        logger.warning(f"Message to edit not found: {e}")
-                        await send_new_giveaway_message(callback_query.message.chat.id, giveaway, giveaway_info, keyboard)
-                    else:
-                        raise
+            # Отправляем сообщение с превью
+            try:
+                await bot.edit_message_text(
+                    chat_id=callback_query.message.chat.id,
+                    message_id=callback_query.message.message_id,
+                    text=giveaway_info,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options = LinkPreviewOptions(show_above_text=True)
+                )
+            except TelegramBadRequest as e:
+                if "message to edit not found" in str(e):
+                    logger.warning(f"Message to edit not found: {e}")
+                    await send_new_giveaway_message(callback_query.message.chat.id, giveaway_info, keyboard)
+                else:
+                    raise
 
         except Exception as e:
             logger.error(f"Error in process_giveaway_details: {str(e)}")
@@ -258,40 +218,13 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 parse_mode='HTML'
             )
 
-    async def send_new_giveaway_message(chat_id, giveaway, g_info, keyboard):
-        if giveaway['media_type'] and giveaway['media_file_id']:
-            media_type = giveaway['media_type']
-            if media_type == 'photo':
-                await bot.send_photo(
-                    chat_id,
-                    giveaway['media_file_id'],
-                    caption=g_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            elif media_type == 'gif':
-                await bot.send_animation(
-                    chat_id,
-                    giveaway['media_file_id'],
-                    caption=g_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-            elif media_type == 'video':
-                await bot.send_video(
-                    chat_id,
-                    giveaway['media_file_id'],
-                    caption=g_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-        else:
-            await send_message_with_image(
-                bot,
-                chat_id,
-                g_info,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
-            )
+    async def send_new_giveaway_message(chat_id, g_info, keyboard):
+        await bot.send_message(
+            chat_id=chat_id,
+            text=g_info,
+            reply_markup=keyboard.as_markup(),
+            parse_mode='HTML',
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
+        )
 
     return send_new_giveaway_message
