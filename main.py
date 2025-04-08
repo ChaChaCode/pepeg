@@ -122,20 +122,6 @@ class SpamProtectionMiddleware(BaseMiddleware):
         # Передаем управление следующему обработчику
         return await handler(event, data)
 
-# Регистрация middleware
-dp.message.middleware(SpamProtectionMiddleware())
-dp.callback_query.middleware(SpamProtectionMiddleware())
-
-# Регистрация обработчиков из модулей
-register_history_handlers(dp, bot, conn, cursor)
-register_active_giveaways_handlers(dp, bot, conn, cursor)
-register_create_giveaway_handlers(dp, bot, conn, cursor)
-register_created_giveaways_handlers(dp, bot, conn, cursor)
-register_my_participations_handlers(dp, bot, conn, cursor)
-register_congratulations_messages(dp, bot, conn, cursor)
-register_congratulations_messages_active(dp, bot, conn, cursor)
-register_new_public(dp, bot, conn, cursor)
-
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
     user_id = message.from_user.id
@@ -199,6 +185,20 @@ async def cmd_start(message: types.Message):
         "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:",
         reply_markup=keyboard.as_markup()
     )
+
+# Регистрация middleware
+dp.message.middleware(SpamProtectionMiddleware())
+dp.callback_query.middleware(SpamProtectionMiddleware())
+
+# Регистрация обработчиков из модулей
+register_history_handlers(dp, bot, conn, cursor)
+register_active_giveaways_handlers(dp, bot, conn, cursor)
+register_create_giveaway_handlers(dp, bot, conn, cursor)
+register_created_giveaways_handlers(dp, bot, conn, cursor)
+register_my_participations_handlers(dp, bot, conn, cursor)
+register_congratulations_messages(dp, bot, conn, cursor)
+register_congratulations_messages_active(dp, bot, conn, cursor)
+register_new_public(dp, bot, conn, cursor)
 
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
