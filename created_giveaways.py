@@ -2021,11 +2021,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         try:
                             chat = await bot.get_chat(chat_id)
                             channel_name = chat.title
-                            # Формируем ссылку на конкретный пост
-                            if chat.username:
-                                post_link = f"https://t.me/{chat.username}/{message_id}"
+                            # Проверяем тип чата: группа или канал
+                            if chat.type in ['group', 'supergroup']:
+                                # Для групп используем ссылку на группу
+                                post_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(chat_id).replace('-100', '')}"
                             else:
-                                post_link = f"https://t.me/c/{str(chat_id).replace('-100', '')}/{message_id}"
+                                # Для каналов используем ссылку на конкретный пост
+                                if chat.username:
+                                    post_link = f"https://t.me/{chat.username}/{message_id}"
+                                else:
+                                    post_link = f"https://t.me/c/{str(chat_id).replace('-100', '')}/{message_id}"
                             channel_links.append(f"<a href=\"{post_link}\">{channel_name}</a>")
                         except Exception as e:
                             logger.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
