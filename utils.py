@@ -53,7 +53,7 @@ async def get_file_url(bot: Bot, file_id: str) -> str:
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
                                  parse_mode: str = 'HTML', entities=None, image_url: str = None) -> Message | None:
     # Если image_url не передан, используем дефолтное изображение
-    image_url = image_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+    image_url = image_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
     # Используем HTML-разметку с тегом <a> и символом  
     full_text = f"<a href=\"{image_url}\">\u200B</a>{text}"
     # Настраиваем LinkPreviewOptions с show_above_text=True
