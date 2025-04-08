@@ -207,8 +207,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             end_time = (giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M (МСК)')
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
-            giveaway_info = f"""
-{formatted_description}
+            giveaway_info = f"""{formatted_description}
 
 <tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
 {channel_info}
@@ -346,8 +345,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         f"{medal}{idx}. <a href='tg://user?id={winner['user_id']}'>@{winner['username']}</a>")
 
                 winners_list = '\n'.join(winners_formatted)
-                result_message = f"""
-<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
+                result_message = f"""<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
 {giveaway['name']}
 
@@ -458,8 +456,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
         )
 
-        giveaway_info = f"""
-<b>Название:</b> {giveaway['name']}
+        giveaway_info = f"""<b>Название:</b> {giveaway['name']}
 <b>Описание:\n</b> {giveaway['description']}
 
 {dop_info}
@@ -502,56 +499,74 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
     async def update_published_posts_active(giveaway_id: str, giveaway: Dict[str, Any]):
         try:
+            # Получаем опубликованные сообщения
             published_messages = get_json_field(cursor, "SELECT published_messages FROM giveaways WHERE id = %s",
                                                 (giveaway_id,))
+            if not published_messages:
+                logger.info(f"Нет опубликованных сообщений для розыгрыша {giveaway_id}")
+                return
 
+            # Получаем текущее количество участников
             cursor.execute("SELECT COUNT(*) FROM participations WHERE giveaway_id = %s", (giveaway_id,))
             participants_count = cursor.fetchone()[0]
 
+            # Форматируем описание с учетом переменных
             description = giveaway['description']
             winner_count = str(giveaway['winner_count'])
             end_time = (giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M (МСК)')
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
-            new_post_text = f"""
-{formatted_description}
-"""
+            # Текст нового поста
+            new_post_text = f"{formatted_description}"
 
+            # Создаем клавиатуру с кнопкой "Участвовать"
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text=f"🎉 Участвовать ({participants_count})",
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
 
+            # Обновляем все опубликованные сообщения
             for message in published_messages:
+                chat_id = message['chat_id']
+                message_id = message['message_id']
+
                 try:
-                    # Проверяем наличие медиа
+                    # Определяем URL изображения
+                    image_url = None
                     if giveaway['media_type'] and giveaway['media_file_id']:
                         image_url = giveaway['media_file_id']
                         if not image_url.startswith('http'):
                             image_url = await get_file_url(bot, giveaway['media_file_id'])
+
+                    if image_url:
+                        # Обновляем сообщение с изображением
                         await send_message_with_image(
                             bot,
-                            message['chat_id'],
+                            chat_id,
                             new_post_text,
                             reply_markup=keyboard.as_markup(),
-                            message_id=message['message_id'],
+                            message_id=message_id,
                             parse_mode='HTML',
                             image_url=image_url
                         )
                     else:
-                        # Для постов не используем заглушку
+                        # Обновляем текстовое сообщение
                         await bot.edit_message_text(
-                            chat_id=message['chat_id'],
-                            message_id=message['message_id'],
+                            chat_id=chat_id,
+                            message_id=message_id,
                             text=new_post_text,
                             reply_markup=keyboard.as_markup(),
                             parse_mode='HTML'
                         )
+                    logger.info(f"Обновлен пост {message_id} в чате {chat_id}")
+
                 except Exception as e:
-                    logger.error(f"🚫 Ошибка обновления поста {message['message_id']}: {str(e)}")
+                    logger.error(f"🚫 Ошибка обновления поста {message_id} в чате {chat_id}: {str(e)}")
+                    continue
+
         except Exception as e:
-            logger.error(f"🚫 Ошибка в update_published_posts_active: {str(e)}")
+            logger.error(f"🚫 Ошибка в update_published_posts_active для розыгрыша {giveaway_id}: {str(e)}")
             raise
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name_active:'))
@@ -860,8 +875,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
-        html_message = f"""
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Текущее время окончания: <b>{formatted_end_time}</b>
+        html_message = f"""<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Текущее время окончания: <b>{formatted_end_time}</b>
 
 Укажите новую дату завершения в формате ДД.ММ.ГГГГ ЧЧ:ММ по МСК
 
@@ -908,8 +922,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
-            html_message = f"""
-<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты! Используйте ДД.ММ.ГГГГ ЧЧ:ММ
+            html_message = f"""<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты! Используйте ДД.ММ.ГГГГ ЧЧ:ММ
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
