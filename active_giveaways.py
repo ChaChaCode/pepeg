@@ -41,7 +41,7 @@ MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 10
 MAX_WINNERS = 100
-DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'  # Заглушка
+DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'  # Заглушка
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
@@ -220,9 +220,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             giveaway_info = f"""{formatted_description}
 
-    <tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
-    {channel_info}
-    """
+<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
+{channel_info}
+"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Редактировать", callback_data=f"edit_active_post:{giveaway_id}")
@@ -460,7 +460,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 1, 1)
 
-        media_display = "Медиа: отсутствует" if not giveaway['media_type'] else f"Медиа: {giveaway['media_type']}"
+        # Определяем тип медиа для отображения
+        media_display = "Медиа: отсутствует"
+        if giveaway['media_type']:
+            if giveaway['media_type'] == 'photo':
+                media_display = "Медиа: фото"
+            elif giveaway['media_type'] == 'gif':
+                media_display = "Медиа: gif"
+            elif giveaway['media_type'] == 'video':
+                media_display = "Медиа: видео"
+
         dop_info = (
             f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
             f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> <b>{media_display}</b>\n"
@@ -969,6 +978,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
         giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
 
+        # Проверяем наличие медиа
+        media_file_id = giveaway.get('media_file_id')
+        media_type = giveaway.get('media_type')
+        has_media = media_file_id and media_type
+
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_media_active)
 
@@ -978,7 +992,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
         keyboard.adjust(1, 1)
         message_text = (
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {giveaway['media_type']}.\n\nОтправьте новое или удалите текущее."
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}.\n\nОтправьте новое или удалите текущее."
             if giveaway['media_type'] else
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!"
         )
