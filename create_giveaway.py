@@ -224,7 +224,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
         message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
@@ -250,7 +250,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
             error_text = f"<a href=\"{image_url}\">\u200B</a>⚠️ Название слишком длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
-            link_preview_options = LinkPreviewOptions(is_above_text=True)
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await bot.edit_message_text(
                 chat_id=message.chat.id,
@@ -268,7 +268,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
         description = data.get('description', '')
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         if description:
             message_text = (
@@ -300,7 +300,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
         message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: {name}\n\nЕсли хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE}"
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
@@ -319,7 +319,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         description = data.get('description', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         if description:
             message_text = (
@@ -355,7 +355,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
             error_text = f"<a href=\"{image_url}\">\u200B</a>⚠️ Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
-            link_preview_options = LinkPreviewOptions(is_above_text=True)
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await bot.edit_message_text(
                 chat_id=message.chat.id,
@@ -374,7 +374,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         media_url = data.get('media_url')  # Используем media_url вместо media_file_id_temp
         media_type = data.get('media_type')
         placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         message_text = (
             f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>"
@@ -405,7 +405,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         description = data.get('description', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         if description:
             message_text = (
@@ -434,7 +434,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
         placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         media_url = data.get('media_url')
         media_type = data.get('media_type')
@@ -466,7 +466,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         # Пересоздаем клавиатуру после удаления медиа
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
         placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         message_text = (
             f"<a href=\"{placeholder_url}\"> </a>"
@@ -492,7 +492,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
         placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         if message.photo:
             file_id = message.photo[-1].file_id
@@ -593,7 +593,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_end_time)
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
         message_text = (
             f"<a href=\"{image_url}\">\u200B</a>Текущее время окончания: <b>{end_time}</b>\n\n"
             f"Если хотите изменить, укажите новую дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b> по МСК\n\n"
@@ -619,7 +619,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_media_upload)
         placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         media_url = data.get('media_url')
         media_type = data.get('media_type')
@@ -652,7 +652,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         try:
             end_time_dt = datetime.strptime(message.text, "%d.%m.%Y %H:%M")
@@ -706,7 +706,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await state.set_state(GiveawayStates.waiting_for_winner_count)
         data = await state.get_data()
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data="back_to_end_time")
@@ -732,7 +732,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_end_time)
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         message_text = (
             f"<a href=\"{image_url}\">\u200B</a>Текущее время окончания: <b>{end_time}</b>\n\n"
@@ -761,7 +761,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         data = await state.get_data()
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
-        link_preview_options = LinkPreviewOptions(is_above_text=True)
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         try:
             winner_count = int(message.text)
@@ -878,7 +878,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
 
             giveaway_info = f"<a href=\"{image_url}\">\u200B</a>{formatted_description}"
-            link_preview_options = LinkPreviewOptions(is_above_text=True)
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
 
             if message_id:
                 await bot.edit_message_text(
@@ -904,7 +904,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
             error_text = f"<a href=\"{image_url}\">\u200B</a>❌ Ошибка загрузки розыгрыша. Попробуйте снова!"
-            link_preview_options = LinkPreviewOptions(is_above_text=True)
+            link_preview_options = LinkPreviewOptions(show_above_text=True)
 
             if message_id:
                 await bot.edit_message_text(
