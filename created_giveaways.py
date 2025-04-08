@@ -1,5 +1,4 @@
 from typing import List, Dict, Any
-import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
@@ -17,6 +16,7 @@ from botocore.client import Config
 import requests
 import re
 from aiogram.types import CallbackQuery
+import logging
 
 # Настройка логирования 📝
 logging.basicConfig(level=logging.INFO)
@@ -52,7 +52,7 @@ MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 10
 MAX_WINNERS = 100
-DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'  # Добавляем константу
+DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
@@ -126,10 +126,8 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
         file_size_mb = len(file_content) / (1024 * 1024)
         if file_size_mb > MAX_MEDIA_SIZE_MB:
             return False, f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой! Максимум: {MAX_MEDIA_SIZE_MB} МБ 😔"
-
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
-
         presigned_url = s3_client.generate_presigned_url(
             'put_object',
             Params={
@@ -139,13 +137,11 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
             },
             ExpiresIn=3600
         )
-
         response = requests.put(
             presigned_url,
             data=file_content,
             headers={'Content-Type': 'application/octet-stream'}
         )
-
         if response.status_code == 200:
             public_url = f"https://{YANDEX_BUCKET_NAME}.storage.yandexcloud.net/{unique_filename}"
             logger.info(f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Файл загружен: {unique_filename}")
@@ -153,7 +149,6 @@ async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, s
         else:
             logger.error(f"❌ Ошибка загрузки: {response.status_code}")
             raise Exception(f"Не удалось загрузить: {response.status_code}")
-
     except Exception as e:
         logger.error(f"🚫 Ошибка: {str(e)}")
         return False, f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось загрузить файл: {str(e)}"
@@ -166,17 +161,15 @@ async def get_file_url(bot: Bot, file_id: str) -> str:
         return file_url
     except Exception as e:
         logger.error(f"Ошибка получения URL файла: {str(e)}")
-        return None
+        raise
 
 def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрирует обработчики для управления розыгрышами 🎁"""
-
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
     async def process_created_giveaways(callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
-
         try:
             # Получаем общее количество незавершенных розыгрышей
             cursor.execute(
@@ -187,11 +180,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 (user_id,)
             )
             total_giveaways = cursor.fetchone()[0]
-
             if total_giveaways == 0:
                 await bot.answer_callback_query(callback_query.id,
                                                 text="📭 Пока нет незавершенных розыгрышей? Создайте свой первый! 🚀")
-                # Добавляем сообщение с заглушкой
                 await send_message_with_image(
                     bot,
                     user_id,
@@ -202,10 +193,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     image_url=DEFAULT_IMAGE_URL
                 )
                 return
-
             total_pages = max(1, math.ceil(total_giveaways / ITEMS_PER_PAGE))
             offset = (current_page - 1) * ITEMS_PER_PAGE
-
             # Получаем только незавершенные розыгрыши для текущей страницы
             cursor.execute(
                 """
@@ -221,7 +210,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 (user_id, ITEMS_PER_PAGE, offset)
             )
             current_giveaways = cursor.fetchall()
-
             keyboard = InlineKeyboardBuilder()
             for giveaway in current_giveaways:
                 name = str(giveaway[2]) if giveaway[2] is not None else "Без названия"
@@ -233,23 +221,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     text=f"{status_indicator}{clean_name}",
                     callback_data=callback_data
                 ))
-
             nav_buttons = []
             if total_pages > 1:
                 prev_page = current_page - 1 if current_page > 1 else total_pages
                 nav_buttons.append(
                     InlineKeyboardButton(text="◀️", callback_data=f"created_giveaways_page:{prev_page}"))
-
                 nav_buttons.append(InlineKeyboardButton(text=f"📄 {current_page}/{total_pages}", callback_data="ignore"))
-
                 next_page = current_page + 1 if current_page < total_pages else 1
                 nav_buttons.append(
                     InlineKeyboardButton(text="▶️", callback_data=f"created_giveaways_page:{next_page}"))
-
             if nav_buttons:
                 keyboard.row(*nav_buttons)
             keyboard.row(InlineKeyboardButton(text="В меню", callback_data="back_to_main_menu"))
-
             # Для проверки активных розыгрышей среди незавершенных
             cursor.execute(
                 "SELECT EXISTS(SELECT 1 FROM giveaways WHERE user_id = %s AND is_active = 'true' AND is_completed = false)",
@@ -263,7 +246,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра!\n\n"
                 f"Всего розыгрышей: {total_giveaways}"
             )
-
             await bot.answer_callback_query(callback_query.id)
             await send_message_with_image(
                 bot,
@@ -272,13 +254,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL  # Добавляем заглушку
+                image_url=DEFAULT_IMAGE_URL
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id,
                                             text="Упс! Что-то пошло не так 😔")
-            # Добавляем сообщение с заглушкой
             await send_message_with_image(
                 bot,
                 user_id,
@@ -331,9 +312,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             end_time = giveaway['end_time'].strftime('%d.%m.%Y %H:%M (МСК)') if giveaway['end_time'] else "Не указано"
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
-            giveaway_info = f"""
-{formatted_description}
-"""
+            giveaway_info = f"""{formatted_description}"""
 
             # Определяем URL медиа
             image_url = None
@@ -344,7 +323,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, giveaway['media_file_id'])
             else:
-                image_url = DEFAULT_IMAGE_URL  # Добавляем заглушку, если медиа нет
+                image_url = DEFAULT_IMAGE_URL # Добавляем заглушку
 
             await bot.answer_callback_query(callback_query.id)
             await state.clear()
@@ -574,8 +553,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
         )
 
-        giveaway_info = f"""
-<b>Название:</b> {giveaway['name']}
+        giveaway_info = f"""<b>Название:</b> {giveaway['name']}
 <b>Описание:\n</b> {giveaway['description']}
 
 {dop_info}
@@ -1251,8 +1229,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
-        html_message = f"""
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Текущее время окончания: <b>{formatted_end_time}</b>
+        html_message = f"""<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Текущее время окончания: <b>{formatted_end_time}</b>
 
 Если хотите изменить, укажите новую дату завершения в формате ДД.ММ.ГГГГ ЧЧ:ММ по МСК
 
@@ -1302,9 +1279,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             end_time = giveaway['end_time'].strftime('%d.%m.%Y %H:%M (МСК)') if giveaway['end_time'] else "Не указано"
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
-            post_text = f"""
-{formatted_description}
-"""
+            post_text = f"""{formatted_description}"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
@@ -1391,8 +1366,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◶ Отмена", callback_data=f"edit_post:{giveaway_id}")
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
-            html_message = f"""
-<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты!\nИспользуйте ДД.ММ.ГГГГ ЧЧ:ММ
+            html_message = f"""<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты!\nИспользуйте ДД.ММ.ГГГГ ЧЧ:ММ
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
@@ -1913,9 +1887,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             end_time = giveaway['end_time'].strftime('%d.%m.%Y %H:%M (МСК)') if giveaway['end_time'] else "Не указано"
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
-            post_text = f"""
-{formatted_description}
-"""
+            post_text = f"""{formatted_description}"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
