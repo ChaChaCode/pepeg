@@ -127,14 +127,24 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             f"Отображаются места {start_place}-{end_place} из {winner_count}."
         )
 
-        await send_message_with_image(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML'
-        )
+        try:
+            await send_message_with_image(
+                bot=bot,
+                chat_id=callback_query.from_user.id,
+                text=message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML'
+            )
+        except Exception as e:
+            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
+            await send_message_with_image(
+                bot=bot,
+                chat_id=callback_query.from_user.id,
+                text=message_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
+            )
         await callback_query.answer()
 
     def extract_message(obj: Union[str, Dict, List]) -> Union[str, None]:
@@ -191,30 +201,28 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
 
         try:
             sent_message = await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                message_text,
+                bot=bot,
+                chat_id=callback_query.from_user.id,
+                text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML'
             )
-
             if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
             else:
-                logger.error("Failed to send message with image")
+                logger.error("Failed to edit message with send_message_with_image")
         except Exception as e:
-            logger.error(f"Error in send_message_with_image: {str(e)}")
-            try:
-                sent_message = await bot.send_message(
-                    callback_query.from_user.id,
-                    message_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
+            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
+            sent_message = await send_message_with_image(
+                bot=bot,
+                chat_id=callback_query.from_user.id,
+                text=message_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
+            )
+            if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
-            except Exception as e:
-                logger.error(f"Error sending fallback message: {str(e)}")
 
         await callback_query.answer()
 
@@ -237,9 +245,9 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
-                bot,
-                message.chat.id,
-                error_message,
+                bot=bot,
+                chat_id=message.chat.id,
+                text=error_message,
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
                 parse_mode='HTML'
@@ -270,41 +278,29 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 f"Вы можете продолжить редактирование или завершить."
             )
 
-            if original_message_id:
-                try:
-                    await bot.edit_message_caption(
-                        chat_id=message.chat.id,
-                        message_id=original_message_id,
-                        caption=updated_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                except Exception as edit_error:
-                    logger.error(f"Error editing message: {str(edit_error)}")
-                    new_message = await send_message_with_image(
-                        bot,
-                        message.chat.id,
-                        updated_text,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                    await state.update_data(original_message_id=new_message.message_id)
-            else:
-                new_message = await send_message_with_image(
-                    bot,
-                    message.chat.id,
-                    updated_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-                await state.update_data(original_message_id=new_message.message_id)
-
+            await send_message_with_image(
+                bot=bot,
+                chat_id=message.chat.id,
+                text=updated_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=original_message_id,
+                parse_mode='HTML'
+            )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
         except Exception as e:
-            logger.error(f"Error saving congratulation message: {str(e)}")
+            logger.error(f"Ошибка сохранения поздравления: {str(e)}")
             conn.rollback()
-            await message.reply("Произошла ошибка при сохранении поздравления. Пожалуйста, попробуйте еще раз.")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
+            await send_message_with_image(
+                bot=bot,
+                chat_id=message.chat.id,
+                text="Произошла ошибка при сохранении поздравления. Попробуйте снова.",
+                reply_markup=keyboard.as_markup(),
+                message_id=original_message_id,
+                parse_mode='HTML'
+            )
 
     @dp.callback_query(lambda c: c.data == 'show_common_congrats_active')
     async def show_common_congrats_active(callback_query: types.CallbackQuery, state: FSMContext):
@@ -341,16 +337,16 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             keyboard.adjust(1)
 
             await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                message_text,
+                bot=bot,
+                chat_id=callback_query.from_user.id,
+                text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML'
             )
 
         except Exception as e:
-            logger.error(f"Error fetching common congratulation: {str(e)}")
+            logger.error(f"Ошибка получения общего поздравления: {str(e)}")
             await callback_query.answer("Произошла ошибка при получении общего поздравления.")
 
         await callback_query.answer()
@@ -366,11 +362,7 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 (giveaway_id,)
             )
             existing_messages = [row[0] for row in cursor.fetchall()]
-
-            if existing_messages and len(set(existing_messages)) == 1:
-                existing_message = existing_messages[0]
-            else:
-                existing_message = None
+            existing_message = existing_messages[0] if existing_messages and len(set(existing_messages)) == 1 else None
 
             await state.update_data(giveaway_id=giveaway_id)
             await state.set_state(GiveawayStates.waiting_for_common_congrats_message_active)
@@ -386,19 +378,18 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
 
             sent_message = await send_message_with_image(
-                bot,
-                callback_query.from_user.id,
-                message_text,
+                bot=bot,
+                chat_id=callback_query.from_user.id,
+                text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML'
             )
-
             if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
 
         except Exception as e:
-            logger.error(f"Error preparing to edit common congratulation: {str(e)}")
+            logger.error(f"Ошибка подготовки к редактированию общего поздравления: {str(e)}")
             await callback_query.answer("Произошла ошибка при подготовке к редактированию общего поздравления.")
 
         await callback_query.answer()
@@ -421,9 +412,9 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_with_image(
-                bot,
-                message.chat.id,
-                error_message,
+                bot=bot,
+                chat_id=message.chat.id,
+                text=error_message,
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
                 parse_mode='HTML'
@@ -463,38 +454,26 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 f"Вы можете продолжить редактирование или завершить."
             )
 
-            if original_message_id:
-                try:
-                    await bot.edit_message_caption(
-                        chat_id=message.chat.id,
-                        message_id=original_message_id,
-                        caption=success_message,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                except Exception as edit_error:
-                    logger.error(f"Error editing message: {str(edit_error)}")
-                    new_message = await send_message_with_image(
-                        bot,
-                        message.chat.id,
-                        success_message,
-                        reply_markup=keyboard.as_markup(),
-                        parse_mode='HTML'
-                    )
-                    await state.update_data(original_message_id=new_message.message_id)
-            else:
-                new_message = await send_message_with_image(
-                    bot,
-                    message.chat.id,
-                    success_message,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
-                )
-                await state.update_data(original_message_id=new_message.message_id)
-
+            await send_message_with_image(
+                bot=bot,
+                chat_id=message.chat.id,
+                text=success_message,
+                reply_markup=keyboard.as_markup(),
+                message_id=original_message_id,
+                parse_mode='HTML'
+            )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
         except Exception as e:
-            logger.error(f"Error saving common congratulation message: {str(e)}")
+            logger.error(f"Ошибка сохранения общего поздравления: {str(e)}")
             conn.rollback()
-            await message.reply("Произошла ошибка при сохранении поздравлений. Пожалуйста, попробуйте еще раз.")
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
+            await send_message_with_image(
+                bot=bot,
+                chat_id=message.chat.id,
+                text="Произошла ошибка при сохранении поздравления. Попробуйте снова.",
+                reply_markup=keyboard.as_markup(),
+                message_id=original_message_id,
+                parse_mode='HTML'
+            )
