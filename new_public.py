@@ -1,9 +1,7 @@
-from aiogram import Bot, Dispatcher, types
+from aiogram import Dispatcher, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.filters import ChatMemberUpdatedFilter, IS_MEMBER
 from aiogram.types import ChatMemberUpdated, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberAdministrator
-from utils import send_message_with_image
 from aiogram.enums import ChatMemberStatus, ChatType
 import logging
 import aiohttp
@@ -11,16 +9,12 @@ import uuid
 import boto3
 from botocore.client import Config
 from datetime import datetime
-import requests
 import io
+import asyncio
+from utils import send_message_with_image
 
-# Настройка логирования с более подробным выводом
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
-)
-
-BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Конфигурация Yandex Cloud S3 ☁️
 YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
@@ -41,400 +35,305 @@ s3_client = boto3.client(
 
 class GiveawayStates(StatesGroup):
     binding_communities = State()
-    binding_partner_communities = State()
 
 pending_channels = {}
 
 async def upload_to_storage(file_content: bytes, filename: str) -> tuple[bool, str]:
     try:
         file_size_mb = len(file_content) / (1024 * 1024)
-        logging.info(f"Размер файла: {file_size_mb} МБ")
         if file_size_mb > 5:
             return False, "Файл слишком большой. Максимальный размер: 5 МБ"
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
-        logging.info(f"Генерируем имя файла: {unique_filename}")
-
-        try:
-            s3_client.head_bucket(Bucket=YANDEX_BUCKET_NAME)
-            logging.info(f"Бакет {YANDEX_BUCKET_NAME} доступен")
-        except Exception as bucket_error:
-            logging.warning(f"Бакет {YANDEX_BUCKET_NAME} недоступен: {str(bucket_error)}")
-            try:
-                s3_client.create_bucket(
-                    Bucket=YANDEX_BUCKET_NAME,
-                    CreateBucketConfiguration={'LocationConstraint': YANDEX_REGION}
-                )
-                logging.info(f"Бакет {YANDEX_BUCKET_NAME} создан")
-            except Exception as create_error:
-                logging.error(f"Ошибка создания бакета: {str(create_error)}")
-                raise Exception(f"Cannot access or create bucket: {str(create_error)}")
-
-        try:
-            s3_client.put_object(
-                Bucket=YANDEX_BUCKET_NAME,
-                Key=unique_filename,
-                Body=io.BytesIO(file_content),
-                ContentType="image/jpeg",
-                ACL='public-read'
-            )
-            logging.info(f"Файл {unique_filename} успешно загружен в Yandex Cloud напрямую")
-        except Exception as s3_error:
-            logging.warning(f"Ошибка прямой загрузки: {str(s3_error)}")
-            presigned_url = s3_client.generate_presigned_url(
-                'put_object',
-                Params={'Bucket': YANDEX_BUCKET_NAME, 'Key': unique_filename, 'ContentType': 'image/jpeg'},
-                ExpiresIn=3600
-            )
-            headers = {'Content-Type': 'image/jpeg'}
-            response = requests.put(presigned_url, data=file_content, headers=headers)
-
-            if response.status_code != 200:
-                logging.error(f"Ошибка загрузки через presigned URL: {response.status_code}")
-                return False, f"Ошибка загрузки через presigned URL: {response.status_code}"
-
-            logging.info(f"Файл {unique_filename} успешно загружен через presigned URL")
-
+        s3_client.put_object(
+            Bucket=YANDEX_BUCKET_NAME,
+            Key=unique_filename,
+            Body=io.BytesIO(file_content),
+            ContentType="image/jpeg",
+            ACL='public-read'
+        )
         public_url = f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/{unique_filename}"
-        logging.info(f"Сгенерирован URL: {public_url}")
+        logging.info(f"Файл загружен: {public_url}")
         return True, public_url
-
     except Exception as e:
         logging.error(f"Ошибка загрузки в Yandex Cloud: {str(e)}")
         return False, str(e)
 
-def register_new_public(dp: Dispatcher, bot: Bot, conn, cursor):
-    @dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
-    async def process_bind_new_community(callback_query: types.CallbackQuery, state: FSMContext):
-        giveaway_id = callback_query.data.split(':')[1]
-        user_id = callback_query.from_user.id
-        message_id = callback_query.message.message_id
+def register_new_public(dp: Dispatcher, bot, conn, cursor):
+    # Временное хранилище file_id для отслеживания изменений внутри сессии
+    avatar_file_ids = {}
 
-        await state.set_state(GiveawayStates.binding_communities)
-        await state.update_data(giveaway_id=giveaway_id, message_id=message_id)
-        pending_channels[user_id] = {
-            'giveaway_id': giveaway_id,
-            'message_id': message_id
-        }
-
-        await bot.answer_callback_query(callback_query.id)
-
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
-        ])
-
-        bot_info = await bot.get_me()
-        name_public = f"@{bot_info.username}"
-        html_message = f"""
-Чтобы привязать паблик/канал/группу к розыгрышу:  
-
-1. Добавьте бота <code>{name_public}</code> в администраторы.  
-2. Обязательно: вы должны быть администратором паблика/канала/группы.  
-3. При добавлении бота не меняйте права — они настроены автоматически.  
-
-Бот сам обнаружит добавление и привяжет его. Можно заранее добавлять бота в несколько пабликов, а затем привязать их.
-"""
-        await send_message_with_image(
-            bot,
-            user_id,
-            html_message,
-            reply_markup=keyboard,
-            parse_mode='HTML',
-            message_id=message_id
-        )
-
-    async def download_and_save_avatar(chat_id):
+    async def download_and_save_avatar(chat_id: str, current_url: str = None) -> str | None:
         try:
-            logging.info(f"Попытка загрузки аватара для чата {chat_id}")
             chat_info = await bot.get_chat(chat_id)
             if not chat_info.photo:
-                logging.info(f"У чата {chat_id} нет фото")
                 return None
 
-            file_id = chat_info.photo.big_file_id
-            logging.info(f"Получен file_id аватара: {file_id}")
-            file_info = await bot.get_file(file_id)
-            file_path = file_info.file_path
-            logging.info(f"Путь к файлу: {file_path}")
+            new_file_id = chat_info.photo.big_file_id
+            # Проверяем, изменился ли file_id по сравнению с предыдущим для этого чата
+            if chat_id in avatar_file_ids and avatar_file_ids[chat_id] == new_file_id and current_url:
+                logging.info(f"Аватарка для чата {chat_id} не изменилась (file_id: {new_file_id})")
+                return current_url  # Возвращаем текущий URL, если аватарка не изменилась
 
+            file_info = await bot.get_file(new_file_id)
             async with aiohttp.ClientSession() as session:
-                url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-                logging.info(f"Загрузка аватара с URL: {url}")
+                url = f"https://api.telegram.org/file/bot{bot.token}/{file_info.file_path}"
                 async with session.get(url) as response:
                     if response.status != 200:
-                        logging.error(f"Ошибка загрузки аватара, статус: {response.status}")
                         return None
                     file_content = await response.read()
-                    logging.info(f"Аватар успешно загружен, размер: {len(file_content)} байт")
-
             file_name = f"{chat_id}_{uuid.uuid4()}.jpg"
             success, public_url = await upload_to_storage(file_content, file_name)
             if success:
-                logging.info(f"Аватар успешно сохранен в Yandex Cloud: {public_url}")
+                avatar_file_ids[chat_id] = new_file_id  # Обновляем file_id в памяти
                 return public_url
-            else:
-                logging.error(f"Ошибка при сохранении аватара в Yandex Cloud: {public_url}")
-                return None
-
+            return None
         except Exception as e:
-            logging.error(f"Ошибка в download_and_save_avatar для чата {chat_id}: {str(e)}")
+            logging.error(f"Ошибка загрузки аватара для чата {chat_id}: {str(e)}")
             return None
 
-    @dp.my_chat_member(ChatMemberUpdatedFilter(member_status_changed=IS_MEMBER))
-    async def bot_added_as_admin(event: ChatMemberUpdated, state: FSMContext):
+    @dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
+    async def process_bind_new_community(callback_query: types.CallbackQuery, state: FSMContext):
+        giveaway_id = callback_query.data.split(':')[1]
+        user_id = str(callback_query.from_user.id)
+        message_id = callback_query.message.message_id
+
+        await bot.answer_callback_query(callback_query.id)
+        await state.set_state(GiveawayStates.binding_communities)
+        await state.update_data(giveaway_id=giveaway_id, message_id=message_id)
+        pending_channels[user_id] = {'giveaway_id': giveaway_id, 'message_id': message_id}
+
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]])
+        bot_info = await bot.get_me()
+        html_message = f"""
+Чтобы привязать паблик/канал/группу:  
+1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.  
+2. Вы должны быть администратором.  
+3. Не меняйте права бота при добавлении.  
+Бот автоматически обнаружит добавление.
+"""
+        await send_message_with_image(bot, int(user_id), html_message, reply_markup=keyboard, message_id=message_id)
+
+    @dp.my_chat_member()
+    async def bot_added_to_chat(event: ChatMemberUpdated, state: FSMContext):
         chat = event.chat
-        user_id = event.from_user.id
+        user_id = str(event.from_user.id)
+        new_status = event.new_chat_member.status
 
         chat_type_display = "канал" if chat.type == ChatType.CHANNEL else "группа"
         chat_type_db = "channel" if chat.type == ChatType.CHANNEL else "group"
-        community_name = chat.title
-        community_username = chat.username if chat.username else community_name
+        community_name = chat.title or "Без названия"
+        community_username = chat.username or community_name
         community_id = str(chat.id)
 
-        # Инициализируем переменные заранее
-        required_permissions = get_required_permissions(chat_type_db)
-        missing_permissions = []
+        logging.info(
+            f"Бот добавлен в {chat_type_display} '{community_name}' (ID: {community_id}), статус: {new_status}")
 
-        # Фоновая привязка: сохраняем сообщество в bound_communities всегда, если бот стал администратором
-        if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
-            bot_member = await bot.get_chat_member(chat.id, bot.id)
-            if isinstance(bot_member, ChatMemberAdministrator):
-                missing_permissions = [
-                    perm_name for perm, perm_name in required_permissions.items()
-                    if not getattr(bot_member, perm, False)
-                ]
+        if new_status == ChatMemberStatus.LEFT:
+            logging.info(f"Бот покинул {chat_type_display} '{community_name}' (ID: {community_id}). Ничего не делаем.")
+            return
 
-                if not missing_permissions:  # Если все права есть
-                    avatar_url = await download_and_save_avatar(chat.id)
-                    success = await record_bound_community(
-                        user_id, community_username, community_id, chat_type_db, community_name, avatar_url
-                    )
-                    if success:
+        if new_status != ChatMemberStatus.ADMINISTRATOR:
+            try:
+                await bot.get_chat(community_id)
+            except Exception as e:
+                logging.warning(f"Чат {community_id} недоступен: {str(e)}")
+                cursor.execute("DELETE FROM bound_communities WHERE community_id = %s AND user_id = %s",
+                               (community_id, user_id))
+                cursor.execute("DELETE FROM giveaway_communities WHERE community_id = %s AND user_id = %s",
+                               (community_id, user_id))
+                conn.commit()
+                return
+
+        if new_status == ChatMemberStatus.ADMINISTRATOR:
+            try:
+                bot_member = await bot.get_chat_member(chat.id, bot.id)
+                if isinstance(bot_member, ChatMemberAdministrator):
+                    required_permissions = get_required_permissions(chat_type_db)
+                    missing_permissions = [perm_name for perm, perm_name in required_permissions.items() if
+                                           not getattr(bot_member, perm, False)]
+                    if not missing_permissions:
+                        # Получаем текущий URL из базы для проверки
+                        cursor.execute(
+                            "SELECT media_file_ava FROM bound_communities WHERE community_id = %s AND user_id = %s",
+                            (community_id, user_id))
+                        result = cursor.fetchone()
+                        current_url = result[0] if result else None
+                        avatar_url = await download_and_save_avatar(community_id, current_url)
+                        success = await record_bound_community(user_id, community_username, community_id, chat_type_db,
+                                                               community_name, avatar_url)
                         logging.info(
-                            f"Сообщество {community_username} успешно сохранено в bound_communities в фоновом режиме")
-                    else:
-                        logging.error(f"Не удалось сохранить сообщество {community_username} в bound_communities")
+                            f"Фоновая привязка {'успешна' if success else 'не удалась'} для {community_username}")
+            except Exception as e:
+                logging.warning(
+                    f"Не удалось получить данные администратора для чата {community_id}: {str(e)}. Продолжаем с предположением, что бот администратор.")
+                cursor.execute("SELECT media_file_ava FROM bound_communities WHERE community_id = %s AND user_id = %s",
+                               (community_id, user_id))
+                result = cursor.fetchone()
+                current_url = result[0] if result else None
+                avatar_url = await download_and_save_avatar(community_id, current_url)
+                success = await record_bound_community(user_id, community_username, community_id, chat_type_db,
+                                                       community_name, avatar_url)
+                logging.info(
+                    f"Фоновая привязка {'успешна' if success else 'не удалась'} для {community_username} (без проверки прав)")
 
-        # Проверяем, есть ли активный процесс привязки к розыгрышу
         state_data = await state.get_data()
         pending_data = pending_channels.get(user_id, {})
         giveaway_id = state_data.get('giveaway_id') or pending_data.get('giveaway_id')
         message_id = state_data.get('message_id') or pending_data.get('message_id')
 
-        if not giveaway_id:  # Если нет активного процесса привязки, просто выходим
-            return  # Убрали отправку сообщения
+        if not giveaway_id:
+            return
 
-        # Если есть активный процесс привязки, продолжаем как раньше
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
-        ])
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]])
 
-        if event.new_chat_member.status == ChatMemberStatus.ADMINISTRATOR:
-            bot_member = await bot.get_chat_member(chat.id, bot.id)
-            if not isinstance(bot_member, ChatMemberAdministrator):
-                await send_message_with_image(
-                    bot, user_id,
-                    f"Бот не получил права администратора в {chat_type_display}е \"{community_name}\".",
-                    reply_markup=keyboard,
-                    message_id=message_id
-                )
-                return
+        if new_status == ChatMemberStatus.ADMINISTRATOR:
+            try:
+                bot_member = await bot.get_chat_member(chat.id, bot.id)
+                if not isinstance(bot_member, ChatMemberAdministrator):
+                    await send_message_with_image(bot, int(user_id),
+                                                  f"Бот не получил права администратора в {chat_type_display}е '{community_name}'.",
+                                                  reply_markup=keyboard, message_id=message_id)
+                    return
 
-            missing_permissions = [
-                perm_name for perm, perm_name in required_permissions.items()
-                if not getattr(bot_member, perm, False)
-            ]
+                required_permissions = get_required_permissions(chat_type_db)
+                missing_permissions = [perm_name for perm, perm_name in required_permissions.items() if
+                                       not getattr(bot_member, perm, False)]
+                if missing_permissions:
+                    await send_message_with_image(bot, int(user_id),
+                                                  f"Недостаточно прав в {chat_type_display}е '{community_name}': {', '.join(missing_permissions)}",
+                                                  reply_markup=keyboard, message_id=message_id)
+                    return
 
-            if missing_permissions:
-                missing_perms_str = ', '.join(missing_permissions)
-                await send_message_with_image(
-                    bot, user_id,
-                    f"Недостаточно прав для бота в {chat_type_display}е \"{community_name}\". Требуются: {missing_perms_str}",
-                    reply_markup=keyboard,
-                    message_id=message_id
-                )
-                return
+                cursor.execute("SELECT media_file_ava FROM bound_communities WHERE community_id = %s AND user_id = %s",
+                               (community_id, user_id))
+                result = cursor.fetchone()
+                current_url = result[0] if result else None
+                avatar_url = await download_and_save_avatar(community_id, current_url)
+                await handle_successful_binding(community_id, community_username, user_id, giveaway_id, state,
+                                                message_id, chat_type_db, chat_type_display, community_name, avatar_url)
+            except Exception as e:
+                logging.warning(
+                    f"Не удалось проверить права администратора для чата {community_id}: {str(e)}. Предполагаем успех.")
+                cursor.execute("SELECT media_file_ava FROM bound_communities WHERE community_id = %s AND user_id = %s",
+                               (community_id, user_id))
+                result = cursor.fetchone()
+                current_url = result[0] if result else None
+                avatar_url = await download_and_save_avatar(community_id, current_url)
+                await handle_successful_binding(community_id, community_username, user_id, giveaway_id, state,
+                                                message_id, chat_type_db, chat_type_display, community_name, avatar_url)
 
-            # Если все права есть, используем уже загруженный аватар или загружаем заново
-            avatar_url = await download_and_save_avatar(chat.id)
-            logging.info(f"Получен URL аватара: {avatar_url}")
-            await handle_successful_binding(
-                chat.id, community_username, user_id, giveaway_id,
-                state, message_id, chat_type_db, chat_type_display, community_name, avatar_url
-            )
             if user_id in pending_channels:
                 del pending_channels[user_id]
 
-        elif event.new_chat_member.status == ChatMemberStatus.MEMBER:
-            await send_message_with_image(
-                bot, user_id,
-                f"Бот добавлен как участник в {chat_type_display} \"{community_name}\". Назначьте его администратором с полными правами.",
-                reply_markup=keyboard,
-                message_id=message_id
-            )
+        elif new_status == ChatMemberStatus.MEMBER:
+            await send_message_with_image(bot, int(user_id),
+                                          f"Бот добавлен как участник в {chat_type_display} '{community_name}'. Назначьте его администратором.",
+                                          reply_markup=keyboard, message_id=message_id)
 
-    async def handle_successful_binding(channel_id: int, community_username: str, user_id: int, giveaway_id: str,
+    async def handle_successful_binding(community_id: str, community_username: str, user_id: str, giveaway_id: str,
                                         state: FSMContext, message_id: int, chat_type_db: str, chat_type_display: str,
                                         community_name: str, avatar_url: str = None):
-        try:
-            cursor.execute(
-                """
-                SELECT * FROM giveaway_communities 
-                WHERE giveaway_id = %s AND community_id = %s AND user_id = %s
-                """,
-                (giveaway_id, str(channel_id), user_id)
-            )
-            existing = cursor.fetchone()
+        cursor.execute(
+            "SELECT * FROM giveaway_communities WHERE giveaway_id = %s AND community_id = %s AND user_id = %s",
+            (giveaway_id, community_id, user_id))
+        if cursor.fetchone():
+            await send_message_with_image(bot, int(user_id),
+                                          f"{chat_type_display.capitalize()} '{community_username}' уже привязан.",
+                                          reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                                              text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]]),
+                                          message_id=message_id)
+            return
 
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
-            ])
+        await bind_community_to_giveaway(giveaway_id, community_id, community_username, chat_type_db, user_id,
+                                         community_name, avatar_url)
+        await send_message_with_image(bot, int(user_id),
+                                      f"{chat_type_display.capitalize()} '{community_username}' успешно привязан!",
+                                      reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                                          text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]]),
+                                      message_id=message_id)
+        await state.clear()
 
-            if existing:
-                await send_message_with_image(
-                    bot, user_id,
-                    f"{chat_type_display.capitalize()} \"{community_username}\" уже привязан к этому розыгрышу.",
-                    reply_markup=keyboard,
-                    message_id=message_id
-                )
-                return
-
-            logging.info(f"Привязываем сообщество с аватаром: {avatar_url}")
-            await bind_community_to_giveaway(giveaway_id, str(channel_id), community_username, chat_type_db, user_id,
-                                             community_name, avatar_url)
-            # Сообщество уже сохранено в bound_communities на фоне, поэтому здесь только привязка к розыгрышу
-
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]
-            ])
-
-            await send_message_with_image(
-                bot, user_id,
-                f"{chat_type_display.capitalize()} \"{community_username}\" успешно привязан к розыгрышу!",
-                reply_markup=keyboard,
-                message_id=message_id
-            )
-            await state.clear()
-
-        except Exception as e:
-            logging.error(f"Ошибка в handle_successful_binding: {str(e)}")
-            await send_message_with_image(
-                bot, user_id,
-                f"Ошибка при привязке {chat_type_display}а \"{community_username}\". Попробуйте еще раз.",
-                message_id=message_id
-            )
-
-    async def record_bound_community(user_id: int, community_username: str, community_id: str, community_type: str,
+    async def record_bound_community(user_id: str, community_username: str, community_id: str, community_type: str,
                                      community_name: str, media_file_ava: str = None):
         try:
-            cursor.execute(
-                """
-                SELECT * FROM bound_communities 
-                WHERE community_id = %s AND user_id = %s
-                """,
-                (community_id, user_id)
-            )
-            existing = cursor.fetchone()
-
-            data = {
-                'user_id': user_id,
-                'community_username': community_username,
-                'community_id': community_id,
-                'community_type': community_type,
-                'community_name': community_name
-            }
+            data = {'user_id': user_id, 'community_username': community_username, 'community_id': community_id,
+                    'community_type': community_type, 'community_name': community_name}
             if media_file_ava:
                 data['media_file_ava'] = media_file_ava
-                logging.info(f"Записываем в bound_communities с аватаром: {media_file_ava}")
-            else:
-                logging.info("Записываем в bound_communities без аватара")
 
-            if existing:
-                # Обновляем существующую запись
+            cursor.execute("SELECT * FROM bound_communities WHERE community_id = %s AND user_id = %s",
+                           (community_id, user_id))
+            if cursor.fetchone():
                 update_columns = ', '.join([f"{key} = %s" for key in data.keys()])
                 cursor.execute(
-                    f"""
-                    UPDATE bound_communities 
-                    SET {update_columns}
-                    WHERE community_id = %s AND user_id = %s
-                    """,
-                    (*data.values(), community_id, user_id)
-                )
+                    f"UPDATE bound_communities SET {update_columns} WHERE community_id = %s AND user_id = %s",
+                    (*data.values(), community_id, user_id))
             else:
-                # Вставляем новую запись
                 columns = ', '.join(data.keys())
                 placeholders = ', '.join(['%s'] * len(data))
-                cursor.execute(
-                    f"""
-                    INSERT INTO bound_communities ({columns})
-                    VALUES ({placeholders})
-                    """,
-                    tuple(data.values())
-                )
+                cursor.execute(f"INSERT INTO bound_communities ({columns}) VALUES ({placeholders})",
+                               tuple(data.values()))
             conn.commit()
             return True
         except Exception as e:
-            logging.error(f"Ошибка при записи привязанного сообщества: {str(e)}")
+            logging.error(f"Ошибка записи в bound_communities: {str(e)}")
             conn.rollback()
             return False
 
     async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id,
                                          community_name, avatar_url=None):
-        data = {
-            "giveaway_id": giveaway_id,
-            "community_id": community_id,
-            "community_username": community_username,
-            "community_type": community_type,
-            "user_id": user_id,
-            "community_name": community_name
-        }
+        data = {"giveaway_id": giveaway_id, "community_id": community_id, "community_username": community_username,
+                "community_type": community_type, "user_id": user_id, "community_name": community_name}
         if avatar_url:
             data["media_file_ava"] = avatar_url
-            logging.info(f"Записываем в giveaway_communities с аватаром: {avatar_url}")
-        else:
-            logging.info("Записываем в giveaway_communities без аватара")
-
-        try:
-            columns = ', '.join(data.keys())
-            placeholders = ', '.join(['%s'] * len(data))
-            cursor.execute(
-                f"""
-                INSERT INTO giveaway_communities ({columns})
-                VALUES ({placeholders})
-                """,
-                tuple(data.values())
-            )
-            conn.commit()
-        except Exception as e:
-            logging.error(f"Ошибка при привязке сообщества: {str(e)}")
-            if "community_type" in str(e):
-                del data["community_type"]
-                columns = ', '.join(data.keys())
-                placeholders = ', '.join(['%s'] * len(data))
-                cursor.execute(
-                    f"""
-                    INSERT INTO giveaway_communities ({columns})
-                    VALUES ({placeholders})
-                    """,
-                    tuple(data.values())
-                )
-                conn.commit()
-            else:
-                conn.rollback()
-                raise e
+        columns = ', '.join(data.keys())
+        placeholders = ', '.join(['%s'] * len(data))
+        cursor.execute(f"INSERT INTO giveaway_communities ({columns}) VALUES ({placeholders})", tuple(data.values()))
+        conn.commit()
 
     def get_required_permissions(chat_type: str):
         if chat_type == "channel":
-            return {
-                'can_post_messages': 'Публикация сообщений',
-                'can_edit_messages': 'Редактирование сообщений',
-                'can_invite_users': 'Добавление подписчиков'
-            }
-        else:  # group
-            return {
-                'can_delete_messages': 'Удаление сообщений',
-                'can_invite_users': 'Пригласительные ссылки',
-                'can_pin_messages': 'Закрепление сообщений',
-                'can_manage_video_chats': 'Управление видео чатами'
-            }
+            return {'can_post_messages': 'Публикация сообщений', 'can_edit_messages': 'Редактирование сообщений',
+                    'can_invite_users': 'Добавление подписчиков'}
+        return {'can_delete_messages': 'Удаление сообщений', 'can_invite_users': 'Пригласительные ссылки',
+                'can_pin_messages': 'Закрепление сообщений'}
+
+    async def check_and_update_avatars():
+        while True:
+            try:
+                cursor.execute("SELECT community_id, user_id, media_file_ava FROM bound_communities")
+                communities = cursor.fetchall()
+                for community_id, user_id, current_url in communities:
+                    try:
+                        chat_info = await bot.get_chat(community_id)
+                        if not chat_info.photo:
+                            if current_url:  # Если аватарка была, а теперь удалена
+                                cursor.execute(
+                                    "UPDATE bound_communities SET media_file_ava = NULL WHERE community_id = %s AND user_id = %s",
+                                    (community_id, user_id))
+                                conn.commit()
+                                logging.info(f"Аватарка удалена для сообщества {community_id}")
+                            continue
+
+                        new_url = await download_and_save_avatar(community_id, current_url)
+                        if new_url and new_url != current_url:  # Если аватарка изменилась
+                            cursor.execute(
+                                "UPDATE bound_communities SET media_file_ava = %s WHERE community_id = %s AND user_id = %s",
+                                (new_url, community_id, user_id))
+                            conn.commit()
+                            logging.info(f"Аватарка обновлена для сообщества {community_id}: {new_url}")
+                    except Exception as e:
+                        logging.error(f"Ошибка при проверке аватарки для сообщества {community_id}: {str(e)}")
+            except Exception as e:
+                logging.error(f"Ошибка в check_and_update_avatars: {str(e)}")
+            await asyncio.sleep(36000)  # Проверка каждые 60 минут
+
+    # Регистрация задачи при запуске бота
+    @dp.startup()
+    async def on_startup():
+        logging.info("Бот запущен, стартуем фоновую задачу проверки аватарок")
+        asyncio.create_task(check_and_update_avatars())
