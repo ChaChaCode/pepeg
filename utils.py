@@ -55,7 +55,7 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
     # Если image_url не передан, используем дефолтное изображение
     image_url = image_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
     # Используем HTML-разметку с тегом <a> и символом  
-    full_text = f"<a href=\"{image_url}\"> </a>\n\n{text}"
+    full_text = f"<a href=\"{image_url}\">\u200B</a>{text}"
     # Настраиваем LinkPreviewOptions с show_above_text=True
     link_preview_options = LinkPreviewOptions(show_above_text=True)
 
@@ -349,8 +349,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
                 f"{medal}{idx}. <a href='tg://user?id={winner['user_id']}'>@{winner['username']}</a>")
 
         winners_list = '\n'.join(winners_formatted)
-        result_message = f"""
-<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
+        result_message = f"""<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
 {giveaway['name']}
 
@@ -360,8 +359,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
 </blockquote>
 """
     else:
-        result_message = f"""
-<b>Розыгрыш завершен</b>
+        result_message = f"""<b>Розыгрыш завершен</b>
 
 {giveaway['name']}
 
@@ -374,8 +372,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
 """
 
     if channel_links:
-        result_message_for_creator = result_message + f"""
-<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
+        result_message_for_creator = result_message + f"""<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
 """
     else:
         result_message_for_creator = result_message
