@@ -223,7 +223,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await state.set_state(GiveawayStates.waiting_for_name)
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
-        message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
+        message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
         link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         await bot.edit_message_text(
@@ -245,7 +245,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             data = await state.get_data()
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
-            error_text = f"<a href=\"{image_url}\"> </a>\n\n⚠️ Название слишком длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
+            error_text = f"<a href=\"{image_url}\">\u200B</a>⚠️ Название слишком длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
             link_preview_options = LinkPreviewOptions(show_above_text=True)
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await bot.edit_message_text(
@@ -268,12 +268,12 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if description:
             message_text = (
-                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
+                f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
                 f"Если хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE2}"
             )
         else:
             message_text = (
-                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
+                f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
                 f"{FORMATTING_GUIDE2}"
             )
 
@@ -295,7 +295,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         name = data.get('name', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
-        message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: {name}\n\nЕсли хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE}"
+        message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: {name}\n\nЕсли хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE}"
         link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         await bot.edit_message_text(
@@ -319,12 +319,12 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if description:
             message_text = (
-                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
+                f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
                 f"Если хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE2}"
             )
         else:
             message_text = (
-                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
+                f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
                 f"{FORMATTING_GUIDE2}"
             )
 
@@ -346,7 +346,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             data = await state.get_data()
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description)
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
-            error_text = f"<a href=\"{image_url}\"> </a>\n\n⚠️ Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
+            error_text = f"<a href=\"{image_url}\">\u200B</a>⚠️ Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n{FORMATTING_GUIDE2}"
             link_preview_options = LinkPreviewOptions(is_above_text=True)
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await bot.edit_message_text(
@@ -369,12 +369,12 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         message_text = (
-            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>\n\n"
+            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
             f"\n\nВы можете отправить новое медиа или удалить текущее."
             if media_url and media_type else
-            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<a href=\"{placeholder_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
@@ -401,12 +401,12 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if description:
             message_text = (
-                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
+                f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {description}\n\n"
                 f"Если хотите изменить, отправьте новый текст:\n{FORMATTING_GUIDE2}"
             )
         else:
             message_text = (
-                f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
+                f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Теперь добавьте описание (до {MAX_DESCRIPTION_LENGTH} символов):\n"
                 f"{FORMATTING_GUIDE2}"
             )
 
@@ -431,12 +431,12 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         media_url = data.get('media_url')
         media_type = data.get('media_type')
         message_text = (
-            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>\n\n"
+            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
             f"\n\nВы можете отправить новое медиа или удалить текущее."
             if media_url and media_type else
-            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<a href=\"{placeholder_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
@@ -461,7 +461,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         link_preview_options = LinkPreviewOptions(show_above_text=True)  # Исправлено с is_above_text
 
         message_text = (
-            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<a href=\"{placeholder_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
@@ -497,7 +497,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         else:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             error_text = (
-                f"<a href=\"{placeholder_url}\"> </a>\n\n"
+                f"<a href=\"{placeholder_url}\"> </a>"
                 f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> "
                 f"Отправьте фото, GIF или видео или нажмите \"Далее\" для пропуска!"
             )
@@ -515,7 +515,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         if file.file_size / (1024 * 1024) > MAX_MEDIA_SIZE_MB:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             error_text = (
-                f"<a href=\"{placeholder_url}\"> </a>\n\n"
+                f"<a href=\"{placeholder_url}\"> </a>"
                 f"🤯 Файл слишком большой! Максимум {MAX_MEDIA_SIZE_MB} МБ"
             )
             await bot.edit_message_text(
@@ -536,7 +536,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         if not success:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             error_text = (
-                f"<a href=\"{placeholder_url}\"> </a>\n\n"
+                f"<a href=\"{placeholder_url}\"> </a>"
                 f"❌ Ошибка загрузки медиа: {media_url}"
             )
             await bot.edit_message_text(
@@ -557,7 +557,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         # Обновляем сообщение с превью загруженного медиа
         message_text = (
-            f"<a href=\"{media_url}\"> </a>\n\n"
+            f"<a href=\"{media_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
             f"\n\nВы можете отправить новое медиа или удалить текущее."
@@ -583,11 +583,11 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
         link_preview_options = LinkPreviewOptions(show_above_text=True)
         message_text = (
-            f"<a href=\"{image_url}\"> </a>\n\nТекущее время окончания: <b>{end_time}</b>\n\n"
+            f"<a href=\"{image_url}\">\u200B</a>Текущее время окончания: <b>{end_time}</b>\n\n"
             f"Если хотите изменить, укажите новую дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b> по МСК\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
             if end_time else
-            f"<a href=\"{image_url}\"> </a>\n\nКогда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
+            f"<a href=\"{image_url}\">\u200B</a>Когда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
         )
 
@@ -612,12 +612,12 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         media_url = data.get('media_url')
         media_type = data.get('media_type')
         message_text = (
-            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>\n\n"
+            f"<a href=\"{media_url if media_url else placeholder_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}. "
             f"\n\nВы можете отправить новое медиа или удалить текущее."
             if media_url and media_type else
-            f"<a href=\"{placeholder_url}\"> </a>\n\n"
+            f"<a href=\"{placeholder_url}\"> </a>"
             f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> "
             f"Добавьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ) или нажмите \"Далее\" для пропуска."
         )
@@ -654,7 +654,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
 
-            message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!"
+            message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!"
             await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data['last_message_id'],
@@ -674,7 +674,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 error_msg = str(e)
 
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            error_text = f"<a href=\"{image_url}\"> </a>\n\n{error_msg}\n🗓 Сейчас в Москве: <code>{current_time}</code>"
+            error_text = f"<a href=\"{image_url}\">\u200B</a>{error_msg}\n🗓 Сейчас в Москве: <code>{current_time}</code>"
             await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data['last_message_id'],
@@ -697,7 +697,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="В меню", callback_data="back_to_main_menu")
         keyboard.adjust(1)
 
-        message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!"
+        message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Сколько будет победителей? Максимум {MAX_WINNERS}!"
         await bot.edit_message_text(
             chat_id=callback_query.from_user.id,
             message_id=callback_query.message.message_id,
@@ -719,11 +719,11 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         message_text = (
-            f"<a href=\"{image_url}\"> </a>\n\nТекущее время окончания: <b>{end_time}</b>\n\n"
+            f"<a href=\"{image_url}\">\u200B</a>Текущее время окончания: <b>{end_time}</b>\n\n"
             f"Если хотите изменить, укажите новую дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b> по МСК\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
             if end_time else
-            f"<a href=\"{image_url}\"> </a>\n\nКогда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
+            f"<a href=\"{image_url}\">\u200B</a>Когда завершится розыгрыш? Укажите дату в формате <b>ДД.ММ.ГГГГ ЧЧ:ММ</b>\n\n"
             f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве: <code>{current_time}</code>"
         )
 
@@ -753,7 +753,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
-            message_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Создаём ваш розыгрыш..."
+            message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Создаём ваш розыгрыш..."
             await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data.get('last_message_id'),
@@ -797,7 +797,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             else:
                 error_msg = str(ve) if str(ve) else f"Введите число от 1 до {MAX_WINNERS}"
 
-            error_text = f"<a href=\"{image_url}\"> </a>\n\n<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {error_msg}"
+            error_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {error_msg}"
             await bot.edit_message_text(
                 chat_id=message.chat.id,
                 message_id=data.get('last_message_id'),
@@ -813,7 +813,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="🔄 Попробовать снова", callback_data="create_giveaway")
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             keyboard.adjust(1)
-            error_message = f"<a href=\"{image_url}\"> </a>\n\n❌ Ошибка: {str(e) if str(e) else 'Что-то пошло не так'}"
+            error_message = f"<a href=\"{image_url}\">\u200B</a>❌ Ошибка: {str(e) if str(e) else 'Что-то пошло не так'}"
 
             await bot.edit_message_text(
                 chat_id=message.chat.id,
@@ -857,7 +857,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 # Иначе используем дефолтное изображение
                 image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
 
-            giveaway_info = f"<a href=\"{image_url}\"> </a>\n\n{formatted_description}"
+            giveaway_info = f"<a href=\"{image_url}\">\u200B</a>{formatted_description}"
             link_preview_options = LinkPreviewOptions(show_above_text=True)
 
             if message_id:
@@ -883,7 +883,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
-            error_text = f"<a href=\"{image_url}\"> </a>\n\n❌ Ошибка загрузки розыгрыша. Попробуйте снова!"
+            error_text = f"<a href=\"{image_url}\">\u200B</a>❌ Ошибка загрузки розыгрыша. Попробуйте снова!"
             link_preview_options = LinkPreviewOptions(show_above_text=True)
 
             if message_id:
