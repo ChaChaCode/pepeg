@@ -186,17 +186,20 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             cursor.execute("SELECT COUNT(*) FROM participations WHERE giveaway_id = %s", (giveaway_id,))
             participants_count = cursor.fetchone()[0]
 
-            published_messages = get_json_field(cursor, "SELECT published_messages FROM giveaways WHERE id = %s", (giveaway_id,)) if giveaway['published_messages'] else []
+            published_messages = get_json_field(cursor, "SELECT published_messages FROM giveaways WHERE id = %s",
+                                                (giveaway_id,)) if giveaway['published_messages'] else []
             channel_info = ""
             if published_messages:
                 channel_links = []
-                unique_chat_ids = set(msg['chat_id'] for msg in published_messages)
-                for chat_id in unique_chat_ids:
+                for msg in published_messages:
+                    chat_id = msg['chat_id']
+                    message_id = msg['message_id']
                     try:
                         chat = await bot.get_chat(chat_id)
                         channel_name = chat.title
-                        invite_link = chat.invite_link if chat.invite_link else f"https://t.me/c/{str(chat_id).replace('-100', '')}"
-                        channel_links.append(f"<a href=\"{invite_link}\">{channel_name}</a>")
+                        # Формируем ссылку на конкретный пост
+                        post_link = f"https://t.me/c/{str(chat_id).replace('-100', '')}/{message_id}"
+                        channel_links.append(f"<a href=\"{post_link}\">{channel_name}</a>")
                     except Exception as e:
                         logger.error(f"Не удалось получить информацию о канале {chat_id}: {str(e)}")
                         channel_links.append("Неизвестный канал")
