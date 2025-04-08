@@ -166,7 +166,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
             media_url = giveaway['media_file_id'] if giveaway['media_file_id'] and giveaway['media_type'] else placeholder_url
             giveaway_info = (
-                f"<a href=\"{media_url}\"> </a>\n\n"
+                f"<a href=\"{media_url}\"> </a>"
                 f"{description_with_vars}\n\n"
                 f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')}"
             )
