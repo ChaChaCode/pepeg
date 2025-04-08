@@ -615,7 +615,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         try:
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'  # Уникальная заглушка для названия
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'  # Уникальная заглушка для названия
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
@@ -627,7 +627,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
         except Exception as e:
             logger.error(f"Ошибка редактирования сообщения: {str(e)}")
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
             sent_message = await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
@@ -662,7 +662,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         try:
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'  # Уникальная заглушка для описания
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'  # Уникальная заглушка для описания
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
@@ -674,7 +674,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
         except Exception as e:
             logger.error(f"Ошибка редактирования сообщения: {str(e)}")
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
             sent_message = await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
@@ -733,7 +733,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
             )
             return
 
@@ -746,7 +746,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
             )
             return
 
@@ -770,7 +770,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_name.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
             )
             await state.clear()
 
@@ -796,7 +796,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
             )
             return
 
@@ -809,7 +809,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
             )
             return
 
@@ -833,7 +833,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_opis.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
             )
             await state.clear()
 
@@ -964,7 +964,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if not image_url.startswith('http'):
                 image_url = await get_file_url(bot, media_file_id)
         else:
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
 
         try:
             await send_message_with_image(
@@ -1008,7 +1008,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             reply_markup=keyboard,
             message_id=last_message_id,
             parse_mode='HTML',
-            image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+            image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
         )
         if message:
             await state.update_data(last_bot_message_id=message.message_id)
@@ -1054,7 +1054,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
-                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
                 )
                 return
 
@@ -1071,7 +1071,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
-                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
                 )
                 return
 
@@ -1103,7 +1103,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
             )
             await state.clear()
 
@@ -1130,7 +1130,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
             )
             await bot.answer_callback_query(callback_query.id, text="Медиа удалено!")
         except Exception as e:
@@ -1565,7 +1565,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
 
             # Обновляем изображение, если есть media_file_ava
-            image_url = media_file_ava or 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+            image_url = media_file_ava or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
             if media_file_ava and not image_url.startswith('http'):
                 image_url = await get_file_url(bot, media_file_ava)
 
@@ -1626,7 +1626,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.adjust(1)
 
             # Используем аватар первого сообщества, если есть
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
             if communities and communities[0].get('media_file_ava'):
                 image_url = communities[0]['media_file_ava']
                 if not image_url.startswith('http'):
@@ -1674,7 +1674,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
 
             # Обновляем изображение
-            image_url = media_file_ava or 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+            image_url = media_file_ava or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
             if media_file_ava and not image_url.startswith('http'):
                 image_url = await get_file_url(bot, media_file_ava)
 
@@ -1735,7 +1735,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.adjust(1)
 
         # Используем дефолтное изображение
-        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
 
         await bot.answer_callback_query(callback_query.id)
         await send_message_with_image(
