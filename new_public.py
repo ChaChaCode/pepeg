@@ -68,6 +68,11 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
         try:
             chat_info = await bot.get_chat(chat_id)
             if not chat_info.photo:
+                # Если аватарки нет, но была старая - удаляем старую из S3
+                if current_url:
+                    old_key = current_url.split(f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/")[1]
+                    s3_client.delete_object(Bucket=YANDEX_BUCKET_NAME, Key=old_key)
+                    logging.info(f"Старая аватарка удалена из S3: {old_key}")
                 return None
 
             new_file_id = chat_info.photo.big_file_id
@@ -86,6 +91,11 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
             file_name = f"{chat_id}_{uuid.uuid4()}.jpg"
             success, public_url = await upload_to_storage(file_content, file_name)
             if success:
+                # Если есть старая аватарка и она отличается, удаляем её из S3
+                if current_url and current_url != public_url:
+                    old_key = current_url.split(f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/")[1]
+                    s3_client.delete_object(Bucket=YANDEX_BUCKET_NAME, Key=old_key)
+                    logging.info(f"Старая аватарка удалена из S3: {old_key}")
                 avatar_file_ids[chat_id] = new_file_id  # Обновляем file_id в памяти
                 return public_url
             return None
@@ -315,6 +325,9 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                                 cursor.execute(
                                     "UPDATE bound_communities SET media_file_ava = NULL WHERE community_id = %s AND user_id = %s",
                                     (community_id, user_id))
+                                old_key = current_url.split(f"{YANDEX_ENDPOINT_URL}/{YANDEX_BUCKET_NAME}/")[1]
+                                s3_client.delete_object(Bucket=YANDEX_BUCKET_NAME, Key=old_key)
+                                logging.info(f"Старая аватарка удалена из S3: {old_key}")
                                 conn.commit()
                                 logging.info(f"Аватарка удалена для сообщества {community_id}")
                             continue
