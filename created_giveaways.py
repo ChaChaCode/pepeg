@@ -550,7 +550,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         dop_info = (
             f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
             f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> <b>{media_display}</b>\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time']).strftime('%d.%m.%Y %H:%M')} (МСК)"
         )
 
         giveaway_info = f"""<b>Название:</b> {giveaway['name']}
