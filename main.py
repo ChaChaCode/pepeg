@@ -123,7 +123,12 @@ class SpamProtectionMiddleware(BaseMiddleware):
         return await handler(event, data)
 
 @dp.message(Command("start"))
-async def cmd_start(message: types.Message):
+async def cmd_start(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is not None:
+        await state.clear()
+        logger.info(f"Процесс создания розыгрыша прерван пользователем {message.from_user.id} командой /start")
+
     user_id = message.from_user.id
 
     cursor.execute(
@@ -144,6 +149,7 @@ async def cmd_start(message: types.Message):
     )
     has_active_giveaways = cursor.fetchone()[0] > 0
 
+    # Проверяем активные участия и выигранные розыгрыши
     cursor.execute(
         """
         SELECT COUNT(*) 
@@ -153,8 +159,21 @@ async def cmd_start(message: types.Message):
         """,
         (user_id,)
     )
-    has_active_participations = cursor.fetchone()[0] > 0
-    logging.info(f"User {user_id} - has_active_participations: {has_active_participations}")
+    active_participations = cursor.fetchone()[0]
+
+    cursor.execute(
+        """
+        SELECT COUNT(*) 
+        FROM giveaway_winners gw
+        JOIN giveaways g ON gw.giveaway_id = g.id
+        WHERE gw.user_id = %s AND g.is_completed = 'true'
+        """,
+        (user_id,)
+    )
+    won_participations = cursor.fetchone()[0]
+
+    has_participations_or_wins = active_participations > 0 or won_participations > 0
+    logging.info(f"User {user_id} - has_active_participations: {active_participations}, has_won_participations: {won_participations}")
 
     cursor.execute(
         """
@@ -171,7 +190,7 @@ async def cmd_start(message: types.Message):
     if has_any_giveaways:
         keyboard.button(text="📋 Мои розыгрыши", callback_data="created_giveaways")
 
-    if has_active_participations:
+    if has_participations_or_wins:
         keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
 
     if has_completed_giveaways:
@@ -179,6 +198,7 @@ async def cmd_start(message: types.Message):
 
     keyboard.adjust(1)
 
+    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
     await send_message_with_image(
         bot,
         message.chat.id,
@@ -225,6 +245,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     )
     has_active_giveaways = cursor.fetchone()[0] > 0
 
+    # Проверяем активные участия и выигранные розыгрыши
     cursor.execute(
         """
         SELECT COUNT(*) 
@@ -234,8 +255,21 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         """,
         (user_id,)
     )
-    has_active_participations = cursor.fetchone()[0] > 0
-    logging.info(f"User {user_id} - has_active_participations: {has_active_participations}")
+    active_participations = cursor.fetchone()[0]
+
+    cursor.execute(
+        """
+        SELECT COUNT(*) 
+        FROM giveaway_winners gw
+        JOIN giveaways g ON gw.giveaway_id = g.id
+        WHERE gw.user_id = %s AND g.is_completed = 'true'
+        """,
+        (user_id,)
+    )
+    won_participations = cursor.fetchone()[0]
+
+    has_participations_or_wins = active_participations > 0 or won_participations > 0
+    logging.info(f"User {user_id} - has_active_participations: {active_participations}, has_won_participations: {won_participations}")
 
     cursor.execute(
         """
@@ -252,7 +286,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     if has_any_giveaways:
         keyboard.button(text="📋 Мои розыгрыши", callback_data="created_giveaways")
 
-    if has_active_participations:
+    if has_participations_or_wins:
         keyboard.button(text="🎯 Мои участия", callback_data="my_participations")
 
     if has_completed_giveaways:
