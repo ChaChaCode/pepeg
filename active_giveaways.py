@@ -3,7 +3,7 @@ import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import json
@@ -215,7 +215,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             description = giveaway['description']
             winner_count = str(giveaway['winner_count'])
-            end_time = (giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M (МСК)')
+            end_time = (giveaway['end_time']).strftime('%d.%m.%Y %H:%M (МСК)')
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
             giveaway_info = f"""{formatted_description}
@@ -473,7 +473,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         dop_info = (
             f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> <b>Победителей:</b> {giveaway['winner_count']}\n"
             f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> <b>{media_display}</b>\n"
-            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M')} (МСК)"
+            f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Конец:</b> {(giveaway['end_time']).strftime('%d.%m.%Y %H:%M')} (МСК)"
         )
 
         giveaway_info = f"""<b>Название:</b> {giveaway['name']}
@@ -533,7 +533,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             # Форматируем описание с учетом переменных
             description = giveaway['description']
             winner_count = str(giveaway['winner_count'])
-            end_time = (giveaway['end_time'] + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M (МСК)')
+            end_time = (giveaway['end_time'] ).strftime('%d.%m.%Y %H:%M (МСК)')
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
             # Текст нового поста
@@ -889,7 +889,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         cursor.execute("SELECT end_time FROM giveaways WHERE id = %s", (giveaway_id,))
         current_end_time = cursor.fetchone()[0]
-        formatted_end_time = (current_end_time + timedelta(hours=3)).strftime('%d.%m.%Y %H:%M (МСК)')
+        formatted_end_time = (current_end_time ).strftime('%d.%m.%Y %H:%M (МСК)')
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
