@@ -1,4 +1,4 @@
-from aiogram import Dispatcher, types
+from aiogram import Dispatcher
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ChatMemberUpdated, InlineKeyboardMarkup, InlineKeyboardButton, ChatMemberAdministrator
@@ -7,11 +7,19 @@ import logging
 import aiohttp
 import uuid
 import boto3
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from botocore.client import Config
 from datetime import datetime
 import io
 import asyncio
+from aiogram.fsm.storage.base import StorageKey
 from utils import send_message_with_image
+from created_giveaways import (
+    get_bound_communities,
+    get_giveaway_communities,
+    user_selected_communities,
+    truncate_name
+)
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -103,29 +111,6 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
             logging.error(f"Ошибка загрузки аватара для чата {chat_id}: {str(e)}")
             return None
 
-    @dp.callback_query(lambda c: c.data.startswith('bind_new_community:'))
-    async def process_bind_new_community(callback_query: types.CallbackQuery, state: FSMContext):
-        giveaway_id = callback_query.data.split(':')[1]
-        user_id = str(callback_query.from_user.id)
-        message_id = callback_query.message.message_id
-
-        await bot.answer_callback_query(callback_query.id)
-        await state.set_state(GiveawayStates.binding_communities)
-        await state.update_data(giveaway_id=giveaway_id, message_id=message_id)
-        pending_channels[user_id] = {'giveaway_id': giveaway_id, 'message_id': message_id}
-
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data=f"bind_communities:{giveaway_id}")]])
-        bot_info = await bot.get_me()
-        html_message = f"""
-Чтобы привязать паблик/канал/группу:  
-1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.  
-2. Вы должны быть администратором.  
-3. Не меняйте права бота при добавлении.  
-Бот автоматически обнаружит добавление.
-"""
-        await send_message_with_image(bot, int(user_id), html_message, reply_markup=keyboard, message_id=message_id)
-
     @dp.my_chat_member()
     async def bot_added_to_chat(event: ChatMemberUpdated, state: FSMContext):
         chat = event.chat
@@ -142,7 +127,26 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
             f"Бот добавлен в {chat_type_display} '{community_name}' (ID: {community_id}), статус: {new_status}")
 
         if new_status == ChatMemberStatus.LEFT:
-            logging.info(f"Бот покинул {chat_type_display} '{community_name}' (ID: {community_id}). Ничего не делаем.")
+            logging.info(f"Бот покинул {chat_type_display} '{community_name}' (ID: {community_id}). Удаляем из базы.")
+            try:
+                # Удаляем из bound_communities
+                cursor.execute(
+                    "DELETE FROM bound_communities WHERE community_id = %s AND user_id = %s",
+                    (community_id, user_id)
+                )
+                # Удаляем из giveaway_communities
+                cursor.execute(
+                    "DELETE FROM giveaway_communities WHERE community_id = %s AND user_id = %s",
+                    (community_id, user_id)
+                )
+                conn.commit()
+                logging.info(f"Записи для {community_id} успешно удалены из баз данных")
+
+                # После удаления обновляем интерфейс выбора сообществ
+                await update_community_selection_interface(bot, user_id)
+            except Exception as e:
+                logging.error(f"Ошибка при удалении записей для {community_id}: {str(e)}")
+                conn.rollback()
             return
 
         if new_status != ChatMemberStatus.ADMINISTRATOR:
@@ -288,11 +292,61 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                 cursor.execute(f"INSERT INTO bound_communities ({columns}) VALUES ({placeholders})",
                                tuple(data.values()))
             conn.commit()
+            await update_community_selection_interface(bot, user_id)
             return True
         except Exception as e:
             logging.error(f"Ошибка записи в bound_communities: {str(e)}")
             conn.rollback()
             return False
+
+    async def update_community_selection_interface(bot, user_id: str):
+        # Приводим user_id к int и создаем StorageKey
+        user_id_int = int(user_id)
+        state = FSMContext(dp.storage, key=StorageKey(bot_id=bot.id, chat_id=user_id_int, user_id=user_id_int))
+        state_data = await state.get_data()
+        giveaway_id = state_data.get('giveaway_id')
+        message_id = state_data.get('message_id')
+
+        if giveaway_id and message_id:
+            # Передаем cursor в get_bound_communities и get_giveaway_communities
+            bound_communities = await get_bound_communities(user_id_int)
+            giveaway_communities = await get_giveaway_communities(giveaway_id)
+
+            user_selected_communities[user_id] = {
+                'giveaway_id': giveaway_id,
+                'communities': set((comm['community_id'], comm['community_username']) for comm in giveaway_communities)
+            }
+
+            keyboard = InlineKeyboardBuilder()
+            if bound_communities:
+                for community in bound_communities:
+                    community_id = community['community_id']
+                    community_username = community['community_username']
+                    community_name = community['community_name']
+                    is_selected = (community_id, community_username) in user_selected_communities[user_id][
+                        'communities']
+
+                    display_name = truncate_name(community_name)
+                    text = f"{display_name}" + (' ✅' if is_selected else '')
+                    callback_data = f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
+                    if len(callback_data.encode('utf-8')) > 60:
+                        callback_data = f"toggle_community:{giveaway_id}:{community_id}:id"
+                    keyboard.button(text=text, callback_data=callback_data)
+
+            keyboard.button(text="💾 Сохранить выбор", callback_data=f"confirm_community_selection:{giveaway_id}")
+            keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+            keyboard.adjust(1)
+
+            # Обновляем сообщение, приводя user_id к int
+            try:
+                await bot.edit_message_reply_markup(
+                    chat_id=user_id_int,
+                    message_id=message_id,
+                    reply_markup=keyboard.as_markup()
+                )
+                logging.info(f"Интерфейс обновлен для пользователя {user_id}, giveaway_id: {giveaway_id}")
+            except Exception as e:
+                logging.error(f"Ошибка при обновлении интерфейса: {str(e)}")
 
     async def bind_community_to_giveaway(giveaway_id, community_id, community_username, community_type, user_id,
                                          community_name, avatar_url=None):
@@ -345,8 +399,96 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                 logging.error(f"Ошибка в check_and_update_avatars: {str(e)}")
             await asyncio.sleep(36000)  # Проверка каждые 60 минут
 
-    # Регистрация задачи при запуске бота
+    async def check_bot_chats_and_admins():
+        while True:
+            try:
+                # Получаем все чаты, где бот присутствует
+                cursor.execute("SELECT community_id FROM bound_communities")
+                known_chats = set(row[0] for row in cursor.fetchall())
+
+                # Список для хранения текущих чатов бота
+                current_chats = set()
+
+                # Используем getChats для получения списка чатов
+                # Примечание: Telegram Bot API не предоставляет прямой метод для получения всех чатов,
+                # поэтому мы будем проверять только известные чаты и новые через my_chat_member
+
+                # Проверяем статус бота в известных чатах
+                for chat_id in known_chats:
+                    try:
+                        chat_member = await bot.get_chat_member(chat_id, bot.id)
+                        if chat_member.status not in [ChatMemberStatus.LEFT, ChatMemberStatus.KICKED]:
+                            current_chats.add(chat_id)
+
+                            # Получаем список администраторов
+                            admins = await bot.get_chat_administrators(chat_id)
+                            chat_info = await bot.get_chat(chat_id)
+
+                            chat_type_db = "channel" if chat_info.type == ChatType.CHANNEL else "group"
+                            community_name = chat_info.title or "Без названия"
+                            community_username = chat_info.username or community_name
+
+                            # Получаем аватарку
+                            cursor.execute(
+                                "SELECT media_file_ava FROM bound_communities WHERE community_id = %s",
+                                (chat_id,)
+                            )
+                            result = cursor.fetchone()
+                            current_url = result[0] if result else None
+                            avatar_url = await download_and_save_avatar(chat_id, current_url)
+
+                            # Записываем всех администраторов в bound_communities
+                            for admin in admins:
+                                admin_id = str(admin.user.id)
+                                if admin.user.is_bot:
+                                    continue  # Пропускаем ботов
+
+                                await record_bound_community(
+                                    user_id=admin_id,
+                                    community_username=community_username,
+                                    community_id=chat_id,
+                                    community_type=chat_type_db,
+                                    community_name=community_name,
+                                    media_file_ava=avatar_url
+                                )
+                                logging.info(f"Администратор {admin_id} добавлен для чата {chat_id}")
+
+                        else:
+                            # Если бот больше не в чате, удаляем все записи
+                            cursor.execute(
+                                "DELETE FROM bound_communities WHERE community_id = %s",
+                                (chat_id,)
+                            )
+                            cursor.execute(
+                                "DELETE FROM giveaway_communities WHERE community_id = %s",
+                                (chat_id,)
+                            )
+                            conn.commit()
+                            logging.info(f"Бот исключен из чата {chat_id}, записи удалены")
+
+                    except Exception as e:
+                        logging.error(f"Ошибка проверки чата {chat_id}: {str(e)}")
+                        # Если чат недоступен, удаляем записи
+                        cursor.execute(
+                            "DELETE FROM bound_communities WHERE community_id = %s",
+                            (chat_id,)
+                        )
+                        cursor.execute(
+                            "DELETE FROM giveaway_communities WHERE community_id = %s",
+                            (chat_id,)
+                        )
+                        conn.commit()
+
+                # Логируем текущие чаты
+                logging.info(f"Текущие чаты бота: {current_chats}")
+
+            except Exception as e:
+                logging.error(f"Ошибка в check_bot_chats_and_admins: {str(e)}")
+
+            await asyncio.sleep(3600)  # Проверка каждый час
+
     @dp.startup()
     async def on_startup():
-        logging.info("Бот запущен, стартуем фоновую задачу проверки аватарок")
+        logging.info("Бот запущен, стартуем фоновые задачи")
         asyncio.create_task(check_and_update_avatars())
+        asyncio.create_task(check_bot_chats_and_admins())
