@@ -66,9 +66,18 @@ class GiveawayStates(StatesGroup):
 
 # Функция для подсчета длины текста без HTML-тегов
 def count_length_with_custom_emoji(text: str) -> int:
+    # Удаляем HTML-теги
     tag_pattern = r'<[^>]+>'
     cleaned_text = re.sub(tag_pattern, '', text)
-    return len(cleaned_text)
+
+    # Подсчитываем базовую длину текста без тегов
+    length = len(cleaned_text)
+
+    # Добавляем фиксированную длину для переменных
+    length += text.count('{win}') * (5 - len('{win}'))  # 5 символов минус длина самой строки "{win}"
+    length += text.count('{data}') * (16 - len('{data}'))  # 16 символов минус длина самой строки "{data}"
+
+    return length
 
 def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрация обработчиков для поздравительных сообщений."""
