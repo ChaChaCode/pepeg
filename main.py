@@ -17,6 +17,7 @@ from utils import send_message_with_image, check_and_end_giveaways, check_userna
 from history_practical import register_history_handlers
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
+from database import conn, cursor
 from created_giveaways import register_created_giveaways_handlers
 from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
@@ -33,26 +34,6 @@ BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
-
-# Конфигурация PostgreSQL
-db_config = {
-    "host": "91.84.97.19",
-    "port": 5432,
-    "database": "snapidb",
-    "user": "postgres",
-    "password": "moxy1337"
-}
-
-# Подключение к PostgreSQL
-try:
-    conn = psycopg2.connect(**db_config)
-    logging.info("Успешно подключились к PostgreSQL!")
-except Exception as e:
-    logging.error(f"Ошибка подключения к PostgreSQL: {e}")
-    raise
-
-# Создай курсор для выполнения запросов
-cursor = conn.cursor()
 
 # Переменные для хранения данных
 user_selected_communities = {}
