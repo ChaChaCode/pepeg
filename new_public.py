@@ -229,7 +229,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                         )
                         if success:
                             logging.info(f"Сообщество '{community_name}' привязано для администратора {admin_id}")
-                            notification = f"{chat_type_display.capitalize()} '{community_name}' успешно привязан! Теперь вы можете управлять им в боте."
+                            notification = f"{chat_type_display.capitalize()} '{community_name}' успешно привязан! Теперь вы можете привязывать его к вашим розыгрышам."
                             # Создаём контекст состояния для администратора
                             storage_key = StorageKey(
                                 bot_id=bot.id, chat_id=admin_id_int, user_id=admin_id_int, destiny="default"
@@ -281,7 +281,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                     bot, user_id_int,
                     f"Произошла ошибка при добавлении {chat_type_display}а '{community_name}'. Попробуйте снова.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="◶ Назад", callback_data="start")]
+                        [InlineKeyboardButton(text="◀️ Назад", callback_data="start")]
                     ]),
                     message_id=None
                 )
@@ -329,7 +329,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                         bot, user_id_int,
                         f"Бот не имеет достаточных прав в {chat_type_display}е '{community_name}': {', '.join(missing_permissions)}. Назначьте их для использования.",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="◶ Назад", callback_data="start")]
+                            [InlineKeyboardButton(text="◀️ Назад", callback_data="start")]
                         ]),
                         message_id=None
                     )
@@ -351,8 +351,8 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                 if success:
                     logging.info(f"Сообщество '{community_name}' привязано для нового администратора {user_id}")
                     notification = (
-                        f"Вы стали администратором в {chat_type_display}е '{community_name}'! "
-                        f"Теперь вы можете управлять им в боте."
+                        f"Вы стали администратором в {chat_type_display} '{community_name}'! "
+                        f"Теперь вы можете привязывать его к вашим розыгрышам."
                     )
                     await state.update_data(admin_notification=notification)
                     try:
@@ -376,7 +376,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                         bot, user_id_int,
                         f"Не удалось привязать {chat_type_display} '{community_name}'. Попробуйте снова.",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                            [InlineKeyboardButton(text="◶ Назад", callback_data="start")]
+                            [InlineKeyboardButton(text="◀️ Назад", callback_data="start")]
                         ]),
                         message_id=None
                     )
@@ -387,7 +387,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                     bot, user_id_int,
                     f"Произошла ошибка при обработке {chat_type_display}а '{community_name}'. Попробуйте снова.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="◶ Назад", callback_data="start")]
+                        [InlineKeyboardButton(text="◀️ Назад", callback_data="start")]
                     ]),
                     message_id=None
                 )
@@ -409,7 +409,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                 conn.commit()
                 logging.info(f"Записи для {community_id} удалены для пользователя {user_id}")
 
-                notification = f"Вы больше не администратор в {chat_type_display}е '{community_name}'. Доступ к управлению в боте удалён."
+                notification = f"Вы больше не администратор в {chat_type_display} '{community_name}'. Доступ к управлению в боте удалён."
                 await state.update_data(admin_notification=notification)
                 try:
                     cursor.execute(
@@ -434,7 +434,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                     bot, user_id_int,
                     f"Произошла ошибка при обработке {chat_type_display}а '{community_name}'. Попробуйте снова.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                        [InlineKeyboardButton(text="◶ Назад", callback_data="start")]
+                        [InlineKeyboardButton(text="◀️ Назад", callback_data="start")]
                     ]),
                     message_id=None
                 )
