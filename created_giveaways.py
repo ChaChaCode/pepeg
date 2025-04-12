@@ -6,7 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime
 import pytz
 from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardMarkup, InlineKeyboardButton
-from database import cursor
+from database import cursor, conn
 import aiogram.exceptions
 import json
 import asyncio
@@ -92,6 +92,136 @@ FORMATTING_GUIDE2 = """
 Максимальное количество кастомных эмодзи в одном сообщении — 100. Превышение этого лимита может привести к некорректному отображению.
 """
 
+async def build_community_selection_ui(user_id: int, giveaway_id: str, bot: Bot, bot_info, notification: str = None) -> tuple[str, InlineKeyboardMarkup, str]:
+    bound_communities = await get_bound_communities(bot, user_id, cursor)
+    giveaway_communities = await get_giveaway_communities(giveaway_id)
+
+    # Сохраняем текущий контекст привязки
+    user_selected_communities[user_id] = {
+        'giveaway_id': giveaway_id,
+        'communities': set((comm['community_id'], comm['community_username']) for comm in giveaway_communities)
+    }
+
+    # Сохраняем giveaway_id в базе данных
+    try:
+        cursor.execute(
+            """
+            INSERT INTO user_binding_state (user_id, giveaway_id, admin_notification)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (user_id)
+            DO UPDATE SET giveaway_id = EXCLUDED.giveaway_id,
+                          admin_notification = EXCLUDED.admin_notification,
+                          updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, giveaway_id, notification)
+        )
+        conn.commit()
+    except Exception as e:
+        logging.error(f"Ошибка сохранения состояния привязки для {user_id}: {str(e)}")
+
+    keyboard = InlineKeyboardBuilder()
+    if bound_communities:
+        for community in bound_communities:
+            community_id = community['community_id']
+            community_username = community['community_username']
+            community_name = community['community_name']
+            is_selected = (community_id, community_username) in user_selected_communities[user_id]['communities']
+
+            display_name = truncate_name(community_name)
+            text = f"{display_name}" + (' ✅' if is_selected else '')
+            callback_data = f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
+            if len(callback_data.encode('utf-8')) > 60:
+                callback_data = f"toggle_community:{giveaway_id}:{community_id}:id"
+            keyboard.button(text=text, callback_data=callback_data)
+
+        keyboard.button(text="💾 Сохранить выбор", callback_data=f"confirm_community_selection:{giveaway_id}")
+    keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
+    keyboard.adjust(1)
+
+    # Формируем базовый текст UI
+    if bound_communities:
+        message_text = (
+            "<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Выберите сообщества для привязки и нажмите 'Сохранить выбор'\n\n"
+            "<blockquote expandable>Чтобы привязать паблик/канал/группу:\n"
+            f"1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.\n"
+            "2. Вы должны быть администратором.\n"
+            "3. Не меняйте права бота при добавлении.\n"
+            "Бот автоматически обнаружит добавление.</blockquote>"
+        )
+    else:
+        message_text = (
+            "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> У вас нет доступных сообществ для привязки.\n\n"
+            "<blockquote expandable>Чтобы привязать паблик/канал/группу:\n"
+            f"1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.\n"
+            "2. Вы должны быть администратором.\n"
+            "3. Не меняйте права бота при добавлении.\n"
+            "Бот автоматически обнаружит добавление.</blockquote>"
+        )
+
+    # Добавляем уведомление в начало текста, если оно есть
+    if notification:
+        message_text = f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> {notification}\n\n{message_text}"
+
+    image_url = DEFAULT_IMAGE_URL
+    return message_text, keyboard.as_markup(), image_url
+
+async def get_bound_communities(bot, user_id: int, cursor) -> List[Dict[str, Any]]:
+    """Получает список сообществ, где пользователь является администратором.
+
+    Args:
+        bot: Экземпляр бота Aiogram для выполнения запросов к Telegram API.
+        user_id (int): ID пользователя, для которого получаем сообщества.
+        cursor: Курсор базы данных для выполнения SQL-запросов.
+
+    Returns:
+        List[Dict[str, Any]]: Список словарей с информацией о сообществах.
+    """
+    try:
+        # Получаем сообщества из базы, где пользователь указан как владелец
+        cursor.execute("SELECT * FROM bound_communities WHERE user_id = %s", (user_id,))
+        rows = cursor.fetchall()
+        columns = [desc[0] for desc in cursor.description]
+        communities = [dict(zip(columns, row)) for row in rows]
+
+        # Дополняем список сообществами, где пользователь является администратором
+        additional_communities = []
+        cursor.execute("SELECT DISTINCT community_id, community_username, community_name, community_type, media_file_ava FROM bound_communities")
+        all_communities = cursor.fetchall()
+        for community in all_communities:
+            community_id = community[0]
+            try:
+                chat_member = await bot.get_chat_member(chat_id=community_id, user_id=user_id)
+                # Проверяем, является ли пользователь администратором или создателем
+                if chat_member.status in ['administrator', 'creator']:
+                    # Проверяем, добавлен ли бот как администратор
+                    bot_member = await bot.get_chat_member(chat_id=community_id, user_id=(await bot.get_me()).id)
+                    if bot_member.status == 'administrator':
+                        # Формируем словарь сообщества
+                        community_dict = {
+                            'community_id': community_id,
+                            'community_username': community[1],
+                            'community_name': community[2],
+                            'community_type': community[3],
+                            'user_id': user_id,  # Указываем user_id для совместимости
+                            'media_file_ava': community[4]
+                        }
+                        # Добавляем, если сообщество еще не в списке
+                        if not any(c['community_id'] == community_id for c in communities):
+                            additional_communities.append(community_dict)
+            except aiogram.exceptions.TelegramBadRequest as e:
+                logging.warning(f"Не удалось проверить статус в сообществе {community_id}: {str(e)}")
+                continue
+            except Exception as e:
+                logging.error(f"Ошибка при проверке статуса в сообществе {community_id}: {str(e)}")
+                continue
+
+        # Объединяем списки
+        communities.extend(additional_communities)
+        return communities
+    except Exception as e:
+        logging.error(f"Ошибка получения сообществ: {str(e)}")
+        return []
+
 def strip_html_tags(text: str) -> str:
     """Удаляет HTML-теги из текста 🧹"""
     return re.sub(r'<[^>]+>', '', text)
@@ -171,12 +301,6 @@ async def get_file_url(bot: Bot, file_id: str) -> str:
     except Exception as e:
         logger.error(f"Ошибка получения URL файла: {str(e)}")
         raise
-
-async def get_bound_communities(user_id: int) -> List[Dict[str, Any]]:
-    cursor.execute("SELECT * FROM bound_communities WHERE user_id = %s", (user_id,))
-    rows = cursor.fetchall()
-    columns = [desc[0] for desc in cursor.description]
-    return [dict(zip(columns, row)) for row in rows]
 
 async def get_giveaway_communities(giveaway_id):
     try:
@@ -932,7 +1056,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except ValueError:
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◶ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -947,7 +1071,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             conn.rollback()
             data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◶ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -1374,7 +1498,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             new_end_time_tz = moscow_tz.localize(new_end_time)
 
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◶ Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -1393,7 +1517,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
         except ValueError:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◶ Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             html_message = f"""<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты\nИспользуйте ДД.ММ.ГГГГ ЧЧ:ММ
 
@@ -1412,7 +1536,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◶ Отмена", callback_data=f"edit_post:{giveaway_id}")
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -1479,67 +1603,81 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
-        await state.update_data(giveaway_id=giveaway_id, message_id=callback_query.message.message_id)
+        message_id = callback_query.message.message_id
+
+        # Сохраняем состояние в базе данных
+        try:
+            cursor.execute(
+                """
+                INSERT INTO user_binding_state (user_id, giveaway_id, message_id)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (user_id)
+                DO UPDATE SET giveaway_id = EXCLUDED.giveaway_id,
+                              message_id = EXCLUDED.message_id,
+                              updated_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, giveaway_id, message_id)
+            )
+            conn.commit()
+        except Exception as e:
+            logging.error(f"Ошибка сохранения состояния привязки для {user_id}: {str(e)}")
+
+        await state.update_data(giveaway_id=giveaway_id, message_id=message_id)
         await bot.answer_callback_query(callback_query.id)
 
-        bound_communities = await get_bound_communities(user_id)
-        giveaway_communities = await get_giveaway_communities(giveaway_id)
-
-        user_selected_communities[user_id] = {
-            'giveaway_id': giveaway_id,
-            'communities': set((comm['community_id'], comm['community_username']) for comm in giveaway_communities)
-        }
-
-        keyboard = InlineKeyboardBuilder()
-        if bound_communities:
-            for community in bound_communities:
-                community_id = community['community_id']
-                community_username = community['community_username']
-                community_name = community['community_name']
-                is_selected = (community_id, community_username) in user_selected_communities[user_id]['communities']
-
-                display_name = truncate_name(community_name)
-                text = f"{display_name}" + (' ✅' if is_selected else '')
-                callback_data = f"toggle_community:{giveaway_id}:{community_id}:{community_username}"
-                if len(callback_data.encode('utf-8')) > 60:
-                    callback_data = f"toggle_community:{giveaway_id}:{community_id}:id"
-                keyboard.button(text=text, callback_data=callback_data)
-
-        keyboard.button(text="💾 Сохранить выбор", callback_data=f"confirm_community_selection:{giveaway_id}")
-        keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
-        keyboard.adjust(1)
-        bot_info = await bot.get_me()
-        message_text = (
-            "<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Выберите сообщества для привязки и нажмите 'Сохранить выбор'\n\n"
-            "<blockquote expandable>Чтобы привязать паблик/канал/группу:\n"
-            f"1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.\n"
-            "2. Вы должны быть администратором.\n"
-            "3. Не меняйте права бота при добавлении.\n"
-            "Бот автоматически обнаружит добавление.</blockquote>"
-            if bound_communities
-            else "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> У вас нет привязанных сообществ. Добавьте новый паблик\n\n"
-                 "<blockquote expandable>Чтобы привязать паблик/канал/группу:\n"
-                 f"1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.\n"
-                 "2. Вы должны быть администратором.\n"
-                 "3. Не меняйте права бота при добавлении.\n"
-                 "Бот автоматически обнаружит добавление.</blockquote>"
-        )
-
-        image_url = DEFAULT_IMAGE_URL
-        if bound_communities and bound_communities[0].get('media_file_ava'):
-            image_url = bound_communities[0]['media_file_ava']
-            if not image_url.startswith('http'):
-                image_url = await get_file_url(bot, bound_communities[0]['media_file_ava'])
-
-        await send_message_with_image(
+        # Отправляем сообщение с индикатором загрузки
+        loading_message = await send_message_with_image(
             bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
+            user_id,
+            "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Загружаем ваши каналы и паблики",
+            reply_markup=None,
+            message_id=message_id,
             parse_mode='HTML',
-            image_url=image_url
+            image_url=DEFAULT_IMAGE_URL
         )
+
+        try:
+            # Получаем UI для выбора сообществ
+            message_text, keyboard, _ = await build_community_selection_ui(
+                user_id, giveaway_id, bot, await bot.get_me()
+            )
+
+            # Обновляем сообщение с интерфейсом выбора сообществ
+            await send_message_with_image(
+                bot,
+                user_id,
+                message_text,
+                reply_markup=keyboard,
+                message_id=loading_message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
+            )
+
+            # Обновляем message_id в базе данных
+            try:
+                cursor.execute(
+                    """
+                    UPDATE user_binding_state
+                    SET message_id = %s
+                    WHERE user_id = %s
+                    """,
+                    (loading_message.message_id, user_id)
+                )
+                conn.commit()
+            except Exception as e:
+                logging.error(f"Ошибка обновления message_id для {user_id}: {str(e)}")
+
+        except Exception as e:
+            logging.error(f"🚫 Ошибка при загрузке сообществ: {str(e)}")
+            await send_message_with_image(
+                bot,
+                user_id,
+                "⚠️ Ошибка при загрузке сообществ 😔",
+                reply_markup=None,
+                message_id=loading_message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('toggle_community:'))
     async def process_toggle_community(callback_query: CallbackQuery):
@@ -1552,16 +1690,18 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         _, giveaway_id, community_id, community_username = parts
 
         try:
-            cursor.execute("SELECT community_name, media_file_ava FROM bound_communities WHERE community_id = %s",
+            # Получаем только имя сообщества
+            cursor.execute("SELECT community_name FROM bound_communities WHERE community_id = %s",
                            (community_id,))
             community = cursor.fetchone()
             community_name = community[0] if community else community_username
-            media_file_ava = community[1] if community else None
 
+            # Инициализируем или обновляем выбранные сообщества
             if user_id not in user_selected_communities or user_selected_communities[user_id][
                 'giveaway_id'] != giveaway_id:
                 user_selected_communities[user_id] = {'giveaway_id': giveaway_id, 'communities': set()}
 
+            # Обновляем клавиатуру
             new_keyboard = []
             for row in callback_query.message.reply_markup.inline_keyboard:
                 new_row = []
@@ -1579,34 +1719,39 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         new_row.append(button)
                 new_keyboard.append(new_row)
 
-            # Обновляем клавиатуру
-            await bot.edit_message_reply_markup(
-                chat_id=callback_query.message.chat.id,
-                message_id=callback_query.message.message_id,
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=new_keyboard)
-            )
-
-            # Обновляем изображение, если есть media_file_ava
-            image_url = media_file_ava or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
-            if media_file_ava and not image_url.startswith('http'):
-                image_url = await get_file_url(bot, media_file_ava)
+            # Получаем информацию о боте
             bot_info = await bot.get_me()
-            message_text = (
-                "<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Выберите сообщества для привязки и нажмите 'Сохранить выбор'\n\n"
-                "<blockquote expandable>Чтобы привязать паблик/канал/группу:\n"
-                f"1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.\n"
-                "2. Вы должны быть администратором.\n"
-                "3. Не меняйте права бота при добавлении.\n"
-                "Бот автоматически обнаружит добавление.</blockquote>"
-            )
 
+            # Формируем статичный текст сообщения
+            bound_communities = await get_bound_communities(bot, user_id, cursor)
+            if bound_communities:
+                message_text = (
+                    "<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Выберите сообщества для привязки и нажмите 'Сохранить выбор'\n\n"
+                    "<blockquote expandable>Чтобы привязать паблик/канал/группу:\n"
+                    f"1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.\n"
+                    "2. Вы должны быть администратором.\n"
+                    "3. Не меняйте права бота при добавлении.\n"
+                    "Бот автоматически обнаружит добавление.</blockquote>"
+                )
+            else:
+                message_text = (
+                    "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> У вас нет доступных сообществ для привязки.\n\n"
+                    "<blockquote expandable>Чтобы привязать паблик/канал/группу:\n"
+                    f"1. Добавьте бота <code>@{bot_info.username}</code> в администраторы.\n"
+                    "2. Вы должны быть администратором.\n"
+                    "3. Не меняйте права бота при добавлении.\n"
+                    "Бот автоматически обнаружит добавление.</blockquote>"
+                )
+
+            # Обновляем сообщение с дефолтным изображением
             await send_message_with_image(
                 bot,
                 callback_query.from_user.id,
                 message_text,
                 reply_markup=InlineKeyboardMarkup(inline_keyboard=new_keyboard),
                 message_id=callback_query.message.message_id,
-                image_url=image_url
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
             await bot.answer_callback_query(callback_query.id)
@@ -1826,6 +1971,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.answer_callback_query(callback_query.id, text="✅ Сообщества обновлены")
             else:
                 await bot.answer_callback_query(callback_query.id, text="✅ Выбор сохранен")
+
+            # Очищаем состояние в базе и FSM
+            try:
+                cursor.execute("DELETE FROM user_binding_state WHERE user_id = %s", (user_id,))
+                conn.commit()
+                await state.clear()
+            except Exception as e:
+                logging.error(f"Ошибка очистки состояния привязки для {user_id}: {str(e)}")
 
             new_callback_query = types.CallbackQuery(
                 id=callback_query.id,
