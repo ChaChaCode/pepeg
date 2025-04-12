@@ -50,7 +50,7 @@ class GiveawayStates(StatesGroup):
 
 # Обновленные инструкции форматирования
 FORMATTING_GUIDE_INITIAL = """
-🖥 Теперь добавьте описание (до 2500 символов) с медиа файлом (фото, видео или GIF до 10 МБ):
+<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Напишите описание для поста (до 2500 символов) и приложите медиафайл (фото, видео или GIF, размером до 10 МБ): 
 
 Поддерживаемые форматы текста:
 <blockquote expandable>- Цитата
@@ -303,7 +303,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         media_display = f"📸 Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}." if media_url else "📸 Текущее медиа: Отсутствует."
         message_text = (
-            f"<a href=\"{image_url}\">\u200B</a>🖥 Текущее описание:\n{description if description else 'Отсутствует'}\n"
+            f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее описание:\n{description if description else 'Отсутствует'}\n"
             f"{media_display}\n\n"
             f"Если хотите изменить, отправьте новый текст с медиа файлом или можете отправить по отдельности только описание или медиа:\n\n"
             f"{FORMATTING_GUIDE_UPDATE}"
@@ -446,7 +446,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         image_url = media_url if media_url else placeholder_url
         media_display = f"📸 Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}." if media_url else "📸 Текущее медиа: Отсутствует."
         message_text = (
-            f"<a href=\"{image_url}\">\u200B</a>🖥 Текущее описание:\n{description if description else 'Отсутствует'}\n"
+            f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее описание:\n{description if description else 'Отсутствует'}\n"
             f"{media_display}\n\n"
             f"Если хотите изменить, отправьте новый текст с медиа файлом или можете отправить по отдельности только описание или медиа:\n\n"
             f"{FORMATTING_GUIDE_UPDATE}"
@@ -472,7 +472,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
         message_text = (
             f"📸 Текущее медиа: Отсутствует.\n"
-            f"<a href=\"{placeholder_url}\">\u200B</a>🖥 Текущее описание:\n{description if description else 'Отсутствует'}\n\n"
+            f"<a href=\"{placeholder_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее описание:\n{description if description else 'Отсутствует'}\n\n"
             f"Если хотите изменить, отправьте новый текст с медиа файлом или можете отправить по отдельности только описание или медиа:\n\n"
             f"{FORMATTING_GUIDE_UPDATE}"
         )
@@ -547,7 +547,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         image_url = media_url if media_url else 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
         media_display = f"📸 Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}." if media_url else "📸 Текущее медиа: Отсутствует."
         message_text = (
-            f"<a href=\"{image_url}\">\u200B</a>🖥 Текущее описание:\n{description if description else 'Отсутствует'}\n"
+            f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее описание:\n{description if description else 'Отсутствует'}\n"
             f"{media_display}\n\n"
             f"Если хотите изменить, отправьте новый текст с медиа файлом или можете отправить по отдельности только описание или медиа:\n\n"
             f"{FORMATTING_GUIDE_UPDATE}"
