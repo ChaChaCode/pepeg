@@ -1,6 +1,6 @@
 import logging
 from aiogram import Bot
-from aiogram.types import Message, LinkPreviewOptions
+from aiogram.types import Message, LinkPreviewOptions, InputMediaPhoto
 import aiogram.exceptions
 import asyncio
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -23,11 +23,10 @@ FORMATTING_GUIDE = """
 - Курсив: <i>текст</i>
 - Подчёркнутый: <u>текст</u>
 - Зачёркнутый: <s>текст</s>
-- Моноширинный
+- Моноширинный: <code>текст</code>
 - Скрытый: <tg-spoiler>текст</tg-spoiler>
 - Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
-- Код: <code>текст</code>
-- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
+- Кастомные эмодзи: <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
 
 Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
 """
@@ -40,7 +39,6 @@ def generate_unique_code(cursor) -> str:
             return code
 
 async def get_file_url(bot: Bot, file_id: str) -> str:
-    """Получает URL файла по его file_id."""
     try:
         file = await bot.get_file(file_id)
         file_path = file.file_path
@@ -51,25 +49,69 @@ async def get_file_url(bot: Bot, file_id: str) -> str:
         raise
 
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
-                                 parse_mode: str = 'HTML', entities=None, image_url: str = None) -> Message | None:
-    # Если image_url не передан, используем дефолтное изображение
+                                 parse_mode: str = 'HTML', entities=None, image_url: str = None,
+                                 previous_message_type: str = None) -> Message | None:
     image_url = image_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
-    # Используем HTML-разметку с тегом <a> и символом  
     full_text = f"<a href=\"{image_url}\">\u200B</a>{text}"
-    # Настраиваем LinkPreviewOptions с show_above_text=True
     link_preview_options = LinkPreviewOptions(show_above_text=True)
+    current_message_type = 'image'
 
     try:
-        if message_id:
-            return await bot.edit_message_text(
+        if message_id and previous_message_type and previous_message_type != current_message_type:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как тип сообщения изменился на {current_message_type}")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}: {str(e)}")
+            return await bot.send_message(
                 chat_id=chat_id,
-                message_id=message_id,
                 text=full_text,
                 reply_markup=reply_markup,
                 parse_mode=parse_mode,
                 entities=entities,
                 link_preview_options=link_preview_options
             )
+        elif message_id:
+            try:
+                return await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=full_text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    entities=entities,
+                    link_preview_options=link_preview_options
+                )
+            except aiogram.exceptions.TelegramBadRequest as e:
+                if "message to edit not found" in str(e).lower():
+                    logger.warning(f"Сообщение {message_id} не найдено для редактирования, отправляем новое")
+                    return await bot.send_message(
+                        chat_id=chat_id,
+                        text=full_text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode,
+                        entities=entities,
+                        link_preview_options=link_preview_options
+                    )
+                elif "there is no text in the message to edit" in str(e).lower():
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                        logger.info(f"Удалено сообщение {message_id} в чате {chat_id} из-за попытки редактирования фото")
+                    except Exception as de:
+                        logger.warning(f"Не удалось удалить сообщение {message_id}: {str(de)}")
+                    return await bot.send_message(
+                        chat_id=chat_id,
+                        text=full_text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode,
+                        entities=entities,
+                        link_preview_options=link_preview_options
+                    )
+                elif "can't parse entities" in str(e).lower():
+                    logger.error(f"HTML parsing error in message: {full_text}")
+                    raise
+                else:
+                    raise
         else:
             return await bot.send_message(
                 chat_id=chat_id,
@@ -82,6 +124,78 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
     except Exception as e:
         logger.error(f"Error in send_message_with_image: {str(e)}")
         return None
+
+async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
+                                 parse_mode: str = 'HTML', image_url: str = None,
+                                 previous_message_type: str = None) -> Message | None:
+    image_url = image_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
+    current_message_type = 'photo'
+
+    try:
+        if message_id and previous_message_type and previous_message_type != current_message_type:
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как тип сообщения изменился на {current_message_type}")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}: {str(e)}")
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=image_url,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+        elif message_id:
+            try:
+                return await bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    media=InputMediaPhoto(
+                        media=image_url,
+                        caption=text,
+                        parse_mode=parse_mode
+                    ),
+                    reply_markup=reply_markup
+                )
+            except aiogram.exceptions.TelegramBadRequest as e:
+                if "message to edit not found" in str(e).lower():
+                    logger.warning(f"Сообщение {message_id} не найдено для редактирования, отправляем новое")
+                    return await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=image_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+                elif "message is not modified" in str(e).lower():
+                    logger.info(f"Сообщение {message_id} не изменено, пропускаем")
+                    return None
+                else:
+                    logger.error(f"Ошибка редактирования сообщения {message_id}: {str(e)}")
+                    try:
+                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                    except Exception as de:
+                        logger.warning(f"Не удалось удалить сообщение {message_id}: {str(de)}")
+                    return await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=image_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+        else:
+            return await bot.send_photo(
+                chat_id=chat_id,
+                photo=image_url,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+    except Exception as e:
+        logger.error(f"Error in send_message_with_photo: {str(e)}")
+        return None
+
+# Остальные функции (check_and_end_giveaways, end_giveaway, etc.) остаются без изменений
 
 async def check_and_end_giveaways(bot: Bot, conn, cursor):
     while True:
