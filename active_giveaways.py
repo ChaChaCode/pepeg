@@ -442,7 +442,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway_id = callback_query.data.split(':')[1]
         await _show_edit_menu_active(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
 
-    async def _show_edit_menu_active(user_id: int, giveaway_id: str, message_id: int = None):
+    async def _show_edit_menu_active(user_id: int, giveaway_id: str, message_id: int = None, state: FSMContext = None):
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
         columns = [desc[0] for desc in cursor.description]
         giveaway = dict(zip(columns, cursor.fetchone()))
@@ -458,6 +458,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 image_url=DEFAULT_IMAGE_URL
             )
             return
+
+        # Очищаем данные сообщений при возврате в меню
+        if state:
+            await state.update_data(
+                user_messages=[],
+                current_message_parts=[],
+                limit_exceeded=False,
+                last_message_time=None
+            )
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="📝 Название", callback_data=f"edit_name_active:{giveaway_id}")
@@ -603,7 +612,15 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         cursor.execute("SELECT name FROM giveaways WHERE id = %s", (giveaway_id,))
         current_name = cursor.fetchone()[0]
 
-        await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
+        # Сбрасываем данные о сообщениях
+        await state.update_data(
+            giveaway_id=giveaway_id,
+            last_message_id=callback_query.message.message_id,
+            user_messages=[],
+            current_message_parts=[],
+            limit_exceeded=False,
+            last_message_time=None
+        )
         await state.set_state(EditGiveawayStates.waiting_for_new_name_active)
 
         keyboard = InlineKeyboardBuilder()
@@ -612,6 +629,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         message_text = (
             f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: <b>{current_name}</b>\n\n"
             f"Отправьте новое название (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
+            if current_name else
+            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Отправьте название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
         )
 
         # Используем заглушку для сообщения
@@ -630,56 +649,180 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.message(EditGiveawayStates.waiting_for_new_name_active)
     async def process_new_name_active(message: types.Message, state: FSMContext):
         data = await state.get_data()
-        giveaway_id = data['giveaway_id']
-        last_message_id = data['last_message_id']
+        giveaway_id = data.get('giveaway_id')
+        last_message_id = data.get('last_message_id')
+        user_messages = data.get('user_messages', [])  # Список сообщений пользователя
+        limit_exceeded = data.get('limit_exceeded', False)  # Флаг превышения лимита
+        current_message_parts = data.get('current_message_parts', [])  # Части текущего длинного сообщения
+        last_message_time = data.get('last_message_time')  # Время последнего сообщения
         new_name = message.html_text if message.text else ""
 
-        text_length = count_length_with_custom_emoji(new_name)
+        # Текущая временная метка
+        current_time = datetime.now().timestamp()
+
+        # Создаем клавиатуру
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.adjust(1)
 
-        if not new_name or text_length > MAX_NAME_LENGTH:
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            # Используем заглушку для сообщения
-            await send_message_with_image(
-                bot,
-                message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название должно быть от 1 до {MAX_NAME_LENGTH} символов! Сейчас: {text_length}\n{FORMATTING_GUIDE}",
-                reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
-                parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
-            )
+        # Проверяем, является ли сообщение частью длинного сообщения (интервал 2 секунды)
+        if last_message_time is not None and (current_time - last_message_time) <= 2:
+            # Добавляем новое сообщение как часть текущего
+            current_message_parts.append(new_name)
+        else:
+            # Сохраняем предыдущее длинное сообщение, если оно было
+            if current_message_parts:
+                combined_message = "".join(current_message_parts)
+                if combined_message:
+                    user_messages.append(combined_message)
+            # Начинаем новое длинное сообщение
+            current_message_parts = [new_name]
+
+        # Обновляем состояние
+        await state.update_data(
+            current_message_parts=current_message_parts,
+            last_message_time=current_time,
+            user_messages=user_messages,
+            limit_exceeded=limit_exceeded
+        )
+
+        # Подсчет общей длины текущего длинного сообщения
+        combined_current_message = "".join(current_message_parts)
+        current_length = count_length_with_custom_emoji(combined_current_message)
+
+        # Если ранее лимит был превышен
+        if limit_exceeded:
+            if current_length <= MAX_NAME_LENGTH and current_length > 0 and current_length <= MAX_CAPTION_LENGTH:
+                try:
+                    # Обновляем название в базе данных
+                    cursor.execute(
+                        "UPDATE giveaways SET name = %s WHERE id = %s",
+                        (combined_current_message, giveaway_id)
+                    )
+                    conn.commit()
+
+                    # Удаляем сообщение пользователя
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+
+                    # Очищаем сохраненные сообщения и флаг
+                    await state.update_data(
+                        user_messages=[],
+                        current_message_parts=[],
+                        limit_exceeded=False,
+                        last_message_time=None
+                    )
+
+                    # Обновляем опубликованные посты
+                    cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+                    giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
+                    await update_published_posts_active(giveaway_id, giveaway)
+
+                    # Возвращаемся к меню редактирования
+                    await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id)
+                    await state.clear()
+                except Exception as e:
+                    logger.error(f"🚫 Ошибка: {str(e)}")
+                    conn.rollback()
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                    await send_message_with_image(
+                        bot,
+                        message.chat.id,
+                        "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить название 😔",
+                        reply_markup=keyboard.as_markup(),
+                        message_id=last_message_id,
+                        parse_mode='HTML',
+                        image_url=DEFAULT_IMAGE_URL
+                    )
+                return
+            else:
+                # Оставляем сообщение пользователя, если оно все еще превышает лимит
+                error_message = (
+                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название должно быть от 1 до {MAX_NAME_LENGTH} символов! Сейчас: {current_length}\n{FORMATTING_GUIDE}"
+                    if current_length > MAX_NAME_LENGTH or not combined_current_message
+                    else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {current_length}\n{FORMATTING_GUIDE}"
+                )
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    error_message,
+                    reply_markup=keyboard.as_markup(),
+                    message_id=last_message_id,
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
+                )
+                return
+
+        # Подсчет общей длины всех сообщений (включая предыдущие длинные сообщения)
+        total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
+        total_length += current_length
+
+        # Проверяем превышение лимита
+        if total_length > MAX_NAME_LENGTH or not combined_current_message or total_length > MAX_CAPTION_LENGTH:
+            try:
+                # Удаляем предыдущее сообщение бота
+                if last_message_id:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+
+                # Оставляем сообщения пользователя
+                await state.update_data(
+                    user_messages=user_messages,
+                    current_message_parts=current_message_parts,
+                    limit_exceeded=True,
+                    last_message_id=None,
+                    last_message_time=current_time
+                )
+
+                # Отправляем уведомление о превышении
+                error_message = (
+                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название превышает лимит ({MAX_NAME_LENGTH} символов). Общая длина: {total_length}\nОтправьте новое название.\n{FORMATTING_GUIDE}"
+                    if total_length > MAX_NAME_LENGTH or not combined_current_message
+                    else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Общая длина: {total_length}\nОтправьте новое название.\n{FORMATTING_GUIDE}"
+                )
+                sent_message = await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    error_message,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
+                )
+                await state.update_data(last_message_id=sent_message.message_id)
+            except Exception as e:
+                logger.error(f"🚫 Ошибка при обработке превышения: {str(e)}")
+                await state.update_data(last_message_id=None)
             return
 
-        if text_length > MAX_CAPTION_LENGTH:
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            # Используем заглушку для сообщения
-            await send_message_with_image(
-                bot,
-                message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {text_length}\n{FORMATTING_GUIDE}",
-                reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
-                parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
-            )
-            return
-
+        # Если лимит не превышен
         try:
-            cursor.execute("UPDATE giveaways SET name = %s WHERE id = %s", (new_name, giveaway_id))
+            # Обновляем название в базе данных
+            cursor.execute(
+                "UPDATE giveaways SET name = %s WHERE id = %s",
+                (combined_current_message, giveaway_id)
+            )
             conn.commit()
+
+            # Удаляем сообщение пользователя
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+
+            # Очищаем сохраненные сообщения
+            await state.update_data(
+                user_messages=[],
+                current_message_parts=[],
+                last_message_time=None
+            )
+
+            # Обновляем опубликованные посты
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
             giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
             await update_published_posts_active(giveaway_id, giveaway)
+
+            # Возвращаемся к меню редактирования
             await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id)
             await state.clear()
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            # Используем заглушку для сообщения об ошибке
             await send_message_with_image(
                 bot,
                 message.chat.id,
@@ -696,15 +839,25 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         cursor.execute("SELECT description FROM giveaways WHERE id = %s", (giveaway_id,))
         current_description = cursor.fetchone()[0]
 
-        await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
+        # Сбрасываем данные о сообщениях
+        await state.update_data(
+            giveaway_id=giveaway_id,
+            last_message_id=callback_query.message.message_id,
+            user_messages=[],
+            current_message_parts=[],
+            limit_exceeded=False,
+            last_message_time=None
+        )
         await state.set_state(EditGiveawayStates.waiting_for_new_description_active)
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
         message_text = (
-            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: <b>{current_description}</b>\n\n"
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {current_description}\n\n"
             f"Отправьте новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}"
+            if current_description else
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Отправьте описание розыгрыша (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}"
         )
 
         # Используем заглушку для сообщения
@@ -723,56 +876,180 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.message(EditGiveawayStates.waiting_for_new_description_active)
     async def process_new_description_active(message: types.Message, state: FSMContext):
         data = await state.get_data()
-        giveaway_id = data['giveaway_id']
-        last_message_id = data['last_message_id']
+        giveaway_id = data.get('giveaway_id')
+        last_message_id = data.get('last_message_id')
+        user_messages = data.get('user_messages', [])  # Список сообщений пользователя
+        limit_exceeded = data.get('limit_exceeded', False)  # Флаг превышения лимита
+        current_message_parts = data.get('current_message_parts', [])  # Части текущего длинного сообщения
+        last_message_time = data.get('last_message_time')  # Время последнего сообщения
         new_description = message.html_text if message.text else ""
 
-        text_length = count_length_with_custom_emoji(new_description)
+        # Текущая временная метка
+        current_time = datetime.now().timestamp()
+
+        # Создаем клавиатуру
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+        keyboard.adjust(1)
 
-        if not new_description or text_length > MAX_DESCRIPTION_LENGTH:
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            # Используем заглушку для сообщения
-            await send_message_with_image(
-                bot,
-                message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание должно быть от 1 до {MAX_DESCRIPTION_LENGTH} символов! Сейчас: {text_length}\n{FORMATTING_GUIDE2}",
-                reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
-                parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
-            )
+        # Проверяем, является ли сообщение частью длинного сообщения (интервал 2 секунды)
+        if last_message_time is not None and (current_time - last_message_time) <= 2:
+            # Добавляем новое сообщение как часть текущего
+            current_message_parts.append(new_description)
+        else:
+            # Сохраняем предыдущее длинное сообщение, если оно было
+            if current_message_parts:
+                combined_message = "".join(current_message_parts)
+                if combined_message:
+                    user_messages.append(combined_message)
+            # Начинаем новое длинное сообщение
+            current_message_parts = [new_description]
+
+        # Обновляем состояние
+        await state.update_data(
+            current_message_parts=current_message_parts,
+            last_message_time=current_time,
+            user_messages=user_messages,
+            limit_exceeded=limit_exceeded
+        )
+
+        # Подсчет общей длины текущего длинного сообщения
+        combined_current_message = "".join(current_message_parts)
+        current_length = count_length_with_custom_emoji(combined_current_message)
+
+        # Если ранее лимит был превышен
+        if limit_exceeded:
+            if current_length <= MAX_DESCRIPTION_LENGTH and current_length > 0 and current_length <= MAX_CAPTION_LENGTH:
+                try:
+                    # Обновляем описание в базе данных
+                    cursor.execute(
+                        "UPDATE giveaways SET description = %s WHERE id = %s",
+                        (combined_current_message, giveaway_id)
+                    )
+                    conn.commit()
+
+                    # Удаляем сообщение пользователя
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+
+                    # Очищаем сохраненные сообщения и флаг
+                    await state.update_data(
+                        user_messages=[],
+                        current_message_parts=[],
+                        limit_exceeded=False,
+                        last_message_time=None
+                    )
+
+                    # Обновляем опубликованные посты
+                    cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+                    giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
+                    await update_published_posts_active(giveaway_id, giveaway)
+
+                    # Возвращаемся к меню редактирования
+                    await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id)
+                    await state.clear()
+                except Exception as e:
+                    logger.error(f"🚫 Ошибка: {str(e)}")
+                    conn.rollback()
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                    await send_message_with_image(
+                        bot,
+                        message.chat.id,
+                        "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить описание 😔",
+                        reply_markup=keyboard.as_markup(),
+                        message_id=last_message_id,
+                        parse_mode='HTML',
+                        image_url=DEFAULT_IMAGE_URL
+                    )
+                return
+            else:
+                # Оставляем сообщение пользователя, если оно все еще превышает лимит
+                error_message = (
+                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание должно быть от 1 до {MAX_DESCRIPTION_LENGTH} символов! Сейчас: {current_length}\n{FORMATTING_GUIDE2}"
+                    if current_length > MAX_DESCRIPTION_LENGTH or not combined_current_message
+                    else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {current_length}\n{FORMATTING_GUIDE2}"
+                )
+                await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    error_message,
+                    reply_markup=keyboard.as_markup(),
+                    message_id=last_message_id,
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
+                )
+                return
+
+        # Подсчет общей длины всех сообщений (включая предыдущие длинные сообщения)
+        total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
+        total_length += current_length
+
+        # Проверяем превышение лимита
+        if total_length > MAX_DESCRIPTION_LENGTH or not combined_current_message or total_length > MAX_CAPTION_LENGTH:
+            try:
+                # Удаляем предыдущее сообщение бота
+                if last_message_id:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+
+                # Оставляем сообщения пользователя
+                await state.update_data(
+                    user_messages=user_messages,
+                    current_message_parts=current_message_parts,
+                    limit_exceeded=True,
+                    last_message_id=None,
+                    last_message_time=current_time
+                )
+
+                # Отправляем уведомление о превышении
+                error_message = (
+                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит ({MAX_DESCRIPTION_LENGTH} символов). Общая длина: {total_length}\nОтправьте новое описание.\n{FORMATTING_GUIDE2}"
+                    if total_length > MAX_DESCRIPTION_LENGTH or not combined_current_message
+                    else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Общая длина: {total_length}\nОтправьте новое описание.\n{FORMATTING_GUIDE2}"
+                )
+                sent_message = await send_message_with_image(
+                    bot,
+                    message.chat.id,
+                    error_message,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
+                )
+                await state.update_data(last_message_id=sent_message.message_id)
+            except Exception as e:
+                logger.error(f"🚫 Ошибка при обработке превышения: {str(e)}")
+                await state.update_data(last_message_id=None)
             return
 
-        if text_length > MAX_CAPTION_LENGTH:
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            # Используем заглушку для сообщения
-            await send_message_with_image(
-                bot,
-                message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {text_length}\n{FORMATTING_GUIDE2}",
-                reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
-                parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
-            )
-            return
-
+        # Если лимит не превышен
         try:
-            cursor.execute("UPDATE giveaways SET description = %s WHERE id = %s", (new_description, giveaway_id))
+            # Обновляем описание в базе данных
+            cursor.execute(
+                "UPDATE giveaways SET description = %s WHERE id = %s",
+                (combined_current_message, giveaway_id)
+            )
             conn.commit()
+
+            # Удаляем сообщение пользователя
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+
+            # Очищаем сохраненные сообщения
+            await state.update_data(
+                user_messages=[],
+                current_message_parts=[],
+                last_message_time=None
+            )
+
+            # Обновляем опубликованные посты
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
             giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
             await update_published_posts_active(giveaway_id, giveaway)
+
+            # Возвращаемся к меню редактирования
             await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id)
             await state.clear()
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            # Используем заглушку для сообщения об ошибке
             await send_message_with_image(
                 bot,
                 message.chat.id,
