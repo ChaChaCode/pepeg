@@ -230,6 +230,14 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == 'create_giveaway')
     async def process_create_giveaway(callback_query: CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(callback_query.id)
+        # Сбрасываем данные о сообщениях
+        await state.update_data(
+            user_messages=[],
+            current_message_parts=[],
+            limit_exceeded=False,
+            last_message_time=None,
+            last_message_id=callback_query.message.message_id
+        )
         await state.set_state(GiveawayStates.waiting_for_name)
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
@@ -244,45 +252,148 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             parse_mode='HTML',
             link_preview_options=link_preview_options
         )
-        await state.update_data(last_message_id=callback_query.message.message_id)
 
     @dp.message(GiveawayStates.waiting_for_name)
     async def process_name(message: types.Message, state: FSMContext):
         if message.text and message.text.startswith('/'):
             return
 
+        data = await state.get_data()
+        last_message_id = data.get('last_message_id')
+        user_messages = data.get('user_messages', [])  # Список сообщений пользователя
+        limit_exceeded = data.get('limit_exceeded', False)  # Флаг превышения лимита
+        current_message_parts = data.get('current_message_parts', [])  # Части текущего длинного сообщения
+        last_message_time = data.get('last_message_time')  # Время последнего сообщения
         formatted_text = message.html_text if message.text else ""
-        text_length = count_length_with_custom_emoji(formatted_text)
 
-        if text_length > MAX_NAME_LENGTH:
-            data = await state.get_data()
-            keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
-            error_text = f"<a href=\"{image_url}\">\u200B</a>⚠️ Название слишком длинное! Максимум {MAX_NAME_LENGTH} символов, сейчас {text_length}. Сократите!"
-            link_preview_options = LinkPreviewOptions(show_above_text=True)
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=data['last_message_id'],
-                text=error_text,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML',
-                link_preview_options=link_preview_options
-            )
+        # Текущая временная метка
+        current_time = datetime.now().timestamp()
+
+        # Создаем клавиатуру
+        keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
+        link_preview_options = LinkPreviewOptions(show_above_text=True)
+
+        # Проверяем, является ли сообщение частью длинного сообщения (интервал 2 секунды)
+        if last_message_time is not None and (current_time - last_message_time) <= 2:
+            # Добавляем новое сообщение как часть текущего
+            current_message_parts.append(formatted_text)
+        else:
+            # Сохраняем предыдущее длинное сообщение, если оно было
+            if current_message_parts:
+                combined_message = "".join(current_message_parts)
+                if combined_message:
+                    user_messages.append(combined_message)
+            # Начинаем новое длинное сообщение
+            current_message_parts = [formatted_text]
+
+        # Обновляем состояние
+        await state.update_data(
+            current_message_parts=current_message_parts,
+            last_message_time=current_time,
+            user_messages=user_messages,
+            limit_exceeded=limit_exceeded
+        )
+
+        # Подсчет общей длины текущего длинного сообщения
+        combined_current_message = "".join(current_message_parts)
+        current_length = count_length_with_custom_emoji(combined_current_message)
+
+        # Если ранее лимит был превышен
+        if limit_exceeded:
+            if current_length <= MAX_NAME_LENGTH and current_length > 0 and current_length <= MAX_CAPTION_LENGTH:
+                # Корректное сообщение после превышения
+                await state.update_data(
+                    name=combined_current_message,
+                    user_messages=[],
+                    current_message_parts=[],
+                    limit_exceeded=False,
+                    last_message_time=None
+                )
+                await state.set_state(GiveawayStates.waiting_for_description_and_media)
+                keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
+                message_text = f"<a href=\"{image_url}\">\u200B</a>{FORMATTING_GUIDE_INITIAL}"
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                await bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=last_message_id,
+                    text=message_text,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
+                return
+            else:
+                # Оставляем сообщение пользователя, если оно все еще превышает лимит
+                error_text = (
+                    f"<a href=\"{image_url}\">\u200B</a>⚠️ Название должно быть от 1 до {MAX_NAME_LENGTH} символов! Сейчас: {current_length}"
+                    if current_length > MAX_NAME_LENGTH or not combined_current_message
+                    else f"<a href=\"{image_url}\">\u200B</a>⚠️ Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {current_length}"
+                )
+                await bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=last_message_id,
+                    text=error_text,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
+                return
+
+        # Подсчет общей длины всех сообщений
+        total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
+        total_length += current_length
+
+        # Проверяем превышение лимита
+        if total_length > MAX_NAME_LENGTH or not combined_current_message or total_length > MAX_CAPTION_LENGTH:
+            try:
+                # Удаляем предыдущее сообщение бота
+                if last_message_id:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+
+                # Оставляем сообщения пользователя
+                await state.update_data(
+                    user_messages=user_messages,
+                    current_message_parts=current_message_parts,
+                    limit_exceeded=True,
+                    last_message_id=None,
+                    last_message_time=current_time
+                )
+
+                # Отправляем уведомление о превышении
+                error_text = (
+                    f"<a href=\"{image_url}\">\u200B</a>⚠️ Название превышает лимит ({MAX_NAME_LENGTH} символов). Общая длина: {total_length}"
+                    if total_length > MAX_NAME_LENGTH or not combined_current_message
+                    else f"<a href=\"{image_url}\">\u200B</a>⚠️ Название превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Общая длина: {total_length}"
+                )
+                sent_message = await bot.send_message(
+                    chat_id=message.chat.id,
+                    text=error_text,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
+                await state.update_data(last_message_id=sent_message.message_id)
+            except Exception as e:
+                logger.error(f"🚫 Ошибка при обработке превышения: {str(e)}")
+                await state.update_data(last_message_id=None)
             return
 
-        await state.update_data(name=formatted_text)
+        # Если лимит не превышен
+        await state.update_data(
+            name=combined_current_message,
+            user_messages=[],
+            current_message_parts=[],
+            last_message_time=None
+        )
         await state.set_state(GiveawayStates.waiting_for_description_and_media)
-        data = await state.get_data()
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
-        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
         message_text = f"<a href=\"{image_url}\">\u200B</a>{FORMATTING_GUIDE_INITIAL}"
-        link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         await bot.edit_message_text(
             chat_id=message.chat.id,
-            message_id=data['last_message_id'],
+            message_id=last_message_id,
             text=message_text,
             reply_markup=keyboard.as_markup(),
             parse_mode='HTML',
@@ -292,6 +403,14 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == "next_to_description_and_media")
     async def next_to_description_and_media(callback_query: CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(callback_query.id)
+        # Сбрасываем данные о сообщениях
+        await state.update_data(
+            user_messages=[],
+            current_message_parts=[],
+            limit_exceeded=False,
+            last_message_time=None,
+            last_message_id=callback_query.message.message_id
+        )
         await state.set_state(GiveawayStates.waiting_for_description_and_media)
         data = await state.get_data()
         description = data.get('description', '')
@@ -324,6 +443,11 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             return
 
         data = await state.get_data()
+        last_message_id = data.get('last_message_id')
+        user_messages = data.get('user_messages', [])  # Список сообщений пользователя
+        limit_exceeded = data.get('limit_exceeded', False)  # Флаг превышения лимита
+        current_message_parts = data.get('current_message_parts', [])  # Части текущего длинного сообщения
+        last_message_time = data.get('last_message_time')  # Время последнего сообщения
         placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
         link_preview_options = LinkPreviewOptions(show_above_text=True)
 
@@ -334,26 +458,41 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         elif message.caption:
             formatted_text = message.html_text
 
+        # Текущая временная метка
+        current_time = datetime.now().timestamp()
+
+        # Проверяем, является ли сообщение частью длинного сообщения (интервал 2 секунды)
         if formatted_text:
-            text_length = count_length_with_custom_emoji(formatted_text)
-            if text_length > MAX_DESCRIPTION_LENGTH:
-                keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
-                error_text = (
-                    f"<a href=\"{data.get('media_url', placeholder_url)}\">\u200B</a>"
-                    f"⚠️ Описание слишком длинное! Максимум {MAX_DESCRIPTION_LENGTH} символов, сейчас {text_length}. Сократите!\n\n"
-                    f"{FORMATTING_GUIDE_UPDATE}"
-                )
-                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-                await bot.edit_message_text(
-                    chat_id=message.chat.id,
-                    message_id=data['last_message_id'],
-                    text=error_text,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML',
-                    link_preview_options=link_preview_options
-                )
-                return
-            await state.update_data(description=formatted_text)
+            if last_message_time is not None and (current_time - last_message_time) <= 2:
+                # Добавляем новое сообщение как часть текущего
+                current_message_parts.append(formatted_text)
+            else:
+                # Сохраняем предыдущее длинное сообщение, если оно было
+                if current_message_parts:
+                    combined_message = "".join(current_message_parts)
+                    if combined_message:
+                        user_messages.append(combined_message)
+                # Начинаем новое длинное сообщение
+                current_message_parts = [formatted_text]
+        else:
+            # Если текста нет, сохраняем текущие части, если они есть
+            if current_message_parts:
+                combined_message = "".join(current_message_parts)
+                if combined_message:
+                    user_messages.append(combined_message)
+                current_message_parts = []
+
+        # Обновляем состояние
+        await state.update_data(
+            current_message_parts=current_message_parts,
+            last_message_time=current_time,
+            user_messages=user_messages,
+            limit_exceeded=limit_exceeded
+        )
+
+        # Подсчет общей длины текущего длинного сообщения
+        combined_current_message = "".join(current_message_parts) if current_message_parts else ""
+        current_length = count_length_with_custom_emoji(combined_current_message) if combined_current_message else 0
 
         # Обработка медиа
         file_id = None
@@ -373,10 +512,110 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             media_type = 'video'
             file_ext = 'mp4'
 
+        # Создаем клавиатуру
+        keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
+
+        # Проверяем наличие текста или медиа
+        if not formatted_text and not (message.photo or message.animation or message.video):
+            error_text = (
+                f"<a href=\"{data.get('media_url', placeholder_url)}\">\u200B</a>"
+                f"⚠️ Отправьте текст, медиа или и то, и другое!\n\n"
+                f"{FORMATTING_GUIDE_UPDATE}"
+            )
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=last_message_id,
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML',
+                link_preview_options=link_preview_options
+            )
+            return
+
+        # Если ранее лимит был превышен
+        if limit_exceeded and formatted_text:
+            if current_length <= MAX_DESCRIPTION_LENGTH and current_length > 0 and current_length <= MAX_CAPTION_LENGTH:
+                # Корректное описание после превышения
+                await state.update_data(
+                    description=combined_current_message,
+                    user_messages=[],
+                    current_message_parts=[],
+                    limit_exceeded=False,
+                    last_message_time=None
+                )
+            else:
+                # Оставляем сообщение пользователя, если оно все еще превышает лимит
+                error_text = (
+                    f"<a href=\"{data.get('media_url', placeholder_url)}\">\u200B</a>"
+                    f"⚠️ Описание должно быть от 1 до {MAX_DESCRIPTION_LENGTH} символов! Сейчас: {current_length}\n\n"
+                    f"{FORMATTING_GUIDE_UPDATE}"
+                    if current_length > MAX_DESCRIPTION_LENGTH or not combined_current_message
+                    else f"<a href=\"{data.get('media_url', placeholder_url)}\">\u200B</a>"
+                         f"⚠️ Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов)! Сейчас: {current_length}\n\n"
+                         f"{FORMATTING_GUIDE_UPDATE}"
+                )
+                await bot.edit_message_text(
+                    chat_id=message.chat.id,
+                    message_id=last_message_id,
+                    text=error_text,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
+                return
+
+        # Подсчет общей длины всех текстовых сообщений
+        if formatted_text:
+            total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
+            total_length += current_length
+        else:
+            total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
+
+        # Проверяем превышение лимита для текста
+        if formatted_text and (
+                total_length > MAX_DESCRIPTION_LENGTH or not combined_current_message or total_length > MAX_CAPTION_LENGTH):
+            try:
+                # Удаляем предыдущее сообщение бота
+                if last_message_id:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+
+                # Оставляем сообщения пользователя
+                await state.update_data(
+                    user_messages=user_messages,
+                    current_message_parts=current_message_parts,
+                    limit_exceeded=True,
+                    last_message_id=None,
+                    last_message_time=current_time
+                )
+
+                # Отправляем уведомление о превышении
+                error_text = (
+                    f"<a href=\"{data.get('media_url', placeholder_url)}\">\u200B</a>"
+                    f"⚠️ Описание превышает лимит ({MAX_DESCRIPTION_LENGTH} символов). Общая длина: {total_length}\n\n"
+                    f"{FORMATTING_GUIDE_UPDATE}"
+                    if total_length > MAX_DESCRIPTION_LENGTH or not combined_current_message
+                    else f"<a href=\"{data.get('media_url', placeholder_url)}\">\u200B</a>"
+                         f"⚠️ Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Общая длина: {total_length}\n\n"
+                         f"{FORMATTING_GUIDE_UPDATE}"
+                )
+                sent_message = await bot.send_message(
+                    chat_id=message.chat.id,
+                    text=error_text,
+                    reply_markup=keyboard.as_markup(),
+                    parse_mode='HTML',
+                    link_preview_options=link_preview_options
+                )
+                await state.update_data(last_message_id=sent_message.message_id)
+            except Exception as e:
+                logger.error(f"🚫 Ошибка при обработке превышения: {str(e)}")
+                await state.update_data(last_message_id=None)
+            return
+
+        # Обработка медиа
         if file_id and file_ext:
             file = await bot.get_file(file_id)
             if file.file_size / (1024 * 1024) > MAX_MEDIA_SIZE_MB:
-                keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
                 error_text = (
                     f"<a href=\"{placeholder_url}\">\u200B</a>"
                     f"🤯 Файл слишком большой! Максимум {MAX_MEDIA_SIZE_MB} МБ\n\n"
@@ -385,7 +624,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 await bot.edit_message_text(
                     chat_id=message.chat.id,
-                    message_id=data['last_message_id'],
+                    message_id=last_message_id,
                     text=error_text,
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML',
@@ -399,7 +638,6 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             success, media_url = await upload_to_storage(file_content.read(), filename)
 
             if not success:
-                keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
                 error_text = (
                     f"<a href=\"{placeholder_url}\">\u200B</a>"
                     f"❌ Ошибка загрузки медиа: {media_url}\n\n"
@@ -408,7 +646,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 await bot.edit_message_text(
                     chat_id=message.chat.id,
-                    message_id=data['last_message_id'],
+                    message_id=last_message_id,
                     text=error_text,
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML',
@@ -418,24 +656,16 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             await state.update_data(media_url=media_url, media_type=media_type)
 
-        # Если ничего не отправлено
-        if not formatted_text and not (message.photo or message.animation or message.video):
-            keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
-            error_text = (
-                f"<a href=\"{data.get('media_url', placeholder_url)}\">\u200B</a>"
-                f"⚠️ Отправьте текст, медиа или и то, и другое!\n\n"
-                f"{FORMATTING_GUIDE_UPDATE}"
-            )
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await bot.edit_message_text(
-                chat_id=message.chat.id,
-                message_id=data['last_message_id'],
-                text=error_text,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML',
-                link_preview_options=link_preview_options
-            )
-            return
+        # Если текст корректен, сохраняем его
+        if formatted_text:
+            await state.update_data(description=combined_current_message)
+
+        # Очищаем данные сообщений
+        await state.update_data(
+            user_messages=[],
+            current_message_parts=[],
+            last_message_time=None
+        )
 
         # Обновление сообщения после ввода
         data = await state.get_data()
@@ -455,7 +685,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         await bot.edit_message_text(
             chat_id=message.chat.id,
-            message_id=data['last_message_id'],
+            message_id=last_message_id,
             text=message_text,
             reply_markup=keyboard.as_markup(),
             parse_mode='HTML',
@@ -490,12 +720,20 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == "back_to_name")
     async def back_to_name(callback_query: CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(callback_query.id)
+        # Сбрасываем данные о сообщениях
+        await state.update_data(
+            user_messages=[],
+            current_message_parts=[],
+            limit_exceeded=False,
+            last_message_time=None,
+            last_message_id=callback_query.message.message_id
+        )
         await state.set_state(GiveawayStates.waiting_for_name)
         data = await state.get_data()
         name = data.get('name', '')
         keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
-        message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: {name}\n\nЕсли хотите изменить, отправьте новый текст:"
+        message_text = f"<a href=\"{image_url}\">\u200B</a><tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: {name if name else 'Отсутствует'}\n\nЕсли хотите изменить, отправьте новый текст:"
         link_preview_options = LinkPreviewOptions(show_above_text=True)
 
         await bot.edit_message_text(
@@ -538,6 +776,14 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == "back_to_description_and_media")
     async def back_to_description_and_media(callback_query: CallbackQuery, state: FSMContext):
         await bot.answer_callback_query(callback_query.id)
+        # Сбрасываем данные о сообщениях
+        await state.update_data(
+            user_messages=[],
+            current_message_parts=[],
+            limit_exceeded=False,
+            last_message_time=None,
+            last_message_id=callback_query.message.message_id
+        )
         await state.set_state(GiveawayStates.waiting_for_description_and_media)
         data = await state.get_data()
         description = data.get('description', '')
