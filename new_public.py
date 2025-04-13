@@ -446,29 +446,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
         message_id = state_data.get('message_id')
         notification = state_data.get('admin_notification')
 
-        # Проверяем базу данных, если состояние отсутствует
-        if not giveaway_id or not message_id:
-            try:
-                cursor.execute(
-                    "SELECT giveaway_id, message_id, admin_notification FROM user_binding_state WHERE user_id = %s",
-                    (user_id,)
-                )
-                result = cursor.fetchone()
-                if result:
-                    giveaway_id, message_id, stored_notification = result
-                    await state.update_data(
-                        giveaway_id=giveaway_id,
-                        message_id=message_id,
-                        admin_notification=stored_notification or notification
-                    )
-                    logging.info(
-                        f"Восстановлено состояние привязки для пользователя {user_id}: giveaway_id={giveaway_id}, message_id={message_id}"
-                    )
-                    if stored_notification and not notification:
-                        notification = stored_notification
-            except Exception as e:
-                logging.error(f"Ошибка при проверке состояния в базе для {user_id}: {str(e)}")
-
+        # Убрана проверка базы данных для восстановления состояния
         # Если giveaway_id и message_id найдены, обновляем UI
         if giveaway_id and message_id:
             try:
