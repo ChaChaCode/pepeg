@@ -12,7 +12,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
-from utils import send_message_with_image, check_and_end_giveaways, check_usernames
+from utils import check_and_end_giveaways, check_usernames, send_message_with_photo
 from history_practical import register_history_handlers
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -178,27 +178,16 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     keyboard.adjust(1)
 
+    # Отправляем сообщение с фото, предполагая, что предыдущее сообщение неизвестного типа
     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-    await send_message_with_image(
+    await send_message_with_photo(
         bot,
-        message.chat.id,
-        "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:",
-        reply_markup=keyboard.as_markup()
+        chat_id=message.chat.id,
+        text="<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:",
+        reply_markup=keyboard.as_markup(),
+        parse_mode="HTML",
+        image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
     )
-
-# Регистрация middleware
-dp.message.middleware(SpamProtectionMiddleware())
-dp.callback_query.middleware(SpamProtectionMiddleware())
-
-# Регистрация обработчиков из модулей
-register_history_handlers(dp, bot, conn, cursor)
-register_active_giveaways_handlers(dp, bot, conn, cursor)
-register_create_giveaway_handlers(dp, bot, conn, cursor)
-register_created_giveaways_handlers(dp, bot, conn, cursor)
-register_my_participations_handlers(dp, bot, conn, cursor)
-register_congratulations_messages(dp, bot, conn, cursor)
-register_congratulations_messages_active(dp, bot, conn, cursor)
-register_new_public(dp, bot, conn, cursor)
 
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
@@ -274,13 +263,31 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 
     keyboard.adjust(1)
 
-    await send_message_with_image(
+    # Отправляем сообщение с фото, предполагая, что предыдущее сообщение было типа 'image'
+    await send_message_with_photo(
         bot,
-        callback_query.message.chat.id,
-        "<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Выберите действие:",
+        chat_id=callback_query.message.chat.id,
+        text="<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Выберите действие:",
         reply_markup=keyboard.as_markup(),
-        message_id=callback_query.message.message_id
+        message_id=callback_query.message.message_id,
+        parse_mode="HTML",
+        image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+        previous_message_type='image'  # Предполагаем, что предыдущее сообщение было с предпросмотром
     )
+
+# Регистрация middleware
+dp.message.middleware(SpamProtectionMiddleware())
+dp.callback_query.middleware(SpamProtectionMiddleware())
+
+# Регистрация обработчиков из модулей
+register_history_handlers(dp, bot, conn, cursor)
+register_active_giveaways_handlers(dp, bot, conn, cursor)
+register_create_giveaway_handlers(dp, bot, conn, cursor)
+register_created_giveaways_handlers(dp, bot, conn, cursor)
+register_my_participations_handlers(dp, bot, conn, cursor)
+register_congratulations_messages(dp, bot, conn, cursor)
+register_congratulations_messages_active(dp, bot, conn, cursor)
+register_new_public(dp, bot, conn, cursor)
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
@@ -383,8 +390,9 @@ async def update_participant_counters(bot: Bot, conn, cursor):
 
                             try:
                                 keyboard = InlineKeyboardBuilder()
+                                button_text = giveaway.get('button', '🎉 Участвовать')  # Используем текст из столбца button
                                 keyboard.button(
-                                    text=f"🎉 Участвовать ({participant_count})",
+                                    text=f"{button_text} ({participant_count})",
                                     url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
                                 )
                                 await bot.edit_message_reply_markup(
