@@ -782,7 +782,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         message_text = (
             f"<tg-emoji emoji-id='5271604874419647061'>🔗</tg-emoji> Текущий текст кнопки: <b>{current_button}</b>\n\n"
-            f"Отправьте новый текст для кнопки (до 50 символов):\n{FORMATTING_GUIDE}"
+            f"Отправьте новый текст для кнопки (до 50 символов):"
         )
 
         try:
