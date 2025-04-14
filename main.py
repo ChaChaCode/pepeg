@@ -10,9 +10,10 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
-from utils import check_and_end_giveaways, check_usernames, send_message_with_photo
+from utils import check_and_end_giveaways, check_usernames, send_message_auto, count_message_length
 from history_practical import register_history_handlers
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -41,6 +42,10 @@ paid_users = {}
 # Система защиты от спама
 user_actions = defaultdict(list)
 blocked_users = {}
+
+# Определение состояний FSM
+class MainMenuStates(StatesGroup):
+    main_menu = State()
 
 # Middleware для проверки спама
 class SpamProtectionMiddleware(BaseMiddleware):
@@ -94,7 +99,7 @@ class SpamProtectionMiddleware(BaseMiddleware):
                     remaining_time = int(blocked_users[user_id] - time())
                     await bot.answer_callback_query(
                         event.id,
-                        f"Вы временно заблокированы за спам. Осталось {remaining_time} секунд.",
+                        f"Вы временно заблокирован за спам. Осталось {remaining_time} секунд.",
                         show_alert=True
                     )
                 return
@@ -104,6 +109,11 @@ class SpamProtectionMiddleware(BaseMiddleware):
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
+    try:
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+    except Exception as e:
+        logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+
     current_state = await state.get_state()
     if current_state is not None:
         await state.clear()
@@ -178,21 +188,36 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     keyboard.adjust(1)
 
-    # Отправляем сообщение с фото, предполагая, что предыдущее сообщение неизвестного типа
-    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-    await send_message_with_photo(
+    message_text = "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:"
+    current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+
+    # Получаем данные состояния
+    data = await state.get_data()
+    previous_message_type = data.get('previous_message_type')
+    last_message_id = data.get('last_message_id')
+
+    sent_message = await send_message_auto(
         bot,
         chat_id=message.chat.id,
-        text="<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:",
+        text=message_text,
         reply_markup=keyboard.as_markup(),
+        message_id=last_message_id,
         parse_mode="HTML",
-        image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
+        image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+        previous_message_type=previous_message_type
     )
+
+    if sent_message:
+        await state.update_data(
+            last_message_id=sent_message.message_id,
+            previous_message_type=current_message_type
+        )
+        await state.set_state(MainMenuStates.main_menu)
 
 @dp.callback_query(lambda c: c.data == "back_to_main_menu")
 async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
-    await state.clear()
     await bot.answer_callback_query(callback_query.id)
+    await state.clear()
 
     user_id = callback_query.from_user.id
 
@@ -263,17 +288,31 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
 
     keyboard.adjust(1)
 
-    # Отправляем сообщение с фото, предполагая, что предыдущее сообщение было типа 'image'
-    await send_message_with_photo(
+    message_text = "<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Выберите действие:"
+    current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+
+    # Получаем данные состояния
+    data = await state.get_data()
+    previous_message_type = data.get('previous_message_type')
+    last_message_id = data.get('last_message_id', callback_query.message.message_id)
+
+    sent_message = await send_message_auto(
         bot,
         chat_id=callback_query.message.chat.id,
-        text="<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Выберите действие:",
+        text=message_text,
         reply_markup=keyboard.as_markup(),
-        message_id=callback_query.message.message_id,
+        message_id=last_message_id,
         parse_mode="HTML",
         image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-        previous_message_type='image'  # Предполагаем, что предыдущее сообщение было с предпросмотром
+        previous_message_type=previous_message_type
     )
+
+    if sent_message:
+        await state.update_data(
+            last_message_id=sent_message.message_id,
+            previous_message_type=current_message_type
+        )
+        await state.set_state(MainMenuStates.main_menu)
 
 # Регистрация middleware
 dp.message.middleware(SpamProtectionMiddleware())
@@ -290,57 +329,77 @@ register_congratulations_messages_active(dp, bot, conn, cursor)
 register_new_public(dp, bot, conn, cursor)
 
 @dp.message(Command("help"))
-async def cmd_help(message: types.Message):
+async def cmd_help(message: types.Message, state: FSMContext):
     try:
-        help_text = (
-            "<b><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Как создать розыгрыш</b>\n"
-            "<blockquote expandable>Первое, что вам нужно сделать, — это нажать в главном меню кнопку «🎁 Создать розыгрыш». После этого вам потребуется пошагово ввести:\n"
-            "<tg-emoji emoji-id='5382322671679708881'>1️⃣</tg-emoji> Название розыгрыша\n"
-            "<tg-emoji emoji-id='5381990043642502553'>2️⃣</tg-emoji> Описание\n"
-            "<tg-emoji emoji-id='5381879959335738545'>3️⃣</tg-emoji> Медиафайл (если он необходим)\n"
-            "<tg-emoji emoji-id='5382054253403577563'>4️⃣</tg-emoji> Дату завершения\n"
-            "<tg-emoji emoji-id='5391197405553107640'>5️⃣</tg-emoji> Количество победителей</blockquote>\n\n"
-
-            "<b><tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Как опубликовать созданный розыгрыш</b>\n"
-            "<blockquote expandable>Чтобы опубликовать розыгрыш, сначала привяжите каналы или группы. Для этого:\n"
-            "<tg-emoji emoji-id='5382322671679708881'>1️⃣</tg-emoji> Перейдите в ваш созданный розыгрыш\n"
-            "<tg-emoji emoji-id='5381990043642502553'>2️⃣</tg-emoji> Нажмите кнопку «Привязать сообщества»\n"
-            "<tg-emoji emoji-id='5381879959335738545'>3️⃣</tg-emoji> Нажмите «➕ Новый паблик»\n"
-            "<tg-emoji emoji-id='5382054253403577563'>4️⃣</tg-emoji> Добавьте бота в ваш канал или группу с правами администратора\n"
-            "<tg-emoji emoji-id='5391197405553107640'>5️⃣</tg-emoji> Бот уведомит вас о успешной привязке ✅\n"
-            "После привязки сообщества в разделе созданного розыгрыша нажмите кнопку «📢 Опубликовать розыгрыш» и выберите привязанные сообщества, в которых хотите разместить розыгрыш.</blockquote>\n\n"
-
-            "<b><tg-emoji emoji-id='5341715473882955310'>⚙️</tg-emoji> Дополнительные функции</b>\n"
-            "<blockquote expandable>В созданном розыгрыше вы можете:\n"
-            "<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Редактировать название, описание, медиафайл, количество победителей и можно убрать текст бота в конце поста или же вернуть его\n"
-            "<tg-emoji emoji-id='5443038326535759644'>💬</tg-emoji> Изменить сообщение для победителей\n"
-            "<tg-emoji emoji-id='5397916757333654639'>➕</tg-emoji> Добавить задание «Пригласить друга» в условия участия</blockquote>\n\n"
-
-            "<b><tg-emoji emoji-id='5447410659077661506'>🌐</tg-emoji> Что можно делать, когда розыгрыш опубликован</b>\n"
-            "<blockquote expandable>В главном меню перейдите в раздел «Мои розыгрыши», выберите нужный активный розыгрыш который почмечен ✅ в начале. В нем вы можете:\n"
-            "<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Полностью редактировать розыгрыш (все изменения отразятся в опубликованных постах)\n"
-            "<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Смотреть статистику сколько пользователей участвуют\n"
-            "<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Принудительно завершить розыгрыш</blockquote>\n\n"
-
-            "<b><tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Что будет, когда розыгрыш завершится</b>\n"
-            "<blockquote expandable>После окончания времени розыгрыша бот автоматически:\n"
-            "<tg-emoji emoji-id='5436386989857320953'>🤑</tg-emoji> Определит рандомно победителей\n"
-            "<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> Опубликует в привязанных сообществах пост о завершении с указанием победителей и кнопкой «Результаты» (при нажатии пользователи увидят график участия)\n"
-            "<tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> Отправит победителям поздравительное сообщение, заданное вами ранее и уведомит об этом вас</blockquote>"
-        )
-        keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
-        keyboard.button(text="🏠 В главное меню", callback_data="back_to_main_menu")
-        keyboard.adjust(1)
-        await bot.send_message(
-            chat_id=message.chat.id,
-            text=help_text,
-            parse_mode="HTML",
-            reply_markup=keyboard.as_markup()
-        )
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
     except Exception as e:
-        logging.error(f"Ошибка в cmd_help: {e}")
-        await message.reply("Произошла ошибка при выполнении команды /help.")
+        logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+
+    help_text = (
+        "<b><tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Как создать розыгрыш</b>\n"
+        "<blockquote expandable>Первое, что вам нужно сделать, — это нажать в главном меню кнопку «🎁 Создать розыгрыш». После этого вам потребуется пошагово ввести:\n"
+        "<tg-emoji emoji-id='5382322671679708881'>1️⃣</tg-emoji> Название розыгрыша\n"
+        "<tg-emoji emoji-id='5381990043642502553'>2️⃣</tg-emoji> Описание\n"
+        "<tg-emoji emoji-id='5381879959335738545'>3️⃣</tg-emoji> Медиафайл (если он необходим)\n"
+        "<tg-emoji emoji-id='5382054253403577563'>4️⃣</tg-emoji> Дату завершения\n"
+        "<tg-emoji emoji-id='5391197405553107640'>5️⃣</tg-emoji> Количество победителей</blockquote>\n\n"
+
+        "<b><tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Как опубликовать созданный розыгрыш</b>\n"
+        "<blockquote expandable>Чтобы опубликовать розыгрыш, сначала привяжите каналы или группы. Для этого:\n"
+        "<tg-emoji emoji-id='5382322671679708881'>1️⃣</tg-emoji> Перейдите в ваш созданный розыгрыш\n"
+        "<tg-emoji emoji-id='5381990043642502553'>2️⃣</tg-emoji> Нажмите кнопку «Привязать сообщества»\n"
+        "<tg-emoji emoji-id='5381879959335738545'>3️⃣</tg-emoji> Нажмите «➕ Новый паблик»\n"
+        "<tg-emoji emoji-id='5382054253403577563'>4️⃣</tg-emoji> Добавьте бота в ваш канал или группу с правами администратора\n"
+        "<tg-emoji emoji-id='5391197405553107640'>5️⃣</tg-emoji> Бот уведомит вас о успешной привязке ✅\n"
+        "После привязки сообщества в разделе созданного розыгрыша нажмите кнопку «📢 Опубликовать розыгрыш» и выберите привязанные сообщества, в которых хотите разместить розыгрыш.</blockquote>\n\n"
+
+        "<b><tg-emoji emoji-id='5341715473882955310'>⚙️</tg-emoji> Дополнительные функции</b>\n"
+        "<blockquote expandable>В созданном розыгрыше вы можете:\n"
+        "<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Редактировать название, описание, медиафайл, количество победителей и можно убрать текст бота в конце поста или же вернуть его\n"
+        "<tg-emoji emoji-id='5443038326535759644'>💬</tg-emoji> Изменить сообщение для победителей\n"
+        "<tg-emoji emoji-id='5397916757333654639'>➕</tg-emoji> Добавить задание «Пригласить друга» в условия участия</blockquote>\n\n"
+
+        "<b><tg-emoji emoji-id='5447410659077661506'>🌐</tg-emoji> Что можно делать, когда розыгрыш опубликован</b>\n"
+        "<blockquote expandable>В главном меню перейдите в раздел «Мои розыгрыши», выберите нужный активный розыгрыш который помечен ✅ в начале. В нем вы можете:\n"
+        "<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Полностью редактировать розыгрыш (все изменения отразятся в опубликованных постах)\n"
+        "<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Смотреть статистику сколько пользователей участвуют\n"
+        "<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Принудительно завершить розыгрыш</blockquote>\n\n"
+
+        "<b><tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Что будет, когда розыгрыш завершится</b>\n"
+        "<blockquote expandable>После окончания времени розыгрыша бот автоматически:\n"
+        "<tg-emoji emoji-id='5436386989857320953'>🤑</tg-emoji> Определит рандомно победителей\n"
+        "<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> Опубликует в привязанных сообществах пост о завершении с указанием победителей и кнопкой «Результаты» (при нажатии пользователи увидят график участия)\n"
+        "<tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> Отправит победителям поздравительное сообщение, заданное вами ранее и уведомит об этом вас</blockquote>"
+    )
+    keyboard = InlineKeyboardBuilder()
+    keyboard.button(text="🎁 Создать розыгрыш", callback_data="create_giveaway")
+    keyboard.button(text="🏠 В главное меню", callback_data="back_to_main_menu")
+    keyboard.adjust(1)
+
+    current_message_type = 'image' if count_message_length(help_text) > 800 else 'photo'
+
+    # Получаем данные состояния
+    data = await state.get_data()
+    previous_message_type = data.get('previous_message_type')
+    last_message_id = data.get('last_message_id')
+
+    sent_message = await send_message_auto(
+        bot,
+        chat_id=message.chat.id,
+        text=help_text,
+        reply_markup=keyboard.as_markup(),
+        message_id=last_message_id,
+        parse_mode="HTML",
+        image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+        previous_message_type=previous_message_type
+    )
+
+    if sent_message:
+        await state.update_data(
+            last_message_id=sent_message.message_id,
+            previous_message_type=current_message_type
+        )
+        await state.set_state(MainMenuStates.main_menu)
 
 async def periodic_username_check():
     while True:
