@@ -5,7 +5,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
-from utils import send_message_with_image
+from utils import send_message_auto, count_message_length
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +29,18 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
     @dp.callback_query(lambda c: c.data == 'giveaway_history' or c.data.startswith('giveaway_history_page:'))
     async def process_giveaway_history(callback_query: CallbackQuery, state: FSMContext):
-        global last_message_id
+        global previous_message_type, last_message_id
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
 
         try:
-            # Получаем last_message_id из состояния
+            # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
+            previous_message_type = data.get('previous_message_type')
 
-            # Получаем общее количество завершенных розыгрышей (is_completed = true)
+            # Получаем общее количество завершенных розыгрышей
             cursor.execute(
                 """
                 SELECT COUNT(*) FROM giveaways 
@@ -50,10 +51,11 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             total_giveaways = cursor.fetchone()[0]
             if total_giveaways == 0:
                 message_text = "📭 Пока нет завершенных розыгрышей."
+                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
                 keyboard = InlineKeyboardBuilder()
                 keyboard.button(text="В меню", callback_data="back_to_main_menu")
                 await bot.answer_callback_query(callback_query.id)
-                sent_message = await send_message_with_image(
+                sent_message = await send_message_auto(
                     bot,
                     chat_id=user_id,
                     text=message_text,
@@ -61,16 +63,19 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-                    previous_message_type='image'
+                    previous_message_type=previous_message_type
                 )
                 if sent_message:
-                    await state.update_data(last_message_id=sent_message.message_id)
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
             total_pages = max(1, math.ceil(total_giveaways / ITEMS_PER_PAGE))
             offset = (current_page - 1) * ITEMS_PER_PAGE
 
-            # Получаем только завершенные розыгрыши (is_completed = true) для текущей страницы
+            # Получаем завершенные розыгрыши для текущей страницы
             cursor.execute(
                 """
                 SELECT * FROM giveaways 
@@ -112,9 +117,10 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Завершенные розыгрыши\n\n"
                 f"Всего было завершено {total_giveaways} розыгрышей"
             )
+            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
 
             await bot.answer_callback_query(callback_query.id)
-            sent_message = await send_message_with_image(
+            sent_message = await send_message_auto(
                 bot,
                 chat_id=user_id,
                 text=message_text,
@@ -122,40 +128,49 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-                previous_message_type='image'
+                previous_message_type=previous_message_type
             )
             if sent_message:
-                await state.update_data(last_message_id=sent_message.message_id)
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Упс! Что-то пошло не так 😔")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
-            sent_message = await send_message_with_image(
+            message_text = "⚠️ Упс! Что-то пошло не так. Попробуйте снова!"
+            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            sent_message = await send_message_auto(
                 bot,
                 chat_id=user_id,
-                text="⚠️ Упс! Что-то пошло не так. Попробуйте снова!",
+                text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-                previous_message_type='image'
+                previous_message_type=previous_message_type
             )
             if sent_message:
-                await state.update_data(last_message_id=sent_message.message_id)
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('view_completed_giveaway:'))
     async def process_view_completed_giveaway(callback_query: CallbackQuery, state: FSMContext):
         """Обработка просмотра детальной информации о завершенном розыгрыше с победителями."""
-        global last_message_id
+        global previous_message_type, last_message_id
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
 
         try:
-            # Получаем last_message_id из состояния
+            # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
+            previous_message_type = data.get('previous_message_type')
 
             # Получение данных о розыгрыше
             cursor.execute(
@@ -172,18 +187,23 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 keyboard = InlineKeyboardBuilder()
                 keyboard.button(text="📜 Назад к списку", callback_data="giveaway_history")
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден или не завершен 😕")
-                sent_message = await send_message_with_image(
+                message_text = "🔍 Розыгрыш не найден или не завершен 😕"
+                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+                sent_message = await send_message_auto(
                     bot,
                     chat_id=user_id,
-                    text="🔍 Розыгрыш не найден или не завершен 😕",
+                    text=message_text,
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-                    previous_message_type='image'
+                    previous_message_type=previous_message_type
                 )
                 if sent_message:
-                    await state.update_data(last_message_id=sent_message.message_id)
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
             giveaway_id, name, description, end_time, winner_count, media_type, media_file_id = giveaway
@@ -235,8 +255,10 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, media_file_id)
 
+            current_message_type = 'photo' if count_message_length(giveaway_info) <= 800 else 'image'
+
             await bot.answer_callback_query(callback_query.id)
-            sent_message = await send_message_with_image(
+            sent_message = await send_message_auto(
                 bot,
                 chat_id=user_id,
                 text=giveaway_info,
@@ -244,10 +266,13 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url=image_url,
-                previous_message_type='image'
+                previous_message_type=previous_message_type
             )
             if sent_message:
-                await state.update_data(last_message_id=sent_message.message_id)
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка при просмотре завершенного розыгрыша: {str(e)}")
@@ -255,15 +280,20 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await bot.answer_callback_query(callback_query.id, text="Упс! Что-то сломалось 😔")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
-            sent_message = await send_message_with_image(
+            message_text = "⚠️ Упс! Что-то пошло не так. Попробуйте снова!"
+            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            sent_message = await send_message_auto(
                 bot,
                 chat_id=user_id,
-                text="⚠️ Упс! Что-то пошло не так. Попробуйте снова!",
+                text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-                previous_message_type='image'
+                previous_message_type=previous_message_type
             )
             if sent_message:
-                await state.update_data(last_message_id=sent_message.message_id)
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
