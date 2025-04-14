@@ -9,7 +9,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 import json
 import re
 
-from utils import send_message_with_image
+from utils import send_message_auto
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -139,7 +139,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         try:
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=callback_query.from_user.id,
                 text=message_text,
@@ -150,7 +150,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"Ошибка редактирования сообщения: {str(e)}")
             # Если редактирование не удалось, отправляем новое сообщение
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=callback_query.from_user.id,
                 text=message_text,
@@ -215,7 +215,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
 
         try:
             # Используем message_id из callback_query для редактирования текущего сообщения
-            sent_message = await send_message_with_image(
+            sent_message = await send_message_auto(
                 bot=bot,
                 chat_id=callback_query.from_user.id,
                 text=message_text,
@@ -226,11 +226,11 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
             if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
             else:
-                logger.error("Failed to edit message with send_message_with_image")
+                logger.error("Failed to edit message with send_message_auto")
         except Exception as e:
             logger.error(f"Ошибка редактирования сообщения: {str(e)}")
             # Если редактирование не удалось, отправляем новое сообщение
-            sent_message = await send_message_with_image(
+            sent_message = await send_message_auto(
                 bot=bot,
                 chat_id=callback_query.from_user.id,
                 text=message_text,
@@ -261,7 +261,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
                 f"Сократите текст!\n{FORMATTING_GUIDE}"
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=message.chat.id,
                 text=error_message,
@@ -295,7 +295,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
                 f"Вы можете продолжить редактирование или завершить."
             )
 
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=message.chat.id,
                 text=updated_text,
@@ -310,7 +310,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"message_winners:{giveaway_id}")
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=message.chat.id,
                 text="Произошла ошибка при сохранении поздравления. Попробуйте снова.",
@@ -388,7 +388,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"message_winners:{giveaway_id}")
 
-            sent_message = await send_message_with_image(
+            sent_message = await send_message_auto(
                 bot=bot,
                 chat_id=callback_query.from_user.id,
                 text=message_text,
@@ -423,7 +423,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
                 f"Сократите текст!\n{FORMATTING_GUIDE}"
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=message.chat.id,
                 text=error_message,
@@ -466,7 +466,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
                 f"Вы можете продолжить редактирование или завершить."
             )
 
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=message.chat.id,
                 text=success_message,
@@ -481,7 +481,7 @@ def register_congratulations_messages(dp: Dispatcher, bot: Bot, conn, cursor):
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"message_winners:{giveaway_id}")
-            await send_message_with_image(
+            await send_message_auto(
                 bot=bot,
                 chat_id=message.chat.id,
                 text="Произошла ошибка при сохранении поздравления. Попробуйте снова.",
