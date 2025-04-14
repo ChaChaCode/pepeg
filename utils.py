@@ -1,6 +1,8 @@
 import logging
+import re
+
 from aiogram import Bot
-from aiogram.types import Message, LinkPreviewOptions, InputMediaPhoto
+from aiogram.types import Message, LinkPreviewOptions, InputMediaPhoto, InlineKeyboardMarkup
 import aiogram.exceptions
 import asyncio
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -47,6 +49,14 @@ async def get_file_url(bot: Bot, file_id: str) -> str:
     except Exception as e:
         logger.error(f"🚫 Ошибка получения URL файла {file_id}: {str(e)}")
         raise
+
+def count_message_length(text: str) -> int:
+    tag_pattern = r'<[^>]+>'
+    cleaned_text = re.sub(tag_pattern, '', text)
+    length = len(cleaned_text)
+    length += text.count('{win}') * (5 - len('{win}'))
+    length += text.count('{data}') * (16 - len('{data}'))
+    return length
 
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
                                  parse_mode: str = 'HTML', entities=None, image_url: str = None,
@@ -195,7 +205,104 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
         logger.error(f"Error in send_message_with_photo: {str(e)}")
         return None
 
-# Остальные функции (check_and_end_giveaways, end_giveaway, etc.) остаются без изменений
+async def send_message_auto(
+        bot: Bot,
+        chat_id: int,
+        text: str,
+        reply_markup: InlineKeyboardMarkup = None,
+        message_id: int = None,
+        parse_mode: str = 'HTML',
+        entities=None,
+        image_url: str = None,
+        previous_message_type: str = None
+) -> Message | None:
+    """
+    Автоматический выбор между send_message_with_photo и send_message_with_image на основе длины текста.
+    Если отправка с медиа не удалась, отправляет без медиа.
+
+    Args:
+        bot: Экземпляр бота.
+        chat_id: ID чата.
+        text: Текст сообщения.
+        reply_markup: Клавиатура.
+        message_id: ID сообщения для редактирования (если None, отправляется новое).
+        parse_mode: Режим парсинга ('HTML', 'Markdown', None).
+        entities: Сущности сообщения (для send_message_with_image).
+        image_url: URL изображения.
+        previous_message_type: Тип предыдущего сообщения (игнорируется).
+
+    Returns:
+        Message | None: Отправленное сообщение или None при ошибке.
+    """
+    message_length = count_message_length(text)
+    current_message_type = 'photo' if message_length <= 800 else 'image'
+    logger.info(f"send_message_auto: chat_id={chat_id}, message_id={message_id}, image_url={image_url}, type={current_message_type}")
+
+    try:
+        if image_url:
+            try:
+                if current_message_type == 'photo':
+                    return await send_message_with_photo(
+                        bot=bot,
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=reply_markup,
+                        message_id=message_id,
+                        parse_mode=parse_mode,
+                        image_url=image_url,
+                        previous_message_type=None  # Игнорируем
+                    )
+                else:
+                    return await send_message_with_image(
+                        bot=bot,
+                        chat_id=chat_id,
+                        text=text,
+                        reply_markup=reply_markup,
+                        message_id=message_id,
+                        parse_mode=parse_mode,
+                        entities=entities,
+                        image_url=image_url,
+                        previous_message_type=None  # Игнорируем
+                    )
+            except Exception as e:
+                if "DOCUMENT_INVALID" in str(e):
+                    logger.warning(f"Недействительное изображение {image_url}, отправка без медиа")
+                    if message_id:
+                        return await bot.edit_message_text(
+                            chat_id=chat_id,
+                            message_id=message_id,
+                            text=text,
+                            reply_markup=reply_markup,
+                            parse_mode=parse_mode
+                        )
+                    else:
+                        return await bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                            reply_markup=reply_markup,
+                            parse_mode=parse_mode
+                        )
+                logger.error(f"Ошибка в send_message_auto (медиа): {str(e)}")
+                raise
+        else:
+            if message_id:
+                return await bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
+                )
+            else:
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
+                )
+    except Exception as e:
+        logger.error(f"Ошибка в send_message_auto: {str(e)}")
+        return None
 
 async def check_and_end_giveaways(bot: Bot, conn, cursor):
     while True:
@@ -504,7 +611,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
     for chat_id in target_chat_ids:
         try:
             if image_url:
-                await send_message_with_image(
+                await send_message_auto(
                     bot,
                     chat_id=int(chat_id),
                     text=result_message,
@@ -562,7 +669,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
 
             try:
                 if image_url:
-                    await send_message_with_image(
+                    await send_message_auto(
                         bot,
                         chat_id=creator_id,
                         text=result_message_for_creator,
