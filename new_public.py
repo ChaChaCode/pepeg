@@ -12,7 +12,7 @@ from botocore.client import Config
 from datetime import datetime
 import io
 import asyncio
-from utils import send_message_with_image
+from utils import send_message_auto
 from created_giveaways import build_community_selection_ui
 
 # Настройка логирования
@@ -179,7 +179,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
             try:
                 bot_member = await bot.get_chat_member(chat.id, bot.id)
                 if not isinstance(bot_member, ChatMemberAdministrator):
-                    await send_message_with_image(
+                    await send_message_auto(
                         bot, user_id_int,
                         f"Бот не получил права администратора в {chat_type_display}е '{community_name}'.",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -195,7 +195,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                     if not getattr(bot_member, perm, False)
                 ]
                 if missing_permissions:
-                    await send_message_with_image(
+                    await send_message_auto(
                         bot, user_id_int,
                         f"Недостаточно прав у бота в {chat_type_display}е '{community_name}': {', '.join(missing_permissions)}",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -277,7 +277,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
 
             except Exception as e:
                 logging.error(f"Ошибка обработки администраторского статуса бота для {community_id}: {str(e)}")
-                await send_message_with_image(
+                await send_message_auto(
                     bot, user_id_int,
                     f"Произошла ошибка при добавлении {chat_type_display}а '{community_name}'. Попробуйте снова.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -325,7 +325,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                 if missing_permissions:
                     logging.info(
                         f"Недостаточно прав у бота в {chat_type_display} '{community_name}': {', '.join(missing_permissions)}")
-                    await send_message_with_image(
+                    await send_message_auto(
                         bot, user_id_int,
                         f"Бот не имеет достаточных прав в {chat_type_display}е '{community_name}': {', '.join(missing_permissions)}. Назначьте их для использования.",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -372,7 +372,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                     await update_community_selection_interface(bot, user_id_int, state)
                 else:
                     logging.error(f"Не удалось привязать сообщество '{community_name}' для {user_id}")
-                    await send_message_with_image(
+                    await send_message_auto(
                         bot, user_id_int,
                         f"Не удалось привязать {chat_type_display} '{community_name}'. Попробуйте снова.",
                         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -383,7 +383,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
 
             except Exception as e:
                 logging.error(f"Ошибка обработки нового администратора {user_id} в {community_id}: {str(e)}")
-                await send_message_with_image(
+                await send_message_auto(
                     bot, user_id_int,
                     f"Произошла ошибка при обработке {chat_type_display}а '{community_name}'. Попробуйте снова.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -430,7 +430,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
             except Exception as e:
                 logging.error(f"Ошибка обработки снятия администратора {user_id} в {community_id}: {str(e)}")
                 conn.rollback()
-                await send_message_with_image(
+                await send_message_auto(
                     bot, user_id_int,
                     f"Произошла ошибка при обработке {chat_type_display}а '{community_name}'. Попробуйте снова.",
                     reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -454,8 +454,8 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                 message_text, keyboard, image_url = await build_community_selection_ui(
                     user_id, giveaway_id, bot, bot_info, notification=notification
                 )
-                # Используем send_message_with_image для единообразного отображения
-                await send_message_with_image(
+                # Используем send_message_auto для единообразного отображения
+                await send_message_auto(
                     bot,
                     user_id,
                     message_text,
@@ -497,7 +497,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
             logging.info(f"Пользователь {user_id} не в режиме привязки сообществ, обновление UI пропущено")
             if notification:
                 try:
-                    await send_message_with_image(
+                    await send_message_auto(
                         bot,
                         user_id,
                         f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> {notification}",
