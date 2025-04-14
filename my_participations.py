@@ -1,9 +1,10 @@
 from aiogram import Dispatcher, Bot, types
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 import logging
-from utils import send_message_with_image
+from utils import send_message_auto, count_message_length
 import math
 import re
 from aiogram.types import LinkPreviewOptions
@@ -26,13 +27,19 @@ def replace_variables(description, winner_count, end_time):
 
 def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
-    async def process_my_participations(callback_query: CallbackQuery):
+    async def process_my_participations(callback_query: CallbackQuery, state: FSMContext):
+        global previous_message_type, last_message_id
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if callback_query.data.startswith(
             'my_participations_page:') else 1
 
         try:
+            # Получаем данные из состояния
+            data = await state.get_data()
+            last_message_id = data.get('last_message_id', callback_query.message.message_id)
+            previous_message_type = data.get('previous_message_type')
+
             # Получаем активные розыгрыши, в которых пользователь участвует
             cursor.execute(
                 """
@@ -59,8 +66,26 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             total_participations = active_participations + won_participations
             if total_participations == 0:
-                await bot.answer_callback_query(callback_query.id,
-                                                text="У вас нет активных участий или выигранных розыгрышей.")
+                message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> У вас нет активных участий или выигранных розыгрышей."
+                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+                keyboard = InlineKeyboardBuilder()
+                keyboard.button(text="◀️ Назад", callback_data="back_to_main_menu")
+                await bot.answer_callback_query(callback_query.id)
+                sent_message = await send_message_auto(
+                    bot,
+                    chat_id=user_id,
+                    text=message_text,
+                    reply_markup=keyboard.as_markup(),
+                    message_id=last_message_id,
+                    parse_mode='HTML',
+                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                    previous_message_type=previous_message_type
+                )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
             total_pages = max(1, math.ceil(total_participations / ITEMS_PER_PAGE))
@@ -156,28 +181,63 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_text += f" (Страница {current_page} из {total_pages}):"
             else:
                 message_text += ":"
+            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
 
             await bot.answer_callback_query(callback_query.id)
-            await send_message_with_image(
+            sent_message = await send_message_auto(
                 bot,
                 chat_id=callback_query.from_user.id,
-                message_id=callback_query.message.message_id,
                 text=message_text,
-                reply_markup=keyboard.as_markup()
+                reply_markup=keyboard.as_markup(),
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                previous_message_type=previous_message_type
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+
         except Exception as e:
             logger.error(f"Error in process_my_participations: {str(e)}")
+            message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> Произошла ошибка при получении ваших участий."
+            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data="back_to_main_menu")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении ваших участий.")
+            sent_message = await send_message_auto(
+                bot,
+                chat_id=user_id,
+                text=message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('giveaway_'))
-    async def process_giveaway_details(callback_query: CallbackQuery):
+    async def process_giveaway_details(callback_query: CallbackQuery, state: FSMContext):
+        global previous_message_type, last_message_id
         giveaway_id = callback_query.data.split('_')[1]
         user_id = callback_query.from_user.id
         try:
+            # Получаем данные из состояния
+            data = await state.get_data()
+            last_message_id = data.get('last_message_id', callback_query.message.message_id)
+            previous_message_type = data.get('previous_message_type')
+
             # Запрос к таблице giveaways, включая winner_count и is_active
             cursor.execute(
                 """
@@ -189,7 +249,26 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             giveaway = cursor.fetchone()
 
             if not giveaway:
+                message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> Розыгрыш не найден."
+                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+                keyboard = InlineKeyboardBuilder()
+                keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
                 await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
+                sent_message = await send_message_auto(
+                    bot,
+                    chat_id=user_id,
+                    text=message_text,
+                    reply_markup=keyboard.as_markup(),
+                    message_id=last_message_id,
+                    parse_mode='HTML',
+                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                    previous_message_type=previous_message_type
+                )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
             # Преобразуем результат в словарь
@@ -240,6 +319,8 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     f"\n<tg-emoji emoji-id='5253742260054409879'>✉️</tg-emoji> <b>Сообщение для вас:</b>\n{congrats_message}"
                 )
 
+            current_message_type = 'photo' if count_message_length(giveaway_info) <= 800 else 'image'
+
             keyboard = InlineKeyboardBuilder()
             if giveaway['is_active']:
                 keyboard.button(
@@ -257,44 +338,46 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 else:
                     raise
 
-            # Отправляем сообщение с превью
-            try:
-                await bot.edit_message_text(
-                    chat_id=callback_query.message.chat.id,
-                    message_id=callback_query.message.message_id,
-                    text=giveaway_info,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML',
-                    link_preview_options=LinkPreviewOptions(show_above_text=True)
+            sent_message = await send_message_auto(
+                bot,
+                chat_id=callback_query.message.chat.id,
+                text=giveaway_info,
+                reply_markup=keyboard.as_markup(),
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url=media_url,
+                previous_message_type=previous_message_type,
+                entities=LinkPreviewOptions(show_above_text=True)
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
                 )
-            except TelegramBadRequest as e:
-                if "message to edit not found" in str(e):
-                    logger.warning(f"Message to edit not found: {e}")
-                    await send_new_giveaway_message(callback_query.message.chat.id, giveaway_info, keyboard)
-                else:
-                    raise
 
         except Exception as e:
             logger.error(f"Error in process_giveaway_details: {str(e)}")
+            message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> Произошла ошибка при получении информации о розыгрыше."
+            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
             try:
                 await bot.answer_callback_query(callback_query.id,
                                                 text="Произошла ошибка при получении информации о розыгрыше.")
             except TelegramBadRequest:
                 logger.warning("Failed to answer callback query due to timeout")
-
-            await bot.send_message(
-                chat_id=callback_query.from_user.id,
-                text="Произошла ошибка при получении информации о розыгрыше. Пожалуйста, попробуйте еще раз.",
-                parse_mode='HTML'
+            sent_message = await send_message_auto(
+                bot,
+                chat_id=user_id,
+                text=message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                previous_message_type=previous_message_type
             )
-
-    async def send_new_giveaway_message(chat_id, g_info, keyboard):
-        await bot.send_message(
-            chat_id=chat_id,
-            text=g_info,
-            reply_markup=keyboard.as_markup(),
-            parse_mode='HTML',
-            link_preview_options=LinkPreviewOptions(show_above_text=True)
-        )
-
-    return send_new_giveaway_message
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
