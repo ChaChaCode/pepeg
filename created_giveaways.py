@@ -17,7 +17,7 @@ import requests
 import re
 from aiogram.types import CallbackQuery
 import logging
-
+from utils import truncate_text
 from utils import send_message_auto
 
 # Настройка логирования 📝
@@ -327,6 +327,7 @@ def truncate_name(name, max_length=20):
 def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     from main import cursor  # Импорт внутри функции
     """Регистрирует обработчики для управления розыгрышами 🎁"""
+
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
     async def process_created_giveaways(callback_query: CallbackQuery):
         user_id = callback_query.from_user.id
@@ -371,14 +372,15 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 """,
                 (user_id, ITEMS_PER_PAGE, offset)
             )
-            current_giveaways = cursor.fetchall()
+            columns = [desc[0] for desc in cursor.description]
+            current_giveaways = [dict(zip(columns, row)) for row in cursor.fetchall()]
             keyboard = InlineKeyboardBuilder()
             for giveaway in current_giveaways:
-                name = str(giveaway[2]) if giveaway[2] is not None else "Без названия"
-                clean_name = strip_html_tags(name)[:61] + "..." if len(name) > 64 else strip_html_tags(name)
-                status_indicator = "✅ " if giveaway[6] == 'true' else ""
-                callback_data = (f"view_active_giveaway:{giveaway[0]}" if giveaway[6] == 'true'
-                                 else f"view_created_giveaway:{giveaway[0]}")
+                name = giveaway['name'] if giveaway['name'] else "Без названия"
+                clean_name = truncate_text(name, 61)  # Обрезаем до 61 символа с учетом HTML
+                status_indicator = "✅ " if giveaway['is_active'] == 'true' else ""
+                callback_data = (f"view_active_giveaway:{giveaway['id']}" if giveaway['is_active'] == 'true'
+                                 else f"view_created_giveaway:{giveaway['id']}")
                 keyboard.row(InlineKeyboardButton(
                     text=f"{status_indicator}{clean_name}",
                     callback_data=callback_data
@@ -408,6 +410,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 f"<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Выберите розыгрыш для просмотра\n\n"
                 f"Всего розыгрышей: {total_giveaways}"
             )
+            # Обрезаем message_text до 4000 символов
+            message_text = truncate_text(message_text, 4000)
             await bot.answer_callback_query(callback_query.id)
             await send_message_auto(
                 bot,
@@ -420,8 +424,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id,
-                                            text="Упс Что-то пошло не так 😔")
+            await bot.answer_callback_query(callback_query.id, text="Упс Что-то пошло не так 😔")
             await send_message_auto(
                 bot,
                 user_id,
@@ -445,7 +448,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
-                # Добавляем сообщение с заглушкой
                 await send_message_auto(
                     bot,
                     callback_query.from_user.id,
@@ -466,26 +468,24 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="🎉 Сообщение победителям", callback_data=f"message_winners:{giveaway_id}")
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_giveaway:{giveaway_id}")
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
-            keyboard.adjust(2, 2, 1, 1, 1, 1)  # 4 строки по 2 кнопки
+            keyboard.adjust(2, 2, 1, 1, 1, 1)
 
             # Подстановка переменных
-            description = giveaway['description']
+            description = giveaway['description'] or "Описание отсутствует"
             winner_count = str(giveaway['winner_count'])
             end_time = giveaway['end_time'].strftime('%d.%m.%Y %H:%M (МСК)') if giveaway['end_time'] else "Не указано"
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
-            giveaway_info = f"""{formatted_description}"""
+            giveaway_info = f"{formatted_description}"
 
             # Определяем URL медиа
             image_url = None
             if giveaway['media_type'] and giveaway['media_file_id']:
-                # Предполагаем, что media_file_id — это URL из Yandex Cloud
                 image_url = giveaway['media_file_id']
-                # Если media_file_id — это Telegram file_id, нужно получить URL
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, giveaway['media_file_id'])
             else:
-                image_url = DEFAULT_IMAGE_URL # Добавляем заглушку
+                image_url = DEFAULT_IMAGE_URL
 
             await bot.answer_callback_query(callback_query.id)
             await state.clear()
@@ -500,9 +500,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id,
-                                            text="Ошибка загрузки розыгрыша 😔")
-            # Заменяем bot.send_message на send_message_auto с заглушкой
+            await bot.answer_callback_query(callback_query.id, text="Ошибка загрузки розыгрыша 😔")
             await send_message_auto(
                 bot,
                 callback_query.from_user.id,
