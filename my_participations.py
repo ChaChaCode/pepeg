@@ -7,7 +7,6 @@ import logging
 from utils import send_message_auto, count_message_length
 import math
 import re
-from aiogram.types import LinkPreviewOptions
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
@@ -346,8 +345,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url=media_url,
-                previous_message_type=previous_message_type,
-                entities=LinkPreviewOptions(show_above_text=True)
+                previous_message_type=previous_message_type
             )
             if sent_message:
                 await state.update_data(
