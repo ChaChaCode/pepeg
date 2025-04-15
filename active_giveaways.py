@@ -440,35 +440,27 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 url=f"https://t.me/Snapi/app?startapp={giveaway_id}"
             )
 
+            image_url = None
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                image_url = giveaway['media_file_id']
+                if not image_url.startswith('http'):
+                    image_url = await get_file_url(bot, giveaway['media_file_id'])
+
             for message in published_messages:
                 chat_id = message['chat_id']
                 message_id = message['message_id']
 
                 try:
-                    image_url = None
-                    if giveaway['media_type'] and giveaway['media_file_id']:
-                        image_url = giveaway['media_file_id']
-                        if not image_url.startswith('http'):
-                            image_url = await get_file_url(bot, giveaway['media_file_id'])
-
-                    if image_url:
-                        await send_message_auto(
-                            bot,
-                            chat_id,
-                            new_post_text,
-                            reply_markup=keyboard.as_markup(),
-                            message_id=message_id,
-                            parse_mode='HTML',
-                            image_url=image_url
-                        )
-                    else:
-                        await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            text=new_post_text,
-                            reply_markup=keyboard.as_markup(),
-                            parse_mode='HTML'
-                        )
+                    # Всегда используем send_message_auto для единообразия
+                    await send_message_auto(
+                        bot,
+                        chat_id,
+                        new_post_text,
+                        reply_markup=keyboard.as_markup(),
+                        message_id=message_id,
+                        parse_mode='HTML',
+                        image_url=image_url
+                    )
                     logger.info(f"Обновлен пост {message_id} в чате {chat_id}")
 
                 except Exception as e:
@@ -681,6 +673,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
     @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
     async def process_force_end_giveaway(callback_query: CallbackQuery):
+        global image_url, keyboard, result_message
         giveaway_id = callback_query.data.split(':')[1]
         try:
             await send_message_auto(
@@ -758,31 +751,31 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 winners_list = '\n'.join(winners_formatted)
                 result_message = f"""<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
-{giveaway['name']}
+    {giveaway['name']}
 
-<b>Победители:</b> 
-<blockquote expandable>
-{winners_list}
-</blockquote>
-"""
+    <b>Победители:</b> 
+    <blockquote expandable>
+    {winners_list}
+    </blockquote>
+    """
             else:
                 result_message = f"""
-<b>Розыгрыш завершен</b>
+    <b>Розыгрыш завершен</b>
 
-{giveaway['name']}
+    {giveaway['name']}
 
-К сожалению, в этом розыгрыше не было участников.
-"""
+    К сожалению, в этом розыгрыше не было участников.
+    """
 
             if winners and len(winners) < giveaway['winner_count']:
                 result_message += f"""
-Не все призовые места были распределены.
-"""
+    Не все призовые места были распределены.
+    """
 
             if channel_links:
                 result_message += f"""
-<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
-"""
+    <tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
+    """
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
@@ -817,15 +810,30 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка при завершении 😔")
-            await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                "Ошибка при завершении 😔",
-                reply_markup=None,
-                message_id=callback_query.message.message_id,
-                parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
-            )
+            # Проверяем, завершился ли розыгрыш
+            cursor.execute("SELECT is_active, is_completed FROM giveaways WHERE id = %s", (giveaway_id,))
+            result = cursor.fetchone()
+            if result and result[0] == 'false' and result[1] == 'true':
+                logger.info(f"Розыгрыш {giveaway_id} все же завершился, отправляем результат")
+                await send_message_auto(
+                    bot,
+                    callback_query.from_user.id,
+                    result_message,  # Используем сформированное сообщение
+                    reply_markup=keyboard.as_markup(),
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML',
+                    image_url=image_url
+                )
+            else:
+                await send_message_auto(
+                    bot,
+                    callback_query.from_user.id,
+                    "Ошибка при завершении 😔",
+                    reply_markup=None,
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_active_post:'))
     async def process_edit_active_post(callback_query: CallbackQuery):
@@ -979,7 +987,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             f"Отправьте новый текст для кнопки (до 50 символов):\n{FORMATTING_GUIDE}"
         )
 
-        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button.jpg'
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
         await send_message_auto(
             bot,
             callback_query.from_user.id,
@@ -996,7 +1004,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         giveaway_id = data.get('giveaway_id')
         last_message_id = data.get('last_message_id')
-        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button.jpg'
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
         await process_long_message_active(
             message=message,
             state=state,
