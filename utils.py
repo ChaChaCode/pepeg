@@ -1,8 +1,10 @@
 import logging
 import re
-
+import boto3
+from botocore.client import Config
 from aiogram import Bot
-from aiogram.types import Message, LinkPreviewOptions, InputMediaPhoto, InlineKeyboardMarkup
+from aiogram.types import Message, LinkPreviewOptions, InputMediaPhoto, InlineKeyboardMarkup, InputMediaVideo, \
+    InputMediaAnimation
 import aiogram.exceptions
 import asyncio
 from aiogram.utils.keyboard import InlineKeyboardBuilder
@@ -14,24 +16,118 @@ import json
 import random
 import string
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Конфигурация Yandex Cloud S3
+YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
+YANDEX_SECRET_KEY = 'YCPkR9H9Ucebg6L6eMGvtfKuFIcO_MK7gyiffY6H'
+YANDEX_BUCKET_NAME = 'raffle'
+YANDEX_ENDPOINT_URL = 'https://storage.yandexcloud.net'
+YANDEX_REGION = 'ru-central1'
+
+# Инициализация S3 клиента
+s3_client = boto3.client(
+    's3',
+    region_name=YANDEX_REGION,
+    aws_access_key_id=YANDEX_ACCESS_KEY,
+    aws_secret_access_key=YANDEX_SECRET_KEY,
+    endpoint_url=YANDEX_ENDPOINT_URL,
+    config=Config(signature_version='s3v4')
+)
+
+# Инструкции форматирования
+FORMATTING_GUIDE_INITIAL = """
+<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Создайте описание для розыгрыша\n  
+Добавьте медиафайл (фото, видео или GIF до 10 МБ), чтобы сделать пост ещё круче
+
+Поддерживаемые форматы текста:
+<blockquote expandable>> Цитаты для выделения
+> Жирный: <b>текст</b>
+> Кастомные эмодзи: <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
+> Курсив: <i>текст</i>
+> Подчёркнутый: <u>текст</u>
+> Зачёркнутый: <s>текст</s>
+> Моноширинный: <code>текст</code>
+> Скрытый: <tg-spoiler>текст</tg-spoiler>
+> Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a></blockquote>
+
+Переменные:
+> <code>{win}</code> — количество победителей  
+> <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (по МСК)  
+"""
+
+FORMATTING_GUIDE_UPDATE = """Поддерживаемые форматы текста:
+<blockquote expandable>> Цитаты для выделения
+> Жирный: <b>текст</b>
+> Кастомные эмодзи: <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
+> Курсив: <i>текст</i>
+> Подчёркнутый: <u>текст</u>
+> Зачёркнутый: <s>текст</s>
+> Моноширинный: <code>текст</code>
+> Скрытый: <tg-spoiler>текст</tg-spoiler>
+> Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a></blockquote>
+
+Переменные:
+- <code>{win}</code> — количество победителей  
+- <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (по МСК)
+"""
+
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
-<blockquote expandable>- Цитата
-- Жирный: <b>текст</b>
-- Курсив: <i>текст</i>
-- Подчёркнутый: <u>текст</u>
-- Зачёркнутый: <s>текст</s>
-- Моноширинный: <code>текст</code>
-- Скрытый: <tg-spoiler>текст</tg-spoiler>
-- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
-- Кастомные эмодзи: <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
-
-Примечание: Максимальное количество кастомных эмодзи, которое может отображать Telegram в одном сообщении, ограничено 100 эмодзи.</blockquote>
+<blockquote expandable>> Цитаты для выделения
+> Жирный: <b>текст</b>
+> Кастомные эмодзи: <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
+> Курсив: <i>текст</i>
+> Подчёркнутый: <u>текст</u>
+> Зачёркнутый: <s>текст</s>
+> Моноширинный: <code>текст</code>
+> Скрытый: <tg-spoiler>текст</tg-spoiler>
+> Ссылка: <a href="https://t.me/snapi">текст</a></blockquote>
 """
+
+FORMATTING_GUIDE2 = """
+Поддерживаемые форматы текста:
+<blockquote expandable>> Цитаты для выделения
+> Жирный: <b>текст</b>
+> Кастомные эмодзи: <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
+> Курсив: <i>текст</i>
+> Подчёркнутый: <u>текст</u>
+> Зачёркнутый: <s>текст</s>
+> Моноширинный: <code>текст</code>
+> Скрытый: <tg-spoiler>текст</tg-spoiler>
+> Ссылка: <a href="https://t.me/snapi">текст</a></blockquote>
+
+Переменные:
+> <code>{win}</code> — количество победителей  
+> <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (по МСК)  
+"""
+
+MAX_CONGRATS_LENGTH = 1000
+MAX_CAPTION_LENGTH = 2500
+MAX_NAME_LENGTH = 50
+MAX_DESCRIPTION_LENGTH = 2500
+MAX_MEDIA_SIZE_MB = 10
+MAX_WINNERS = 100
+DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
+
+async def get_file_url(bot: Bot, file_id: str) -> str:
+    try:
+        file = await bot.get_file(file_id)
+        file_url = f"https://api.telegram.org/file/bot{bot.token}/{file.file_path}"
+        return file_url
+    except Exception as e:
+        logger.error(f"Ошибка получения URL файла: {str(e)}")
+        raise
+
+def count_length_with_custom_emoji(text: str) -> int:
+    # Удаляем HTML-теги
+    tag_pattern = r'<[^>]+>'
+    cleaned_text = re.sub(tag_pattern, '', text)
+    length = len(cleaned_text)
+    length += text.count('{data}') * (16 - len('{data}'))
+
+    return length
 
 def generate_unique_code(cursor) -> str:
     while True:
@@ -40,51 +136,22 @@ def generate_unique_code(cursor) -> str:
         if cursor.fetchone()[0] == 0:
             return code
 
-async def get_file_url(bot: Bot, file_id: str) -> str:
-    try:
-        file = await bot.get_file(file_id)
-        file_path = file.file_path
-        file_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
-        return file_url
-    except Exception as e:
-        logger.error(f"🚫 Ошибка получения URL файла {file_id}: {str(e)}")
-        raise
-
-def count_message_length(text: str) -> int:
-    tag_pattern = r'<[^>]+>'
-    cleaned_text = re.sub(tag_pattern, '', text)
-    length = len(cleaned_text)
-    length += text.count('{win}') * (5 - len('{win}'))
-    length += text.count('{data}') * (16 - len('{data}'))
-    return length
+def strip_html_tags(text: str) -> str:
+    """Удаляет HTML-теги из текста"""
+    return re.sub(r'<[^>]+>', '', text)
 
 def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
-    """
-    Обрезает текст до указанной длины, сохраняя HTML-теги и добавляя суффикс.
-
-    Args:
-        text: Исходный текст.
-        max_length: Максимальная длина текста без тегов.
-        suffix: Суффикс для обрезанного текста.
-
-    Returns:
-        Обрезанный текст с сохранением HTML-тегов.
-    """
-    if count_message_length(text) <= max_length:
+    if count_length_with_custom_emoji(text) <= max_length:
         return text
 
-    # Удаляем теги для подсчета чистой длины
     tag_pattern = r'<[^>]+>'
     cleaned_text = re.sub(tag_pattern, '', text)
 
-    # Если чистый текст уже короче, возвращаем исходный
     if len(cleaned_text) <= max_length:
         return text
 
-    # Обрезаем чистый текст до max_length
     truncated_cleaned = cleaned_text[:max_length - len(suffix)] + suffix
 
-    # Восстанавливаем HTML-теги
     result = ""
     current_cleaned_pos = 0
     tag_buffer = ""
@@ -110,7 +177,6 @@ def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
                 current_cleaned_pos += 1
         original_pos += 1
 
-    # Добавляем незакрытые теги, если есть
     if tag_buffer:
         result += tag_buffer
 
@@ -200,20 +266,7 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
     current_message_type = 'photo'
 
     try:
-        if message_id and previous_message_type and previous_message_type != current_message_type:
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как тип сообщения изменился на {current_message_type}")
-            except Exception as e:
-                logger.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}: {str(e)}")
-            return await bot.send_photo(
-                chat_id=chat_id,
-                photo=image_url,
-                caption=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
-            )
-        elif message_id:
+        if message_id:
             try:
                 return await bot.edit_message_media(
                     chat_id=chat_id,
@@ -238,12 +291,17 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
                 elif "message is not modified" in str(e).lower():
                     logger.info(f"Сообщение {message_id} не изменено, пропускаем")
                     return None
+                elif "message media can be edited only to the media of the same type" in str(e).lower():
+                    logger.info(f"Тип медиа изменился для сообщения {message_id} на {current_message_type}, отправляем новое")
+                    return await bot.send_photo(
+                        chat_id=chat_id,
+                        photo=image_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
                 else:
                     logger.error(f"Ошибка редактирования сообщения {message_id}: {str(e)}")
-                    try:
-                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                    except Exception as de:
-                        logger.warning(f"Не удалось удалить сообщение {message_id}: {str(de)}")
                     return await bot.send_photo(
                         chat_id=chat_id,
                         photo=image_url,
@@ -263,6 +321,130 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
         logger.error(f"Error in send_message_with_photo: {str(e)}")
         return None
 
+async def send_message_with_video(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
+                                 parse_mode: str = 'HTML', video_url: str = None,
+                                 previous_message_type: str = None) -> Message | None:
+    video_url = video_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.mp4'
+    current_message_type = 'video'
+
+    try:
+        if message_id:
+            try:
+                return await bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    media=InputMediaVideo(
+                        media=video_url,
+                        caption=text,
+                        parse_mode=parse_mode
+                    ),
+                    reply_markup=reply_markup
+                )
+            except aiogram.exceptions.TelegramBadRequest as e:
+                if "message to edit not found" in str(e).lower():
+                    logger.warning(f"Сообщение {message_id} не найдено для редактирования, отправляем новое")
+                    return await bot.send_video(
+                        chat_id=chat_id,
+                        video=video_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+                elif "message is not modified" in str(e).lower():
+                    logger.info(f"Сообщение {message_id} не изменено, пропускаем")
+                    return None
+                elif "message media can be edited only to the media of the same type" in str(e).lower():
+                    logger.info(f"Тип медиа изменился для сообщения {message_id} на {current_message_type}, отправляем новое")
+                    return await bot.send_video(
+                        chat_id=chat_id,
+                        video=video_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+                else:
+                    logger.error(f"Ошибка редактирования сообщения {message_id}: {str(e)}")
+                    return await bot.send_video(
+                        chat_id=chat_id,
+                        video=video_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+        else:
+            return await bot.send_video(
+                chat_id=chat_id,
+                video=video_url,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+    except Exception as e:
+        logger.error(f"Error in send_message_with_video: {str(e)}")
+        return None
+
+async def send_message_with_animation(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
+                                     parse_mode: str = 'HTML', animation_url: str = None,
+                                     previous_message_type: str = None) -> Message | None:
+    animation_url = animation_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.mp4'
+    current_message_type = 'animation'
+
+    try:
+        if message_id:
+            try:
+                return await bot.edit_message_media(
+                    chat_id=chat_id,
+                    message_id=message_id,
+                    media=InputMediaAnimation(
+                        media=animation_url,
+                        caption=text,
+                        parse_mode=parse_mode
+                    ),
+                    reply_markup=reply_markup
+                )
+            except aiogram.exceptions.TelegramBadRequest as e:
+                if "message to edit not found" in str(e).lower():
+                    logger.warning(f"Сообщение {message_id} не найдено для редактирования, отправляем новое")
+                    return await bot.send_animation(
+                        chat_id=chat_id,
+                        animation=animation_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+                elif "message is not modified" in str(e).lower():
+                    logger.info(f"Сообщение {message_id} не изменено, пропускаем")
+                    return None
+                elif "message media can be edited only to the media of the same type" in str(e).lower():
+                    logger.info(f"Тип медиа изменился для сообщения {message_id} на {current_message_type}, отправляем новое")
+                    return await bot.send_animation(
+                        chat_id=chat_id,
+                        animation=animation_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+                else:
+                    logger.error(f"Ошибка редактирования сообщения {message_id}: {str(e)}")
+                    return await bot.send_animation(
+                        chat_id=chat_id,
+                        animation=animation_url,
+                        caption=text,
+                        reply_markup=reply_markup,
+                        parse_mode=parse_mode
+                    )
+        else:
+            return await bot.send_animation(
+                chat_id=chat_id,
+                animation=animation_url,
+                caption=text,
+                reply_markup=reply_markup,
+                parse_mode=parse_mode
+            )
+    except Exception as e:
+        logger.error(f"Error in send_message_with_animation: {str(e)}")
+        return None
+
 async def send_message_auto(
     bot: Bot,
     chat_id: int,
@@ -272,10 +454,11 @@ async def send_message_auto(
     parse_mode: str = 'HTML',
     entities=None,
     image_url: str = None,
+    media_type: str = None,
     previous_message_type: str = None
 ) -> Message | None:
     """
-    Автоматический выбор между send_message_with_photo, send_message_with_image или send_message на основе длины текста.
+    Автоматический выбор между отправкой фото, видео, GIF или текста на основе типа медиа и длины текста.
     Если отправка с медиа не удалась, отправляет без медиа.
 
     Args:
@@ -286,14 +469,15 @@ async def send_message_auto(
         message_id: ID сообщения для редактирования (если None, отправляется новое).
         parse_mode: Режим парсинга ('HTML', 'Markdown', None).
         entities: Сущности сообщения (для send_message_with_image).
-        image_url: URL изображения.
-        previous_message_type: Тип предыдущего сообщения ('photo', 'image', None).
+        image_url: URL медиа.
+        media_type: Тип медиа ('photo', 'video', 'animation', None).
+        previous_message_type: Тип предыдущего сообщения ('photo', 'video', 'animation', 'image', None).
 
     Returns:
         Message | None: Отправленное сообщение или None при ошибке.
     """
-    message_length = count_message_length(text)
-    current_message_type = 'photo' if message_length <= 800 else 'image'
+    message_length = count_length_with_custom_emoji(text)
+    current_message_type = media_type or ('photo' if message_length <= 800 else 'image')
     logger.info(f"send_message_auto: chat_id={chat_id}, message_id={message_id}, image_url={image_url}, type={current_message_type}")
 
     try:
@@ -309,6 +493,28 @@ async def send_message_auto(
                     image_url=image_url,
                     previous_message_type=previous_message_type
                 )
+            elif current_message_type == 'video':
+                return await send_message_with_video(
+                    bot=bot,
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    message_id=message_id,
+                    parse_mode=parse_mode,
+                    video_url=image_url,
+                    previous_message_type=previous_message_type
+                )
+            elif current_message_type == 'animation':
+                return await send_message_with_animation(
+                    bot=bot,
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    message_id=message_id,
+                    parse_mode=parse_mode,
+                    animation_url=image_url,
+                    previous_message_type=previous_message_type
+                )
             else:
                 return await send_message_with_image(
                     bot=bot,
@@ -322,21 +528,7 @@ async def send_message_auto(
                     previous_message_type=previous_message_type
                 )
         else:
-            # Если image_url=None, проверяем тип предыдущего сообщения
-            if message_id and previous_message_type == 'photo':
-                try:
-                    # Пытаемся отредактировать как фото с пустой подписью или удалить и отправить новое
-                    await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                    logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как это фото, а image_url=None")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить сообщение {message_id}: {str(e)}")
-                return await bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
-            elif message_id:
+            if message_id:
                 try:
                     return await bot.edit_message_text(
                         chat_id=chat_id,
@@ -346,13 +538,19 @@ async def send_message_auto(
                         parse_mode=parse_mode
                     )
                 except aiogram.exceptions.TelegramBadRequest as e:
-                    if "there is no text in the message to edit" in str(e).lower():
-                        # Если это фото, удаляем и отправляем новое текстовое сообщение
-                        try:
-                            await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                            logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как это фото")
-                        except Exception as de:
-                            logger.warning(f"Не удалось удалить сообщение {message_id}: {str(de)}")
+                    if "message to edit not found" in str(e).lower():
+                        logger.warning(f"Сообщение {message_id} не найдено для редактирования, отправляем новое")
+                        return await bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                            reply_markup=reply_markup,
+                            parse_mode=parse_mode
+                        )
+                    elif "message is not modified" in str(e).lower():
+                        logger.info(f"Сообщение {message_id} не изменено, пропускаем")
+                        return None
+                    elif "there is no text in the message to edit" in str(e).lower():
+                        logger.info(f"Сообщение {message_id} содержит медиа, отправляем новое")
                         return await bot.send_message(
                             chat_id=chat_id,
                             text=text,
@@ -360,7 +558,13 @@ async def send_message_auto(
                             parse_mode=parse_mode
                         )
                     else:
-                        raise
+                        logger.error(f"Ошибка редактирования сообщения {message_id}: {str(e)}")
+                        return await bot.send_message(
+                            chat_id=chat_id,
+                            text=text,
+                            reply_markup=reply_markup,
+                            parse_mode=parse_mode
+                        )
             else:
                 return await bot.send_message(
                     chat_id=chat_id,
@@ -398,11 +602,10 @@ async def check_and_end_giveaways(bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"Error fetching active giveaways: {str(e)}")
 
-        await asyncio.sleep(30)  # Check every 30 seconds
+        await asyncio.sleep(30)
 
 async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator: bool = True):
     try:
-        # Fetch giveaway details
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
         giveaway = cursor.fetchone()
         if not giveaway:
@@ -412,7 +615,6 @@ async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator:
         giveaway = dict(zip(columns, giveaway))
         logger.debug(f"Ending giveaway {giveaway_id}: {giveaway}")
 
-        # Fetch all participants with pagination
         participants = []
         limit = 1000
         offset = 0
@@ -431,12 +633,10 @@ async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator:
 
         logger.info(f"Total participants fetched for giveaway {giveaway_id}: {len(participants)}")
 
-        # Select winners with subscription check
         winners = await select_random_winners(bot, participants,
                                               min(len(participants), giveaway['winner_count']),
                                               giveaway_id, conn, cursor)
 
-        # Update giveaway status to mark it as completed
         cursor.execute(
             "UPDATE giveaways SET is_active = %s, is_completed = %s WHERE id = %s",
             ('false', 'true', giveaway_id)
@@ -444,7 +644,6 @@ async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator:
         conn.commit()
         logger.info(f"Giveaway {giveaway_id} marked as completed (is_active = 'false', is_completed = 'true')")
 
-        # Save winners (if any)
         if winners:
             for index, winner in enumerate(winners, start=1):
                 cursor.execute(
@@ -457,18 +656,15 @@ async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator:
             conn.commit()
             logger.info(f"Saved {len(winners)} winners for giveaway {giveaway_id}")
 
-        # Notify winners and publish results
         await notify_winners_and_publish_results(bot, conn, cursor, giveaway, winners, notify_creator=notify_creator)
 
-        # Create a new giveaway template with the same details and a new unique ID
         new_giveaway = giveaway.copy()
-        new_giveaway.pop('id', None)  # Remove old ID
+        new_giveaway.pop('id', None)
         new_giveaway['is_active'] = 'false'
-        new_giveaway['is_completed'] = 'false'  # This is a template, not a completed giveaway
+        new_giveaway['is_completed'] = 'false'
         new_giveaway['created_at'] = None
         new_giveaway['end_time'] = giveaway['end_time']
 
-        # Convert fields that may contain dicts or lists to JSON strings
         for key, value in new_giveaway.items():
             if isinstance(value, (dict, list)):
                 logger.debug(f"Converting field {key} to JSON string: {value}")
@@ -476,7 +672,6 @@ async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator:
 
         logger.debug(f"Prepared new_giveaway for insertion: {new_giveaway}")
 
-        # Generate a new unique ID
         new_giveaway_id = generate_unique_code(cursor)
         new_giveaway['id'] = new_giveaway_id
 
@@ -489,7 +684,6 @@ async def end_giveaway(bot: Bot, giveaway_id: str, conn, cursor, notify_creator:
         inserted_id = cursor.fetchone()[0]
         logger.info(f"Created new giveaway template with id {inserted_id} based on giveaway {giveaway_id}")
 
-        # Copy congratulations to the new giveaway
         cursor.execute("SELECT * FROM congratulations WHERE giveaway_id = %s", (giveaway_id,))
         congratulations = cursor.fetchall()
         if congratulations:
@@ -528,10 +722,8 @@ async def check_participant(bot: Bot, user_id: int, communities: List[Dict[str, 
 
 async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], winner_count: int, giveaway_id: str,
                                 conn, cursor) -> List[Dict[str, Any]]:
-    # Устанавливаем сид для воспроизводимости
     random.seed(giveaway_id)
 
-    # Получаем список каналов для проверки
     giveaway_communities = await get_giveaway_communities(conn, cursor, giveaway_id)
     if not giveaway_communities:
         logger.warning(f"No communities found for giveaway {giveaway_id}, all participants considered valid")
@@ -539,7 +731,6 @@ async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], wi
         random.shuffle(shuffled_participants)
         winners = random.sample(shuffled_participants, min(winner_count, len(shuffled_participants)))
     else:
-        # Параллельная проверка всех участников
         tasks = [check_participant(bot, p['user_id'], giveaway_communities) for p in participants]
         results = await asyncio.gather(*tasks)
         valid_participants = [p for p, valid in zip(participants, results) if valid]
@@ -547,7 +738,6 @@ async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], wi
         logger.info(
             f"Found {len(valid_participants)} valid participants out of {len(participants)} for giveaway {giveaway_id}")
 
-        # Перемешиваем и выбираем победителей из валидных
         if valid_participants:
             random.shuffle(valid_participants)
             winners = random.sample(valid_participants, min(winner_count, len(valid_participants)))
@@ -555,7 +745,6 @@ async def select_random_winners(bot: Bot, participants: List[Dict[str, Any]], wi
             winners = []
             logger.warning(f"No valid participants found for giveaway {giveaway_id}")
 
-    # Формируем детали победителей
     winner_details = []
     for winner in winners:
         user_id = winner['user_id']
@@ -669,7 +858,6 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
     channel_keyboard = InlineKeyboardBuilder()
     channel_keyboard.button(text="Результаты", url=f"https://t.me/Snapi/app?startapp={giveaway['id']}")
 
-    # Определяем URL изображения для публикации в каналах
     image_url = None
     if giveaway['media_type'] and giveaway['media_file_id']:
         image_url = giveaway['media_file_id']
@@ -688,7 +876,6 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
                     image_url=image_url
                 )
             else:
-                # Если медиа нет, отправляем сообщение без изображения
                 await bot.send_message(
                     chat_id=int(chat_id),
                     text=result_message,
@@ -700,18 +887,16 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
         except Exception as e:
             logger.error(f"Error publishing results in chat {chat_id}: {e}")
 
-    # Fetch congratulations messages
     cursor.execute("SELECT place, message FROM congratulations WHERE giveaway_id = %s", (giveaway['id'],))
     congrats_rows = cursor.fetchall()
     congrats_messages = {row[0]: row[1] for row in congrats_rows}
 
-    # Указываем effect_id для сообщений победителям
     WINNER_EFFECT_ID = "5046509860389126442"
 
     for index, winner in enumerate(winners, start=1):
         try:
             congrats_message = congrats_messages.get(index,
-                                                     f"<b>Поздравляем!</b> Вы выиграли в розыгрыше \"<i>{giveaway['name']}</i>\"!")
+                                                     f"<b>Поздравляем</b> Вы выиграли в розыгрыше \"<i>{giveaway['name']}</i>\"")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(
                 text="Результаты",
@@ -723,7 +908,7 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
                 text=congrats_message,
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML',
-                message_effect_id=WINNER_EFFECT_ID  # Добавляем эффект
+                message_effect_id=WINNER_EFFECT_ID
             )
             logger.info(f"Sent winning message with effect_id {WINNER_EFFECT_ID} to user {winner['user_id']}")
         except Exception as e:
@@ -746,7 +931,6 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
                         image_url=image_url
                     )
                 else:
-                    # Если медиа нет, отправляем сообщение без изображения
                     await bot.send_message(
                         chat_id=creator_id,
                         text=result_message_for_creator,
@@ -758,7 +942,6 @@ async def notify_winners_and_publish_results(bot: Bot, conn, cursor, giveaway: D
 
 async def check_usernames(bot: Bot, conn, cursor):
     try:
-        # Fetch users
         cursor.execute("SELECT user_id, telegram_username FROM users")
         users = cursor.fetchall()
         users = [{'user_id': row[0], 'telegram_username': row[1]} for row in users]
@@ -779,7 +962,6 @@ async def check_usernames(bot: Bot, conn, cursor):
             except Exception as e:
                 logger.error(f"Error checking user {user['user_id']}: {str(e)}")
 
-        # Fetch communities
         cursor.execute("SELECT community_id, community_username, community_name FROM bound_communities")
         communities = cursor.fetchall()
         communities = [
