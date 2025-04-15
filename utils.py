@@ -58,6 +58,64 @@ def count_message_length(text: str) -> int:
     length += text.count('{data}') * (16 - len('{data}'))
     return length
 
+def truncate_text(text: str, max_length: int, suffix: str = "...") -> str:
+    """
+    Обрезает текст до указанной длины, сохраняя HTML-теги и добавляя суффикс.
+
+    Args:
+        text: Исходный текст.
+        max_length: Максимальная длина текста без тегов.
+        suffix: Суффикс для обрезанного текста.
+
+    Returns:
+        Обрезанный текст с сохранением HTML-тегов.
+    """
+    if count_message_length(text) <= max_length:
+        return text
+
+    # Удаляем теги для подсчета чистой длины
+    tag_pattern = r'<[^>]+>'
+    cleaned_text = re.sub(tag_pattern, '', text)
+
+    # Если чистый текст уже короче, возвращаем исходный
+    if len(cleaned_text) <= max_length:
+        return text
+
+    # Обрезаем чистый текст до max_length
+    truncated_cleaned = cleaned_text[:max_length - len(suffix)] + suffix
+
+    # Восстанавливаем HTML-теги
+    result = ""
+    current_cleaned_pos = 0
+    tag_buffer = ""
+    in_tag = False
+    original_pos = 0
+
+    while original_pos < len(text) and current_cleaned_pos < len(truncated_cleaned):
+        char = text[original_pos]
+
+        if char == '<':
+            in_tag = True
+            tag_buffer += char
+        elif char == '>' and in_tag:
+            in_tag = False
+            tag_buffer += char
+            result += tag_buffer
+            tag_buffer = ""
+        elif in_tag:
+            tag_buffer += char
+        else:
+            if current_cleaned_pos < len(truncated_cleaned):
+                result += char
+                current_cleaned_pos += 1
+        original_pos += 1
+
+    # Добавляем незакрытые теги, если есть
+    if tag_buffer:
+        result += tag_buffer
+
+    return result
+
 async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_markup=None, message_id: int = None,
                                  parse_mode: str = 'HTML', entities=None, image_url: str = None,
                                  previous_message_type: str = None) -> Message | None:
