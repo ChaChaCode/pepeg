@@ -54,7 +54,7 @@ MAX_NAME_LENGTH = 50
 MAX_DESCRIPTION_LENGTH = 2500
 MAX_MEDIA_SIZE_MB = 10
 MAX_WINNERS = 100
-DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi.jpg'
+DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
 
 FORMATTING_GUIDE = """
 Поддерживаемые форматы текста:
@@ -786,7 +786,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         try:
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button.jpg'  # Можно заменить на нужное изображение
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'  # Можно заменить на нужное изображение
             await send_message_auto(
                 bot,
                 callback_query.from_user.id,
@@ -798,7 +798,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
         except Exception as e:
             logger.error(f"Ошибка редактирования сообщения: {str(e)}")
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button.jpg'
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
             sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
@@ -822,7 +822,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             field='button',
             max_length=50,  # Лимит для кнопки
             formatting_guide=FORMATTING_GUIDE,
-            image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_button.jpg'
+            image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
         )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_name:'))
@@ -1629,7 +1629,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     reply_markup=None,
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
-                    image_url=DEFAULT_IMAGE_URL
+                    image_url=None  # Не используем изображение при ошибке
                 )
                 return
 
@@ -1664,8 +1664,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 image_url = giveaway['media_file_id']
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, giveaway['media_file_id'])
-            else:
-                image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapipred.jpg'
+            # Если media_type или media_file_id отсутствуют, image_url остается None
 
             await bot.answer_callback_query(callback_query.id)
             await send_message_auto(
@@ -1675,7 +1674,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=image_url
+                image_url=image_url  # Передаем None, если нет изображения
             )
 
         except Exception as e:
@@ -1690,7 +1689,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=None,
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=None  # Не используем изображение при ошибке
             )
 
     @dp.message(GiveawayStates.waiting_for_new_end_time)
@@ -2009,10 +2008,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             # Используем аватар первого сообщества, если есть
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
-            if communities and communities[0].get('media_file_ava'):
-                image_url = communities[0]['media_file_ava']
-                if not image_url.startswith('http'):
-                    image_url = await get_file_url(bot, communities[0]['media_file_ava'])
 
             await bot.answer_callback_query(callback_query.id)
             await send_message_auto(
@@ -2056,9 +2051,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
 
             # Обновляем изображение
-            image_url = media_file_ava or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
-            if media_file_ava and not image_url.startswith('http'):
-                image_url = await get_file_url(bot, media_file_ava)
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
 
             message_text = (
                 "<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Выберите сообщества, в которых будет опубликован розыгрыш.\n\nРезультаты также будут размещены только в этих сообществах."
@@ -2163,23 +2156,23 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if changes_made:
                 for community_id, community_username in to_add:
                     cursor.execute(
-                        "SELECT community_username, community_type, user_id, community_name, media_file_ava "
+                        "SELECT community_username, community_type, user_id, community_name "
                         "FROM bound_communities WHERE community_id = %s",
                         (community_id,)
                     )
                     community = cursor.fetchone()
                     if community:
-                        community_username, community_type, user_id, community_name, media_file_ava = community
+                        community_username, community_type, user_id, community_name = community
                         cursor.execute(
                             """
                             INSERT INTO giveaway_communities (
                                 giveaway_id, community_id, community_username, community_type, user_id, 
-                                community_name, media_file_ava
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                                community_name
+                            ) VALUES (%s, %s, %s, %s, %s, %s)
                             """,
                             (
                                 giveaway_id, community_id, community_username, community_type, user_id,
-                                community_name, media_file_ava
+                                community_name
                             )
                         )
                     else:
@@ -2192,7 +2185,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             else:
                 await bot.answer_callback_query(callback_query.id, text="✅ Выбор сохранен")
 
-            # Очищаем состояние в базе и FSM
             try:
                 cursor.execute("DELETE FROM user_binding_state WHERE user_id = %s", (user_id,))
                 conn.commit()
