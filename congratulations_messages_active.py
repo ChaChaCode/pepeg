@@ -14,6 +14,9 @@ import re
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Константа для URL изображения по умолчанию
+DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
+
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
@@ -143,7 +146,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
         except Exception as e:
             logger.error(f"Ошибка редактирования сообщения: {str(e)}")
@@ -152,7 +156,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 chat_id=callback_query.from_user.id,
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
         await callback_query.answer()
 
@@ -215,7 +220,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
@@ -228,7 +234,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 chat_id=callback_query.from_user.id,
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
@@ -259,7 +266,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=error_message,
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             return
 
@@ -293,7 +301,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=updated_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
@@ -308,7 +317,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text="Произошла ошибка при сохранении поздравления. Попробуйте снова.",
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
     @dp.callback_query(lambda c: c.data == 'show_common_congrats_active')
@@ -351,7 +361,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
 
         except Exception as e:
@@ -392,7 +403,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             if sent_message:
                 await state.update_data(original_message_id=sent_message.message_id)
@@ -426,7 +438,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=error_message,
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             return
 
@@ -469,7 +482,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text=success_message,
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
 
@@ -484,5 +498,6 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
                 text="Произошла ошибка при сохранении поздравления. Попробуйте снова.",
                 reply_markup=keyboard.as_markup(),
                 message_id=original_message_id,
-                parse_mode='HTML'
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL
             )
