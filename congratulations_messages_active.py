@@ -6,46 +6,19 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
-from utils import send_message_auto
+from utils import send_message_auto, count_length_with_custom_emoji, FORMATTING_GUIDE, DEFAULT_IMAGE_URL, \
+    MAX_CONGRATS_LENGTH
 import json
-import re
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-# Константа для URL изображения по умолчанию
-DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
 
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
 user_selected_communities = {}
 paid_users: Dict[int, str] = {}
-
-# Константы для ограничения длины текста
-MAX_CONGRATS_LENGTH = 1000  # Максимальная длина поздравительного сообщения
-
-FORMATTING_GUIDE = """
-Поддерживаемые форматы текста:
-<blockquote expandable>- Цитата
-- Жирный: <b>текст</b>
-- Курсив: <i>текст</i>
-- Подчёркнутый: <u>текст</u>
-- Зачёркнутый: <s>текст</s>
-- Моноширинный
-- Скрытый: <tg-spoiler>текст</tg-spoiler>
-- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
-- Код: <code>текст</code>
-- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>
-
-<b>Переменные</b>
-Используйте их для автоматической подстановки данных:  
-- <code>{win}</code> — количество победителей  
-- <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (по МСК)  
-
-Примечание: Максимальная длина текста — 1000 символов. Максимум 100 кастомных эмодзи в сообщении.</blockquote>
-"""
 
 # States for the FSM
 class GiveawayStates(StatesGroup):
@@ -65,21 +38,6 @@ class GiveawayStates(StatesGroup):
     waiting_for_edit_winner_count = State()
     creating_giveaway = State()
     binding_communities = State()
-
-# Функция для подсчета длины текста без HTML-тегов
-def count_length_with_custom_emoji(text: str) -> int:
-    # Удаляем HTML-теги
-    tag_pattern = r'<[^>]+>'
-    cleaned_text = re.sub(tag_pattern, '', text)
-
-    # Подсчитываем базовую длину текста без тегов
-    length = len(cleaned_text)
-
-    # Добавляем фиксированную длину для переменных
-    length += text.count('{win}') * (5 - len('{win}'))  # 5 символов минус длина самой строки "{win}"
-    length += text.count('{data}') * (16 - len('{data}'))  # 16 символов минус длина самой строки "{data}"
-
-    return length
 
 def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(
@@ -256,8 +214,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
             error_message = (
-                f"⚠️ Поздравление слишком длинное! Максимум {MAX_CONGRATS_LENGTH} символов, сейчас {text_length}. "
-                f"Сократите текст!\n{FORMATTING_GUIDE}"
+                f"⚠️ Поздравление слишком длинное Максимум {MAX_CONGRATS_LENGTH} символов, сейчас {text_length}. "
+                f"Сократите текст\n{FORMATTING_GUIDE}"
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_auto(
@@ -428,8 +386,8 @@ def register_congratulations_messages_active(dp: Dispatcher, bot: Bot, conn, cur
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"message_winners_active:{giveaway_id}")
             error_message = (
-                f"⚠️ Поздравление слишком длинное! Максимум {MAX_CONGRATS_LENGTH} символов, сейчас {text_length}. "
-                f"Сократите текст!\n{FORMATTING_GUIDE}"
+                f"⚠️ Поздравление слишком длинное Максимум {MAX_CONGRATS_LENGTH} символов, сейчас {text_length}. "
+                f"Сократите текст\n{FORMATTING_GUIDE}"
             )
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             await send_message_auto(
