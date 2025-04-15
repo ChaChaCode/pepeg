@@ -1,4 +1,6 @@
-from utils import end_giveaway, send_message_auto, select_random_winners
+from utils import end_giveaway, send_message_auto, select_random_winners, count_length_with_custom_emoji, \
+    MAX_MEDIA_SIZE_MB, MAX_CAPTION_LENGTH, DEFAULT_IMAGE_URL, MAX_NAME_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_WINNERS, \
+    get_file_url, s3_client, YANDEX_BUCKET_NAME, FORMATTING_GUIDE, FORMATTING_GUIDE2
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.context import FSMContext
@@ -7,98 +9,14 @@ from datetime import datetime
 import pytz
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 import json
-import boto3
-from botocore.client import Config
 import requests
-import re
 from aiogram.types import CallbackQuery
 from typing import Dict, List, Tuple, Any
 
-# Настройка логирования 📝
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Конфигурация Yandex Cloud S3 ☁️
-YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
-YANDEX_SECRET_KEY = 'YCPkR9H9Ucebg6L6eMGvtfKuFIcO_MK7gyiffY6H'
-YANDEX_BUCKET_NAME = 'raffle'
-YANDEX_ENDPOINT_URL = 'https://storage.yandexcloud.net'
-YANDEX_REGION = 'ru-central1'
-
-# Инициализация S3 клиента 📦
-s3_client = boto3.client(
-    's3',
-    region_name=YANDEX_REGION,
-    aws_access_key_id=YANDEX_ACCESS_KEY,
-    aws_secret_access_key=YANDEX_SECRET_KEY,
-    endpoint_url=YANDEX_ENDPOINT_URL,
-    config=Config(signature_version='s3v4')
-)
-
-# Константы ⚙️
-MAX_CAPTION_LENGTH = 2500
-MAX_NAME_LENGTH = 50
-MAX_DESCRIPTION_LENGTH = 2500
-MAX_MEDIA_SIZE_MB = 10
-MAX_WINNERS = 100
-DEFAULT_IMAGE_URL = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
-
-FORMATTING_GUIDE = """
-Поддерживаемые форматы текста:
-<blockquote expandable>- Цитата
-- Жирный: <b>текст</b>
-- Курсив: <i>текст</i>
-- Подчёркнутый: <u>текст</u>
-- Зачёркнутый: <s>текст</s>
-- Моноширинный
-- Скрытый: <tg-spoiler>текст</tg-spoiler>
-- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
-- Код: <code>текст</code>
-- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji></blockquote>
-"""
-
-FORMATTING_GUIDE2 = """
-Поддерживаемые форматы текста:
-<blockquote expandable>- Цитата
-- Жирный: <b>текст</b>
-- Курсив: <i>текст</i>
-- Подчёркнутый: <u>текст</u>
-- Зачёркнутый: <s>текст</s>
-- Моноширинный
-- Скрытый: <tg-spoiler>текст</tg-spoiler>
-- Ссылка: <a href="https://t.me/PepeGift_Bot">текст</a>
-- Код: <code>текст</code>
-- Кастомные эмодзи <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji></blockquote>
-
-<b>Переменные</b>
-Используйте их для автоматической подстановки данных:  
-- <code>{win}</code> — количество победителей  
-- <code>{data}</code> — дата и время, например, 30.03.2025 20:45 (МСК)  
-
-<b>Примечание</b>
-Максимальное количество кастомных эмодзи в одном сообщении — 100. Превышение этого лимита может привести к некорректному отображению.
-"""
-
-def strip_html_tags(text: str) -> str:
-    """Удаляет HTML-теги из текста 🧹"""
-    return re.sub(r'<[^>]+>', '', text)
-
-def count_length_with_custom_emoji(text: str) -> int:
-    # Удаляем HTML-теги
-    tag_pattern = r'<[^>]+>'
-    cleaned_text = re.sub(tag_pattern, '', text)
-
-    # Подсчитываем базовую длину текста без тегов
-    length = len(cleaned_text)
-
-    # Добавляем фиксированную длину для переменных
-    length += text.count('{win}') * (5 - len('{win}'))
-    length += text.count('{data}') * (16 - len('{data}'))
-
-    return length
-
 def fetch_giveaway_data(cursor: Any, query: str, params: Tuple) -> List[Dict[str, Any]]:
-    """Извлекает данные из базы и преобразует их в список словарей."""
     cursor.execute(query, params)
     columns = [desc[0] for desc in cursor.description]
     return [dict(zip(columns, row)) for row in cursor.fetchall()]
@@ -112,11 +30,10 @@ class EditGiveawayStates(StatesGroup):
     waiting_for_new_button_active = State()
 
 async def upload_to_storage(file_content: bytes, filename: str) -> Tuple[bool, str]:
-    """Загружает файл в хранилище 📤"""
     try:
         file_size_mb = len(file_content) / (1024 * 1024)
         if file_size_mb > MAX_MEDIA_SIZE_MB:
-            return False, f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой! Максимум: {MAX_MEDIA_SIZE_MB} МБ 😔"
+            return False, f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой Максимум: {MAX_MEDIA_SIZE_MB} МБ 😔"
 
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         unique_filename = f"{timestamp}_{filename}"
@@ -150,7 +67,6 @@ async def upload_to_storage(file_content: bytes, filename: str) -> Tuple[bool, s
         return False, f"❌ Ошибка загрузки: {str(e)}"
 
 def get_json_field(cursor, query, params):
-    """Вспомогательная функция для безопасного извлечения JSON-полей из базы."""
     cursor.execute(query, params)
     result = cursor.fetchone()[0]
     if result is None:
@@ -160,17 +76,6 @@ def get_json_field(cursor, query, params):
     if isinstance(result, list):
         return result
     raise ValueError(f"Неподдерживаемый тип данных для JSON-поля: {type(result)}")
-
-async def get_file_url(bot: Bot, file_id: str) -> str:
-    """Получает URL файла по его file_id."""
-    try:
-        file = await bot.get_file(file_id)
-        file_path = file.file_path
-        file_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
-        return file_url
-    except Exception as e:
-        logger.error(f"🚫 Ошибка получения URL файла {file_id}: {str(e)}")
-        raise
 
 async def process_long_message_active(
         message: types.Message,
@@ -187,11 +92,6 @@ async def process_long_message_active(
         update_published_posts_active,
         _show_edit_menu_active
 ):
-    """
-    Обрабатывает длинные сообщения для полей активного розыгрыша, собирая части, отправленные в течение 2 секунд.
-    Работает аналогично process_long_message, удаляя предыдущее сообщение бота при превышении лимита и отправляя новое.
-    """
-    # Словарь для перевода полей на русский
     field_translations = {
         'name': 'Название',
         'description': 'Описание',
@@ -205,15 +105,12 @@ async def process_long_message_active(
     last_message_time = data.get('last_message_time')
     new_text = message.html_text if message.text else ""
 
-    # Текущая временная метка
     current_time = datetime.now().timestamp()
 
-    # Создаем клавиатуру
     keyboard = InlineKeyboardBuilder()
     keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
     keyboard.adjust(1)
 
-    # Проверяем, является ли сообщение частью длинного сообщения (интервал 2 секунды)
     if last_message_time is not None and (current_time - last_message_time) <= 2:
         current_message_parts.append(new_text)
         await state.update_data(
@@ -222,9 +119,8 @@ async def process_long_message_active(
             user_messages=user_messages,
             limit_exceeded=limit_exceeded
         )
-        return  # Ждем следующую часть, не отправляем ничего
+        return
 
-    # Если интервал больше 2 секунд или это первое сообщение, обрабатываем собранные части
     if current_message_parts:
         combined_message = "".join(current_message_parts)
         if combined_message:
@@ -233,7 +129,6 @@ async def process_long_message_active(
     else:
         current_message_parts = [new_text]
 
-    # Обновляем состояние
     await state.update_data(
         current_message_parts=current_message_parts,
         last_message_time=current_time,
@@ -241,28 +136,23 @@ async def process_long_message_active(
         limit_exceeded=limit_exceeded
     )
 
-    # Подсчет длины текущего сообщения
     combined_current_message = "".join(current_message_parts)
     current_length = count_length_with_custom_emoji(combined_current_message)
 
-    # Если лимит был превышен ранее
     if limit_exceeded:
         if 0 < current_length <= max_length and current_length <= MAX_CAPTION_LENGTH:
             try:
-                # Обновляем поле в базе данных
                 cursor.execute(
                     f"UPDATE giveaways SET {field} = %s WHERE id = %s",
                     (combined_current_message, giveaway_id)
                 )
                 conn.commit()
 
-                # Удаляем сообщение пользователя
                 try:
                     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 except Exception as e:
                     logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
 
-                # Очищаем состояние
                 await state.update_data(
                     user_messages=[],
                     current_message_parts=[],
@@ -270,12 +160,10 @@ async def process_long_message_active(
                     last_message_time=None
                 )
 
-                # Обновляем опубликованные посты
                 cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
                 giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
                 await update_published_posts_active(giveaway_id, giveaway)
 
-                # Возвращаемся к меню редактирования
                 await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id, state)
                 await state.clear()
             except Exception as e:
@@ -285,11 +173,10 @@ async def process_long_message_active(
                     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 except Exception as e:
                     logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
-                # Отправляем новое сообщение вместо обновления
                 sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
-                    f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой! Не удалось обновить {field_translations[field]} 😔",
+                    f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить {field_translations[field]} 😔",
                     reply_markup=keyboard.as_markup(),
                     message_id=None,
                     parse_mode='HTML',
@@ -297,14 +184,12 @@ async def process_long_message_active(
                 )
                 await state.update_data(last_message_id=sent_message.message_id)
         else:
-            # Удаляем предыдущее сообщение бота, если оно существует
             if last_message_id:
                 try:
                     await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
                 except Exception as e:
                     logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
-            # Отправляем новое сообщение с актуальной длиной
             error_message = (
                 f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} должно быть от 1 до {max_length} символов. Текущее: {current_length}\n{formatting_guide}"
                 if current_length > max_length or not combined_current_message
@@ -326,13 +211,10 @@ async def process_long_message_active(
             )
         return
 
-    # Подсчет общей длины всех сообщений
     total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
     total_length += current_length
 
-    # Проверяем превышение лимита
     if total_length > max_length or not combined_current_message or total_length > MAX_CAPTION_LENGTH:
-        # Удаляем предыдущее сообщение бота, если оно существует
         if last_message_id:
             try:
                 await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
@@ -347,7 +229,6 @@ async def process_long_message_active(
             last_message_time=current_time
         )
 
-        # Отправляем новое сообщение с актуальной длиной
         error_message = (
             f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов). Общая длина: {total_length}\nОтправьте новое {field_translations[field].lower()}.\n{formatting_guide}"
             if total_length > max_length or not combined_current_message
@@ -365,7 +246,6 @@ async def process_long_message_active(
         await state.update_data(last_message_id=sent_message.message_id)
         return
 
-    # Если лимит не превышен
     try:
         cursor.execute(
             f"UPDATE giveaways SET {field} = %s WHERE id = %s",
@@ -373,7 +253,6 @@ async def process_long_message_active(
         )
         conn.commit()
 
-        # Удаляем сообщение пользователя
         try:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         except Exception as e:
@@ -385,12 +264,10 @@ async def process_long_message_active(
             last_message_time=None
         )
 
-        # Обновляем опубликованные посты
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
         giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
         await update_published_posts_active(giveaway_id, giveaway)
 
-        # Возвращаемся к меню редактирования
         await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id, state)
         await state.clear()
     except Exception as e:
@@ -400,11 +277,10 @@ async def process_long_message_active(
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         except Exception as e:
             logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
-        # Отправляем новое сообщение вместо обновления
         sent_message = await send_message_auto(
             bot,
             message.chat.id,
-            f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой! Не удалось обновить {field_translations[field]} 😔",
+            f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить {field_translations[field]} 😔",
             reply_markup=keyboard.as_markup(),
             message_id=None,
             parse_mode='HTML',
@@ -441,17 +317,20 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
 
             image_url = None
+            media_type = None
             if giveaway['media_type'] and giveaway['media_file_id']:
                 image_url = giveaway['media_file_id']
+                media_type = giveaway['media_type']
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, giveaway['media_file_id'])
+            else:
+                image_url = DEFAULT_IMAGE_URL
 
             for message in published_messages:
                 chat_id = message['chat_id']
                 message_id = message['message_id']
 
                 try:
-                    # Всегда используем send_message_auto для единообразия
                     await send_message_auto(
                         bot,
                         chat_id,
@@ -459,7 +338,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         reply_markup=keyboard.as_markup(),
                         message_id=message_id,
                         parse_mode='HTML',
-                        image_url=image_url
+                        image_url=image_url,
+                        media_type=media_type
                     )
                     logger.info(f"Обновлен пост {message_id} в чате {chat_id}")
 
@@ -483,11 +363,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=None,
                 message_id=message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None
             )
             return
 
-        # Очищаем данные сообщений при возврате в меню
         if state:
             await state.update_data(
                 user_messages=[],
@@ -502,11 +382,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="🏆 Победители", callback_data=f"edit_winner_count_active:{giveaway_id}")
         keyboard.button(text="⏰ Дата", callback_data=f"change_end_date_active:{giveaway_id}")
         keyboard.button(text="🖼️ Медиа", callback_data=f"manage_media_active:{giveaway_id}")
-        keyboard.button(text="Кнопка 'Участвовать'", callback_data=f"edit_button_active:{giveaway_id}")
+        keyboard.button(text="🔗 Кнопка", callback_data=f"edit_button_active:{giveaway_id}")
         keyboard.button(text="◀️ Назад", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(2, 2, 2, 1)
 
-        # Определяем тип медиа для отображения
         media_display = "Медиа: отсутствует"
         if giveaway['media_type']:
             if giveaway['media_type'] == 'photo':
@@ -526,18 +405,19 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         giveaway_info = f"""<b>Название:</b> {giveaway['name']}
-<b>Описание:\n</b> {giveaway['description']}
+    <b>Описание:\n</b> {giveaway['description']}
 
-{dop_info}
+    {dop_info}
 
-<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
-"""
+    <tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
+    """
 
         try:
-            # Проверяем наличие медиа
             image_url = None
+            media_type = None
             if giveaway['media_type'] and giveaway['media_file_id']:
                 image_url = giveaway['media_file_id']
+                media_type = giveaway['media_type']
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, giveaway['media_file_id'])
             else:
@@ -550,7 +430,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=message_id,
                 parse_mode='HTML',
-                image_url=image_url
+                image_url=image_url,
+                media_type=media_type
             )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
@@ -561,7 +442,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=None,
                 message_id=message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None
             )
 
     @dp.callback_query(lambda c: c.data == "ignore")
@@ -578,6 +460,16 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
+                await send_message_auto(
+                    bot,
+                    callback_query.from_user.id,
+                    "🔍 Розыгрыш не найден 😕",
+                    reply_markup=None,
+                    message_id=callback_query.message.message_id,
+                    parse_mode='HTML',
+                    image_url=DEFAULT_IMAGE_URL,
+                    media_type=None
+                )
                 return
 
             cursor.execute("SELECT COUNT(*) FROM participations WHERE giveaway_id = %s", (giveaway_id,))
@@ -614,9 +506,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             giveaway_info = f"""{formatted_description}
 
-<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
-{channel_info}
-"""
+    <tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
+    {channel_info}
+    """
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Редактировать", callback_data=f"edit_active_post:{giveaway_id}")
@@ -627,17 +519,17 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="◀️ Назад", callback_data="created_giveaways")
             keyboard.adjust(1)
 
-            await bot.answer_callback_query(callback_query.id)
-
-            # Проверяем наличие медиа
             image_url = None
+            media_type = None
             if giveaway['media_type'] and giveaway['media_file_id']:
                 image_url = giveaway['media_file_id']
+                media_type = giveaway['media_type']
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, giveaway['media_file_id'])
             else:
                 image_url = DEFAULT_IMAGE_URL
 
+            await bot.answer_callback_query(callback_query.id)
             await send_message_auto(
                 bot,
                 callback_query.from_user.id,
@@ -645,12 +537,23 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=image_url
+                image_url=image_url,
+                media_type=media_type
             )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка загрузки розыгрыша 😔")
+            await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                "⚠️ Упс Что-то пошло не так. Попробуйте снова 😔",
+                reply_markup=None,
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_force_end_giveaway:'))
     async def process_confirm_force_end_giveaway(callback_query: CallbackQuery):
@@ -673,9 +576,25 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
     @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
     async def process_force_end_giveaway(callback_query: CallbackQuery):
-        global image_url, keyboard, result_message
+        global result_message, keyboard, image_url, media_type
         giveaway_id = callback_query.data.split(':')[1]
         try:
+            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            columns = [desc[0] for desc in cursor.description]
+            giveaway = dict(zip(columns, cursor.fetchone()))
+            if not giveaway:
+                raise Exception("Розыгрыш не найден")
+
+            image_url = None
+            media_type = None
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                image_url = giveaway['media_file_id']
+                media_type = giveaway['media_type']
+                if not image_url.startswith('http'):
+                    image_url = await get_file_url(bot, giveaway['media_file_id'])
+            else:
+                image_url = DEFAULT_IMAGE_URL
+
             await send_message_auto(
                 bot,
                 callback_query.from_user.id,
@@ -683,17 +602,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=None,
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None
             )
 
-            # Получаем данные о розыгрыше
-            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
-            columns = [desc[0] for desc in cursor.description]
-            giveaway = dict(zip(columns, cursor.fetchone()))
-            if not giveaway:
-                raise Exception("Розыгрыш не найден")
-
-            # Получаем участников
             participants = []
             limit = 1000
             offset = 0
@@ -710,15 +622,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 if len(batch) < limit:
                     break
 
-            # Выбираем победителей
             winners = await select_random_winners(
                 bot, participants, min(len(participants), giveaway['winner_count']), giveaway_id, conn, cursor
             )
 
-            # Завершаем розыгрыш
             await end_giveaway(bot=bot, giveaway_id=giveaway_id, conn=conn, cursor=cursor, notify_creator=False)
 
-            # Формируем сообщение
             participant_counter_tasks = get_json_field(cursor,
                                                        "SELECT participant_counter_tasks FROM giveaways WHERE id = %s",
                                                        (giveaway_id,))
@@ -780,13 +689,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
-            # Определяем URL изображения
-            image_url = None
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                image_url = giveaway['media_file_id']
-                if not image_url.startswith('http'):
-                    image_url = await get_file_url(bot, giveaway['media_file_id'])
-
             await bot.answer_callback_query(callback_query.id)
             if image_url:
                 await send_message_auto(
@@ -796,7 +698,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     reply_markup=keyboard.as_markup(),
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
-                    image_url=image_url
+                    image_url=image_url,
+                    media_type=media_type
                 )
             else:
                 await bot.edit_message_text(
@@ -810,7 +713,6 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка при завершении 😔")
-            # Проверяем, завершился ли розыгрыш
             cursor.execute("SELECT is_active, is_completed FROM giveaways WHERE id = %s", (giveaway_id,))
             result = cursor.fetchone()
             if result and result[0] == 'false' and result[1] == 'true':
@@ -818,11 +720,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await send_message_auto(
                     bot,
                     callback_query.from_user.id,
-                    result_message,  # Используем сформированное сообщение
+                    result_message,
                     reply_markup=keyboard.as_markup(),
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
-                    image_url=image_url
+                    image_url=image_url,
+                    media_type=media_type
                 )
             else:
                 await send_message_auto(
@@ -832,7 +735,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     reply_markup=None,
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
-                    image_url=DEFAULT_IMAGE_URL
+                    image_url=DEFAULT_IMAGE_URL,
+                    media_type=None
                 )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_active_post:'))
@@ -862,9 +766,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         message_text = (
             f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Текущее название: <b>{current_name}</b>\n\n"
-            f"Отправьте новое название (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
+            f"Отправьте новое название (до {MAX_NAME_LENGTH} символов):"
             if current_name else
-            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Отправьте название розыгрыша (до {MAX_NAME_LENGTH} символов):\n{FORMATTING_GUIDE}"
+            f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Отправьте название розыгрыша (до {MAX_NAME_LENGTH} символов):"
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
@@ -922,10 +826,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.adjust(1)
 
         message_text = (
-            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание: {current_description}\n\n"
-            f"Отправьте новое описание (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}"
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Текущее описание:\n{current_description}\n\n"
+            f"Отправьте новое описание (до {MAX_DESCRIPTION_LENGTH} символов)\n{FORMATTING_GUIDE2}"
             if current_description else
-            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Отправьте описание розыгрыша (до {MAX_DESCRIPTION_LENGTH} символов):\n{FORMATTING_GUIDE2}"
+            f"<tg-emoji emoji-id='5282843764451195532'>🖥</tg-emoji> Отправьте описание розыгрыша (до {MAX_DESCRIPTION_LENGTH} символов)\n{FORMATTING_GUIDE2}"
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
@@ -984,7 +888,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         message_text = (
             f"<tg-emoji emoji-id='5271604874419647061'>🔗</tg-emoji> Текущий текст кнопки: <b>{current_button}</b>\n\n"
-            f"Отправьте новый текст для кнопки (до 50 символов):\n{FORMATTING_GUIDE}"
+            f"Отправьте новый текст для кнопки (до 50 символов)"
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
@@ -1063,7 +967,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await send_message_auto(
                     bot,
                     message.chat.id,
-                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Слишком много победителей! Максимум {MAX_WINNERS}",
+                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Слишком много победителей Максимум {MAX_WINNERS}",
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
@@ -1079,7 +983,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 for place in range(current_winner_count + 1, new_winner_count + 1):
                     cursor.execute(
                         "INSERT INTO congratulations (giveaway_id, place, message) VALUES (%s, %s, %s)",
-                        (giveaway_id, place, f"🎉 Поздравляем! Вы заняли {place} место!")
+                        (giveaway_id, place, f"🎉 Поздравляем Вы заняли {place} место")
                     )
             elif new_winner_count < current_winner_count:
                 cursor.execute(
@@ -1101,7 +1005,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await send_message_auto(
                 bot,
                 message.chat.id,
-                "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число! Например, 3",
+                "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число Например, 3",
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
@@ -1182,7 +1086,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
-            html_message = f"""<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты! Используйте ДД.ММ.ГГГГ ЧЧ:ММ
+            html_message = f"""<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты Используйте ДД.ММ.ГГГГ ЧЧ:ММ
 
 <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
 """
@@ -1216,9 +1120,19 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
         giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
 
-        media_file_id = giveaway.get('media_file_id')
-        media_type = giveaway.get('media_type')
-        has_media = media_file_id and media_type
+        if not giveaway:
+            await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                "🔍 Розыгрыш не найден 😕",
+                reply_markup=None,
+                message_id=callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None
+            )
+            await bot.answer_callback_query(callback_query.id)
+            return
 
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_media_active)
@@ -1228,15 +1142,18 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="🗑️ Удалить", callback_data=f"delete_media_active:{giveaway_id}")
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
         keyboard.adjust(1, 1)
+
         message_text = (
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {'Фото' if media_type == 'photo' else 'GIF' if media_type == 'gif' else 'Видео'}.\n\nОтправьте новое или удалите текущее."
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Текущее медиа: {'Фото' if giveaway['media_type'] == 'photo' else 'GIF' if giveaway['media_type'] == 'gif' else 'Видео'}.\n\nОтправьте новое или удалите текущее."
             if giveaway['media_type'] else
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!"
+            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)"
         )
 
         image_url = None
+        media_type = None
         if giveaway['media_type'] and giveaway['media_file_id']:
             image_url = giveaway['media_file_id']
+            media_type = giveaway['media_type']
             if not image_url.startswith('http'):
                 image_url = await get_file_url(bot, giveaway['media_file_id'])
         else:
@@ -1249,7 +1166,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML',
-            image_url=image_url
+            image_url=image_url,
+            media_type=media_type
         )
 
         await bot.answer_callback_query(callback_query.id)
@@ -1281,7 +1199,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await send_message_auto(
                     bot,
                     message.chat.id,
-                    "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Отправьте фото, GIF или видео!",
+                    "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Отправьте фото, GIF или видео",
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
@@ -1298,7 +1216,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await send_message_auto(
                     bot,
                     message.chat.id,
-                    f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой! Максимум {MAX_MEDIA_SIZE_MB} МБ",
+                    f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой Максимум {MAX_MEDIA_SIZE_MB} МБ",
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
@@ -1358,7 +1276,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await send_message_auto(
                 bot,
                 callback_query.from_user.id,
-                f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)!",
+                f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)",
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
