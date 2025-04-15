@@ -4,18 +4,12 @@ from aiogram.types import CallbackQuery
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.exceptions import TelegramBadRequest
 import logging
-from utils import send_message_auto, count_message_length
+from utils import send_message_auto, count_length_with_custom_emoji, strip_html_tags, get_file_url
 import math
-import re
 
 # Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
-def strip_html_tags(text):
-    """Удаляет HTML-теги из текста, оставляя только видимую часть."""
-    clean_text = re.sub(r'<[^>]+>', '', text)
-    return clean_text
 
 def replace_variables(description, winner_count, end_time):
     """Заменяет переменные {win} и {data} в описании на актуальные значения."""
@@ -27,7 +21,7 @@ def replace_variables(description, winner_count, end_time):
 def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
     async def process_my_participations(callback_query: CallbackQuery, state: FSMContext):
-        global previous_message_type, last_message_id
+        global last_message_id, previous_message_type
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if callback_query.data.startswith(
@@ -66,7 +60,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             total_participations = active_participations + won_participations
             if total_participations == 0:
                 message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> У вас нет активных участий или выигранных розыгрышей."
-                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+                current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
                 keyboard = InlineKeyboardBuilder()
                 keyboard.button(text="◀️ Назад", callback_data="back_to_main_menu")
                 await bot.answer_callback_query(callback_query.id)
@@ -78,6 +72,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                    media_type=None,
                     previous_message_type=previous_message_type
                 )
                 if sent_message:
@@ -180,7 +175,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_text += f" (Страница {current_page} из {total_pages}):"
             else:
                 message_text += ":"
-            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
 
             await bot.answer_callback_query(callback_query.id)
             sent_message = await send_message_auto(
@@ -191,6 +186,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                media_type=None,
                 previous_message_type=previous_message_type
             )
             if sent_message:
@@ -202,7 +198,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"Error in process_my_participations: {str(e)}")
             message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> Произошла ошибка при получении ваших участий."
-            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data="back_to_main_menu")
             await bot.answer_callback_query(callback_query.id, text="Произошла ошибка при получении ваших участий.")
@@ -214,6 +210,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                media_type=None,
                 previous_message_type=previous_message_type
             )
             if sent_message:
@@ -249,7 +246,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             if not giveaway:
                 message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> Розыгрыш не найден."
-                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+                current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
                 keyboard = InlineKeyboardBuilder()
                 keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
                 await bot.answer_callback_query(callback_query.id, text="Розыгрыш не найден.")
@@ -261,6 +258,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                    media_type=None,
                     previous_message_type=previous_message_type
                 )
                 if sent_message:
@@ -304,21 +302,30 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
 
             # Формируем текст с превью медиа
-            placeholder_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
-            media_url = giveaway['media_file_id'] if giveaway['media_file_id'] and giveaway['media_type'] else placeholder_url
+            image_url = None
+            media_type = None
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                image_url = giveaway['media_file_id']
+                media_type = giveaway['media_type']
+                if not image_url.startswith('http'):
+                    image_url = await get_file_url(bot, giveaway['media_file_id'])
+            else:
+                image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
+                media_type = None
+
             giveaway_info = (
-                f"<a href=\"{media_url}\"> </a>"
+                f"<a href=\"{image_url}\"> </a>"
                 f"{description_with_vars}\n\n"
                 f"<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> <b>Дата завершения:</b> {giveaway['end_time'].strftime('%d.%m.%Y %H:%M')} по МСК"
             )
 
             if place is not None:
                 giveaway_info += (
-                    f"\n\n<tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> <b>Вы выиграли {place} место!</b>"
+                    f"\n\n<tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji> <b>Вы выиграли {place} место</b>"
                     f"\n<tg-emoji emoji-id='5253742260054409879'>✉️</tg-emoji> <b>Сообщение для вас:</b>\n{congrats_message}"
                 )
 
-            current_message_type = 'photo' if count_message_length(giveaway_info) <= 800 else 'image'
+            current_message_type = 'photo' if count_length_with_custom_emoji(giveaway_info) <= 800 else 'image'
 
             keyboard = InlineKeyboardBuilder()
             if giveaway['is_active']:
@@ -344,7 +351,8 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url=media_url,
+                image_url=image_url,
+                media_type=media_type,
                 previous_message_type=previous_message_type
             )
             if sent_message:
@@ -356,7 +364,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"Error in process_giveaway_details: {str(e)}")
             message_text = "<tg-emoji emoji-id='5199885118214255386'>😔</tg-emoji> Произошла ошибка при получении информации о розыгрыше."
-            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад к списку", callback_data="my_participations")
             try:
@@ -372,6 +380,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                media_type=None,
                 previous_message_type=previous_message_type
             )
             if sent_message:
