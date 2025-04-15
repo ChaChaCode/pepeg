@@ -7,33 +7,14 @@ from aiogram.fsm.storage.base import StorageKey
 import logging
 import aiohttp
 import uuid
-import boto3
-from botocore.client import Config
 from datetime import datetime
 import io
 import asyncio
-from utils import send_message_auto
+from utils import send_message_auto, s3_client, YANDEX_BUCKET_NAME, YANDEX_ENDPOINT_URL
 from created_giveaways import build_community_selection_ui
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-# Конфигурация Yandex Cloud S3 ☁️
-YANDEX_ACCESS_KEY = 'YCAJEDluWSn-XI0tyGyfwfnVL'
-YANDEX_SECRET_KEY = 'YCPkR9H9Ucebg6L6eMGvtfKuFIcO_MK7gyiffY6H'
-YANDEX_BUCKET_NAME = 'raffle'
-YANDEX_ENDPOINT_URL = 'https://storage.yandexcloud.net'
-YANDEX_REGION = 'ru-central1'
-
-# Инициализация S3 клиента 📦
-s3_client = boto3.client(
-    's3',
-    region_name=YANDEX_REGION,
-    aws_access_key_id=YANDEX_ACCESS_KEY,
-    aws_secret_access_key=YANDEX_SECRET_KEY,
-    endpoint_url=YANDEX_ENDPOINT_URL,
-    config=Config(signature_version='s3v4')
-)
 
 class GiveawayStates(StatesGroup):
     binding_communities = State()
@@ -229,7 +210,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                         )
                         if success:
                             logging.info(f"Сообщество '{community_name}' привязано для администратора {admin_id}")
-                            notification = f"{chat_type_display.capitalize()} '{community_name}' успешно привязан! Теперь вы можете привязывать его к вашим розыгрышам."
+                            notification = f"{chat_type_display.capitalize()} '{community_name}' успешно привязан Теперь вы можете привязывать его к вашим розыгрышам."
                             # Создаём контекст состояния для администратора
                             storage_key = StorageKey(
                                 bot_id=bot.id, chat_id=admin_id_int, user_id=admin_id_int, destiny="default"
@@ -351,7 +332,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
                 if success:
                     logging.info(f"Сообщество '{community_name}' привязано для нового администратора {user_id}")
                     notification = (
-                        f"Вы стали администратором в {chat_type_display} '{community_name}'! "
+                        f"Вы стали администратором в {chat_type_display} '{community_name}' "
                         f"Теперь вы можете привязывать его к вашим розыгрышам."
                     )
                     await state.update_data(admin_notification=notification)
@@ -534,7 +515,7 @@ def register_new_public(dp: Dispatcher, bot, conn, cursor):
             await bind_community_to_giveaway(
                 giveaway_id, community_id, community_username, chat_type_db, user_id, community_name, avatar_url
             )
-            notification = f"{chat_type_display.capitalize()} '{community_username}' успешно привязан!"
+            notification = f"{chat_type_display.capitalize()} '{community_username}' успешно привязан"
             await state.update_data(admin_notification=notification)
             # Убрали вызов update_community_selection_interface, так как он вызывается в bot_added_to_chat или user_status_updated
         except Exception as e:
