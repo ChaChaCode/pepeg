@@ -206,18 +206,18 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
         return None
 
 async def send_message_auto(
-        bot: Bot,
-        chat_id: int,
-        text: str,
-        reply_markup: InlineKeyboardMarkup = None,
-        message_id: int = None,
-        parse_mode: str = 'HTML',
-        entities=None,
-        image_url: str = None,
-        previous_message_type: str = None
+    bot: Bot,
+    chat_id: int,
+    text: str,
+    reply_markup: InlineKeyboardMarkup = None,
+    message_id: int = None,
+    parse_mode: str = 'HTML',
+    entities=None,
+    image_url: str = None,
+    previous_message_type: str = None
 ) -> Message | None:
     """
-    Автоматический выбор между send_message_with_photo и send_message_with_image на основе длины текста.
+    Автоматический выбор между send_message_with_photo, send_message_with_image или send_message на основе длины текста.
     Если отправка с медиа не удалась, отправляет без медиа.
 
     Args:
@@ -229,7 +229,7 @@ async def send_message_auto(
         parse_mode: Режим парсинга ('HTML', 'Markdown', None).
         entities: Сущности сообщения (для send_message_with_image).
         image_url: URL изображения.
-        previous_message_type: Тип предыдущего сообщения (игнорируется).
+        previous_message_type: Тип предыдущего сообщения ('photo', 'image', None).
 
     Returns:
         Message | None: Отправленное сообщение или None при ошибке.
@@ -240,59 +240,69 @@ async def send_message_auto(
 
     try:
         if image_url:
-            try:
-                if current_message_type == 'photo':
-                    return await send_message_with_photo(
-                        bot=bot,
+            if current_message_type == 'photo':
+                return await send_message_with_photo(
+                    bot=bot,
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    message_id=message_id,
+                    parse_mode=parse_mode,
+                    image_url=image_url,
+                    previous_message_type=previous_message_type
+                )
+            else:
+                return await send_message_with_image(
+                    bot=bot,
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    message_id=message_id,
+                    parse_mode=parse_mode,
+                    entities=entities,
+                    image_url=image_url,
+                    previous_message_type=previous_message_type
+                )
+        else:
+            # Если image_url=None, проверяем тип предыдущего сообщения
+            if message_id and previous_message_type == 'photo':
+                try:
+                    # Пытаемся отредактировать как фото с пустой подписью или удалить и отправить новое
+                    await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                    logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как это фото, а image_url=None")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить сообщение {message_id}: {str(e)}")
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
+                )
+            elif message_id:
+                try:
+                    return await bot.edit_message_text(
                         chat_id=chat_id,
+                        message_id=message_id,
                         text=text,
                         reply_markup=reply_markup,
-                        message_id=message_id,
-                        parse_mode=parse_mode,
-                        image_url=image_url,
-                        previous_message_type=None  # Игнорируем
+                        parse_mode=parse_mode
                     )
-                else:
-                    return await send_message_with_image(
-                        bot=bot,
-                        chat_id=chat_id,
-                        text=text,
-                        reply_markup=reply_markup,
-                        message_id=message_id,
-                        parse_mode=parse_mode,
-                        entities=entities,
-                        image_url=image_url,
-                        previous_message_type=None  # Игнорируем
-                    )
-            except Exception as e:
-                if "DOCUMENT_INVALID" in str(e):
-                    logger.warning(f"Недействительное изображение {image_url}, отправка без медиа")
-                    if message_id:
-                        return await bot.edit_message_text(
-                            chat_id=chat_id,
-                            message_id=message_id,
-                            text=text,
-                            reply_markup=reply_markup,
-                            parse_mode=parse_mode
-                        )
-                    else:
+                except aiogram.exceptions.TelegramBadRequest as e:
+                    if "there is no text in the message to edit" in str(e).lower():
+                        # Если это фото, удаляем и отправляем новое текстовое сообщение
+                        try:
+                            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                            logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как это фото")
+                        except Exception as de:
+                            logger.warning(f"Не удалось удалить сообщение {message_id}: {str(de)}")
                         return await bot.send_message(
                             chat_id=chat_id,
                             text=text,
                             reply_markup=reply_markup,
                             parse_mode=parse_mode
                         )
-                logger.error(f"Ошибка в send_message_auto (медиа): {str(e)}")
-                raise
-        else:
-            if message_id:
-                return await bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=message_id,
-                    text=text,
-                    reply_markup=reply_markup,
-                    parse_mode=parse_mode
-                )
+                    else:
+                        raise
             else:
                 return await bot.send_message(
                     chat_id=chat_id,
