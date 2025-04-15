@@ -1,28 +1,12 @@
 import logging
 import math
-import re
 from aiogram import Bot, Dispatcher
 from aiogram.types import CallbackQuery, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.fsm.context import FSMContext
-from utils import send_message_auto, count_message_length
+from utils import send_message_auto, count_length_with_custom_emoji, strip_html_tags, get_file_url
 
 logger = logging.getLogger(__name__)
-
-def strip_html_tags(text: str) -> str:
-    """Удаляет HTML-теги из текста 🧹"""
-    return re.sub(r'<[^>]+>', '', text)
-
-async def get_file_url(bot: Bot, file_id: str) -> str:
-    """Получает URL файла по его file_id."""
-    try:
-        file = await bot.get_file(file_id)
-        file_path = file.file_path
-        file_url = f"https://api.telegram.org/file/bot{bot.token}/{file_path}"
-        return file_url
-    except Exception as e:
-        logger.error(f"🚫 Ошибка получения URL файла {file_id}: {str(e)}")
-        raise
 
 def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрация обработчиков для истории розыгрышей."""
@@ -51,7 +35,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             total_giveaways = cursor.fetchone()[0]
             if total_giveaways == 0:
                 message_text = "📭 Пока нет завершенных розыгрышей."
-                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+                current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
                 keyboard = InlineKeyboardBuilder()
                 keyboard.button(text="В меню", callback_data="back_to_main_menu")
                 await bot.answer_callback_query(callback_query.id)
@@ -63,6 +47,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                    media_type=None,
                     previous_message_type=previous_message_type
                 )
                 if sent_message:
@@ -117,7 +102,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 "<tg-emoji emoji-id='5197630131534836123'>🥳</tg-emoji> Завершенные розыгрыши\n\n"
                 f"Всего было завершено {total_giveaways} розыгрышей"
             )
-            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
 
             await bot.answer_callback_query(callback_query.id)
             sent_message = await send_message_auto(
@@ -128,6 +113,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                media_type=None,
                 previous_message_type=previous_message_type
             )
             if sent_message:
@@ -138,11 +124,11 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await bot.answer_callback_query(callback_query.id, text="Упс! Что-то пошло не так 😔")
+            await bot.answer_callback_query(callback_query.id, text="Упс Что-то пошло не так 😔")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
-            message_text = "⚠️ Упс! Что-то пошло не так. Попробуйте снова!"
-            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            message_text = "⚠️ Упс Что-то пошло не так. Попробуйте снова"
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
             sent_message = await send_message_auto(
                 bot,
                 chat_id=user_id,
@@ -151,6 +137,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                media_type=None,
                 previous_message_type=previous_message_type
             )
             if sent_message:
@@ -188,7 +175,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 keyboard.button(text="📜 Назад к списку", callback_data="giveaway_history")
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден или не завершен 😕")
                 message_text = "🔍 Розыгрыш не найден или не завершен 😕"
-                current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+                current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
                 sent_message = await send_message_auto(
                     bot,
                     chat_id=user_id,
@@ -197,6 +184,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                    media_type=None,
                     previous_message_type=previous_message_type
                 )
                 if sent_message:
@@ -206,8 +194,10 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     )
                 return
 
-            giveaway_id, name, description, end_time, winner_count, media_type, media_file_id = giveaway
-            end_time_str = end_time.strftime("%d.%m.%Y") if end_time else "Не указана"
+            # Преобразуем результат в словарь
+            columns = ['id', 'name', 'description', 'end_time', 'winner_count', 'media_type', 'media_file_id']
+            giveaway = dict(zip(columns, giveaway))
+            end_time_str = giveaway['end_time'].strftime("%d.%m.%Y") if giveaway['end_time'] else "Не указана"
 
             # Получение списка победителей
             cursor.execute(
@@ -233,9 +223,9 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             # Формирование информации о розыгрыше
             giveaway_info = (
-                f"{description or 'Описание отсутствует'}\n\n"
+                f"{giveaway['description'] or 'Описание отсутствует'}\n\n"
                 f"<b>Дата завершения:</b> {end_time_str}\n"
-                f"<b>Количество победителей:</b> {winner_count}\n\n"
+                f"<b>Количество победителей:</b> {giveaway['winner_count']}\n\n"
                 f"<b>Победители:</b>\n<blockquote expandable>{winners_text}</blockquote>"
             )
 
@@ -248,14 +238,19 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="📜 Назад к списку", callback_data="giveaway_history")
             keyboard.adjust(1)
 
-            # Определяем image_url
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
-            if media_type and media_file_id:
-                image_url = media_file_id
+            # Определяем image_url и media_type
+            image_url = None
+            media_type = None
+            if giveaway['media_type'] and giveaway['media_file_id']:
+                image_url = giveaway['media_file_id']
+                media_type = giveaway['media_type']
                 if not image_url.startswith('http'):
-                    image_url = await get_file_url(bot, media_file_id)
+                    image_url = await get_file_url(bot, giveaway['media_file_id'])
+            else:
+                image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
+                media_type = None
 
-            current_message_type = 'photo' if count_message_length(giveaway_info) <= 800 else 'image'
+            current_message_type = media_type or ('photo' if count_length_with_custom_emoji(giveaway_info) <= 800 else 'image')
 
             await bot.answer_callback_query(callback_query.id)
             sent_message = await send_message_auto(
@@ -266,6 +261,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url=image_url,
+                media_type=media_type,
                 previous_message_type=previous_message_type
             )
             if sent_message:
@@ -277,11 +273,11 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка при просмотре завершенного розыгрыша: {str(e)}")
             conn.rollback()
-            await bot.answer_callback_query(callback_query.id, text="Упс! Что-то сломалось 😔")
+            await bot.answer_callback_query(callback_query.id, text="Упс Что-то сломалось 😔")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
-            message_text = "⚠️ Упс! Что-то пошло не так. Попробуйте снова!"
-            current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+            message_text = "⚠️ Упс Что-то пошло не так. Попробуйте снова"
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
             sent_message = await send_message_auto(
                 bot,
                 chat_id=user_id,
@@ -290,6 +286,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
+                media_type=None,
                 previous_message_type=previous_message_type
             )
             if sent_message:
