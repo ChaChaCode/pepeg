@@ -13,7 +13,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
-from utils import check_and_end_giveaways, check_usernames, send_message_auto, count_message_length
+from utils import check_and_end_giveaways, check_usernames, send_message_auto, count_length_with_custom_emoji
 from history_practical import register_history_handlers
 from active_giveaways import register_active_giveaways_handlers
 from create_giveaway import register_create_giveaway_handlers
@@ -26,28 +26,22 @@ from new_public import register_new_public
 
 logger = logging.getLogger(__name__)
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Инициализация бота и диспетчера
 BOT_TOKEN = '7412394623:AAEkxMj-WqKVpPfduaY8L88YO1I_7zUIsQg'
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Переменные для хранения данных
 user_selected_communities = {}
 paid_users = {}
 
-# Система защиты от спама
 user_actions = defaultdict(list)
 blocked_users = {}
 
-# Определение состояний FSM
 class MainMenuStates(StatesGroup):
     main_menu = State()
 
-# Middleware для проверки спама
 class SpamProtectionMiddleware(BaseMiddleware):
     async def __call__(self, handler, event, data):
         user_id = None
@@ -59,7 +53,6 @@ class SpamProtectionMiddleware(BaseMiddleware):
         if user_id:
             current_time = time()
 
-            # Проверяем блокировку
             if user_id in blocked_users:
                 if current_time < blocked_users[user_id]:
                     logging.info(f"Пользователь {user_id} заблокирован до {blocked_users[user_id]}")
@@ -79,16 +72,13 @@ class SpamProtectionMiddleware(BaseMiddleware):
                     del blocked_users[user_id]
                     user_actions[user_id].clear()
 
-            # Очищаем действия старше 1 секунды
             user_actions[user_id] = [t for t in user_actions[user_id] if current_time - t < 1]
             actions_count = len(user_actions[user_id])
 
-            # Добавляем текущее действие
             user_actions[user_id].append(current_time)
 
             logging.info(f"Пользователь {user_id}: {actions_count + 1} действий за последнюю секунду")
 
-            # Проверяем лимит
             if len(user_actions[user_id]) > 10:
                 blocked_users[user_id] = current_time + 60
                 logging.info(f"Пользователь {user_id} заблокирован за спам до {blocked_users[user_id]}")
@@ -104,7 +94,6 @@ class SpamProtectionMiddleware(BaseMiddleware):
                     )
                 return
 
-        # Передаем управление следующему обработчику
         return await handler(event, data)
 
 @dp.message(Command("start"))
@@ -139,7 +128,6 @@ async def cmd_start(message: types.Message, state: FSMContext):
     )
     has_active_giveaways = cursor.fetchone()[0] > 0
 
-    # Проверяем активные участия и выигранные розыгрыши
     cursor.execute(
         """
         SELECT COUNT(*) 
@@ -188,10 +176,9 @@ async def cmd_start(message: types.Message, state: FSMContext):
 
     keyboard.adjust(1)
 
-    message_text = "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать! Выберите действие:"
-    current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+    message_text = "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать Выберите действие:"
+    current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
 
-    # Получаем данные состояния
     data = await state.get_data()
     previous_message_type = data.get('previous_message_type')
     last_message_id = data.get('last_message_id')
@@ -239,7 +226,6 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     )
     has_active_giveaways = cursor.fetchone()[0] > 0
 
-    # Проверяем активные участия и выигранные розыгрыши
     cursor.execute(
         """
         SELECT COUNT(*) 
@@ -289,9 +275,8 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     keyboard.adjust(1)
 
     message_text = "<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Выберите действие:"
-    current_message_type = 'photo' if count_message_length(message_text) <= 800 else 'image'
+    current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
 
-    # Получаем данные состояния
     data = await state.get_data()
     previous_message_type = data.get('previous_message_type')
     last_message_id = data.get('last_message_id', callback_query.message.message_id)
@@ -314,11 +299,9 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         )
         await state.set_state(MainMenuStates.main_menu)
 
-# Регистрация middleware
 dp.message.middleware(SpamProtectionMiddleware())
 dp.callback_query.middleware(SpamProtectionMiddleware())
 
-# Регистрация обработчиков из модулей
 register_history_handlers(dp, bot, conn, cursor)
 register_active_giveaways_handlers(dp, bot, conn, cursor)
 register_create_giveaway_handlers(dp, bot, conn, cursor)
@@ -376,9 +359,8 @@ async def cmd_help(message: types.Message, state: FSMContext):
     keyboard.button(text="🏠 В главное меню", callback_data="back_to_main_menu")
     keyboard.adjust(1)
 
-    current_message_type = 'image' if count_message_length(help_text) > 800 else 'photo'
+    current_message_type = 'image' if count_length_with_custom_emoji(help_text) > 800 else 'photo'
 
-    # Получаем данные состояния
     data = await state.get_data()
     previous_message_type = data.get('previous_message_type')
     last_message_id = data.get('last_message_id')
