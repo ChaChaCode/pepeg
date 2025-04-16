@@ -192,11 +192,7 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
 
     try:
         if message_id and previous_message_type and previous_message_type != current_message_type:
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                logger.info(f"Удалено сообщение {message_id} в чате {chat_id}, так как тип сообщения изменился на {current_message_type}")
-            except Exception as e:
-                logger.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}: {str(e)}")
+            logger.info(f"Тип медиа изменился для сообщения {message_id} на {current_message_type}, отправляем новое")
             return await bot.send_message(
                 chat_id=chat_id,
                 text=full_text,
@@ -228,11 +224,7 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
                         link_preview_options=link_preview_options
                     )
                 elif "there is no text in the message to edit" in str(e).lower():
-                    try:
-                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                        logger.info(f"Удалено сообщение {message_id} в чате {chat_id} из-за попытки редактирования фото")
-                    except Exception as de:
-                        logger.warning(f"Не удалось удалить сообщение {message_id}: {str(de)}")
+                    logger.info(f"Сообщение {message_id} содержит медиа, отправляем новое")
                     return await bot.send_message(
                         chat_id=chat_id,
                         text=full_text,
@@ -459,7 +451,9 @@ async def send_message_auto(
 ) -> Message | None:
     """
     Автоматический выбор между отправкой фото, видео, GIF или текста на основе типа медиа и длины текста.
+    Если текст слишком длинный для медиа, переключается на image.
     Если отправка с медиа не удалась, отправляет без медиа.
+    Удаляет предыдущее сообщение при переходе с photo/video/animation/gif (≤800) на image (1024-2500).
 
     Args:
         bot: Экземпляр бота.
@@ -470,15 +464,37 @@ async def send_message_auto(
         parse_mode: Режим парсинга ('HTML', 'Markdown', None).
         entities: Сущности сообщения (для send_message_with_image).
         image_url: URL медиа.
-        media_type: Тип медиа ('photo', 'video', 'animation', None).
-        previous_message_type: Тип предыдущего сообщения ('photo', 'video', 'animation', 'image', None).
+        media_type: Тип медиа ('photo', 'video', 'animation', 'gif', None).
+        previous_message_type: Тип предыдущего сообщения ('photo', 'video', 'animation', 'gif', 'image', None).
 
     Returns:
         Message | None: Отправленное сообщение или None при ошибке.
     """
     message_length = count_length_with_custom_emoji(text)
-    current_message_type = media_type or ('photo' if message_length <= 800 else 'image')
+    caption_limit = 1024
+    max_image_length = 2500
+
+    # Map 'gif' to 'animation' for consistency
+    normalized_media_type = 'animation' if media_type == 'gif' else media_type
+    normalized_previous_type = 'animation' if previous_message_type == 'gif' else previous_message_type
+
+    # Determine message type: prioritize image for long captions
+    if normalized_media_type in ['photo', 'video', 'animation'] and message_length > caption_limit and message_length <= max_image_length:
+        current_message_type = 'image'
+        logger.info(f"Переключено на тип image для сообщения {message_id or 'нового'} из-за длинного текста ({message_length} > {caption_limit}, ≤ {max_image_length})")
+    else:
+        current_message_type = normalized_media_type or ('photo' if message_length <= 800 else 'image')
+
     logger.info(f"send_message_auto: chat_id={chat_id}, message_id={message_id}, image_url={image_url}, type={current_message_type}")
+
+    # Delete previous message if switching from photo/video/animation/gif (≤800) to image (1024-2500)
+    if (message_id and normalized_previous_type in ['photo', 'video', 'animation'] and
+        current_message_type == 'image' and message_length > caption_limit and message_length <= max_image_length):
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            logger.info(f"Удалено сообщение {message_id} из-за смены типа на image для длинного текста ({message_length} символов)")
+        except Exception as e:
+            logger.warning(f"Не удалось удалить сообщение {message_id}: {str(e)}")
 
     try:
         if image_url:
@@ -491,7 +507,7 @@ async def send_message_auto(
                     message_id=message_id,
                     parse_mode=parse_mode,
                     image_url=image_url,
-                    previous_message_type=previous_message_type
+                    previous_message_type=normalized_previous_type
                 )
             elif current_message_type == 'video':
                 return await send_message_with_video(
@@ -502,7 +518,7 @@ async def send_message_auto(
                     message_id=message_id,
                     parse_mode=parse_mode,
                     video_url=image_url,
-                    previous_message_type=previous_message_type
+                    previous_message_type=normalized_previous_type
                 )
             elif current_message_type == 'animation':
                 return await send_message_with_animation(
@@ -513,9 +529,9 @@ async def send_message_auto(
                     message_id=message_id,
                     parse_mode=parse_mode,
                     animation_url=image_url,
-                    previous_message_type=previous_message_type
+                    previous_message_type=normalized_previous_type
                 )
-            else:
+            elif current_message_type == 'image':
                 return await send_message_with_image(
                     bot=bot,
                     chat_id=chat_id,
@@ -525,7 +541,7 @@ async def send_message_auto(
                     parse_mode=parse_mode,
                     entities=entities,
                     image_url=image_url,
-                    previous_message_type=previous_message_type
+                    previous_message_type=normalized_previous_type
                 )
         else:
             if message_id:
