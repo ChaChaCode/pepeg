@@ -675,12 +675,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         giveaway_info = f"""<b>Название:</b> {giveaway['name']}
-    <b>Описание:\n</b> {giveaway['description']}
+<b>Описание:\n</b>{giveaway['description']}
 
-    {dop_info}
+{dop_info}
 
-    <tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
-    """
+<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
+"""
 
         image_url = None
         media_type = None
