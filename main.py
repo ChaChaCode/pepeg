@@ -180,7 +180,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
 
     data = await state.get_data()
-    previous_message_type = data.get('previous_message_type')
+    previous_message_length = data.get('previous_message_length', 'short')
     last_message_id = data.get('last_message_id')
 
     sent_message = await send_message_auto(
@@ -191,7 +191,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         message_id=last_message_id,
         parse_mode="HTML",
         image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-        previous_message_type=previous_message_type
+        previous_message_length=previous_message_length
     )
 
     if sent_message:
@@ -278,7 +278,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
 
     data = await state.get_data()
-    previous_message_type = data.get('previous_message_type')
+    previous_message_length = data.get('previous_message_length', 'short')
     last_message_id = data.get('last_message_id', callback_query.message.message_id)
 
     sent_message = await send_message_auto(
@@ -289,7 +289,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
         message_id=last_message_id,
         parse_mode="HTML",
         image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-        previous_message_type=previous_message_type
+        previous_message_length=previous_message_length
     )
 
     if sent_message:
@@ -362,7 +362,7 @@ async def cmd_help(message: types.Message, state: FSMContext):
     current_message_type = 'image' if count_length_with_custom_emoji(help_text) > 1024 else 'photo'
 
     data = await state.get_data()
-    previous_message_type = data.get('previous_message_type')
+    previous_message_length = data.get('previous_message_length', 'short')
     last_message_id = data.get('last_message_id')
 
     sent_message = await send_message_auto(
@@ -373,7 +373,7 @@ async def cmd_help(message: types.Message, state: FSMContext):
         message_id=last_message_id,
         parse_mode="HTML",
         image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
-        previous_message_type=previous_message_type
+        previous_message_length=previous_message_length
     )
 
     if sent_message:
