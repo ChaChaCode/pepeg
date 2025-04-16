@@ -1,6 +1,6 @@
 from utils import end_giveaway, send_message_auto, select_random_winners, count_length_with_custom_emoji, \
     MAX_MEDIA_SIZE_MB, MAX_CAPTION_LENGTH, DEFAULT_IMAGE_URL, MAX_NAME_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_WINNERS, \
-    get_file_url, s3_client, YANDEX_BUCKET_NAME, FORMATTING_GUIDE, FORMATTING_GUIDE2
+    get_file_url, s3_client, YANDEX_BUCKET_NAME, FORMATTING_GUIDE2
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.fsm.context import FSMContext
@@ -103,6 +103,7 @@ async def process_long_message_active(
     limit_exceeded = data.get('limit_exceeded', False)
     current_message_parts = data.get('current_message_parts', [])
     last_message_time = data.get('last_message_time')
+    previous_message_type = data.get('previous_message_type', 'photo')
     new_text = message.html_text if message.text else ""
 
     current_time = datetime.now().timestamp()
@@ -138,6 +139,7 @@ async def process_long_message_active(
 
     combined_current_message = "".join(current_message_parts)
     current_length = count_length_with_custom_emoji(combined_current_message)
+    current_message_type = 'photo' if current_length <= 800 else 'image'
 
     if limit_exceeded:
         if 0 < current_length <= max_length and current_length <= MAX_CAPTION_LENGTH:
@@ -152,6 +154,14 @@ async def process_long_message_active(
                     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 except Exception as e:
                     logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+
+                # Удаляем старое сообщение бота, если тип изменился
+                if previous_message_type != current_message_type and last_message_id:
+                    try:
+                        await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                        logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message_active (успех)")
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
                 await state.update_data(
                     user_messages=[],
@@ -173,6 +183,12 @@ async def process_long_message_active(
                     await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                 except Exception as e:
                     logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+                if previous_message_type != 'photo' and last_message_id:
+                    try:
+                        await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                        logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message_active (ошибка)")
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
                 sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
@@ -180,13 +196,20 @@ async def process_long_message_active(
                     reply_markup=keyboard.as_markup(),
                     message_id=None,
                     parse_mode='HTML',
-                    image_url=image_url
+                    image_url=image_url,
+                    media_type=None,
+                    previous_message_type=previous_message_type
                 )
-                await state.update_data(last_message_id=sent_message.message_id)
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type='photo'
+                    )
         else:
             if last_message_id:
                 try:
                     await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                    logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message_active (лимит)")
                 except Exception as e:
                     logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
@@ -202,13 +225,17 @@ async def process_long_message_active(
                 reply_markup=keyboard.as_markup(),
                 message_id=None,
                 parse_mode='HTML',
-                image_url=image_url
+                image_url=image_url,
+                media_type=None,
+                previous_message_type=previous_message_type
             )
-            await state.update_data(
-                last_message_id=sent_message.message_id,
-                limit_exceeded=True,
-                last_message_time=current_time
-            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type,
+                    limit_exceeded=True,
+                    last_message_time=current_time
+                )
         return
 
     total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
@@ -218,6 +245,7 @@ async def process_long_message_active(
         if last_message_id:
             try:
                 await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message_active (лимит)")
             except Exception as e:
                 logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
@@ -241,9 +269,15 @@ async def process_long_message_active(
             reply_markup=keyboard.as_markup(),
             message_id=None,
             parse_mode='HTML',
-            image_url=image_url
+            image_url=image_url,
+            media_type=None,
+            previous_message_type=previous_message_type
         )
-        await state.update_data(last_message_id=sent_message.message_id)
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_type=current_message_type
+            )
         return
 
     try:
@@ -257,6 +291,14 @@ async def process_long_message_active(
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         except Exception as e:
             logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+
+        # Удаляем старое сообщение бота, если тип изменился
+        if previous_message_type != current_message_type and last_message_id:
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message_active (успех)")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
         await state.update_data(
             user_messages=[],
@@ -277,6 +319,12 @@ async def process_long_message_active(
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         except Exception as e:
             logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+        if previous_message_type != 'photo' and last_message_id:
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message_active (ошибка)")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
         sent_message = await send_message_auto(
             bot,
             message.chat.id,
@@ -284,9 +332,15 @@ async def process_long_message_active(
             reply_markup=keyboard.as_markup(),
             message_id=None,
             parse_mode='HTML',
-            image_url=image_url
+            image_url=image_url,
+            media_type=None,
+            previous_message_type=previous_message_type
         )
-        await state.update_data(last_message_id=sent_message.message_id)
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_type='photo'
+            )
 
 def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрирует обработчики для управления активными розыгрышами 🎁"""
@@ -294,7 +348,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     async def update_published_posts_active(giveaway_id: str, giveaway: Dict[str, Any]):
         try:
             published_messages = get_json_field(cursor, "SELECT published_messages FROM giveaways WHERE id = %s",
-                                                (giveaway_id,))
+                                               (giveaway_id,))
             if not published_messages:
                 logger.info(f"Нет опубликованных сообщений для розыгрыша {giveaway_id}")
                 return
@@ -308,6 +362,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
 
             new_post_text = f"{formatted_description}"
+            new_post_length = count_length_with_custom_emoji(new_post_text)
+            current_message_type = 'photo' if new_post_length <= 800 else 'image'
 
             keyboard = InlineKeyboardBuilder()
             button_text = giveaway.get('button', '🎉 Участвовать')
@@ -326,12 +382,24 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             else:
                 image_url = DEFAULT_IMAGE_URL
 
+            updated_published_messages = []
+
             for message in published_messages:
                 chat_id = message['chat_id']
                 message_id = message['message_id']
+                previous_message_type = message.get('message_type', 'photo')
 
                 try:
-                    await send_message_auto(
+                    # Если тип сообщения изменился или редактирование невозможно, удаляем старое сообщение
+                    if previous_message_type != current_message_type or new_post_length > MAX_CAPTION_LENGTH:
+                        try:
+                            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+                            logger.info(f"Удалено старое сообщение {message_id} в чате {chat_id} перед переопубликованием")
+                            message_id = None  # Сбрасываем message_id для отправки нового сообщения
+                        except Exception as e:
+                            logger.warning(f"Не удалось удалить сообщение {message_id} в чате {chat_id}: {str(e)}")
+
+                    sent_message = await send_message_auto(
                         bot,
                         chat_id,
                         new_post_text,
@@ -339,16 +407,42 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         message_id=message_id,
                         parse_mode='HTML',
                         image_url=image_url,
-                        media_type=media_type
+                        media_type=media_type,
+                        previous_message_type=previous_message_type
                     )
-                    logger.info(f"Обновлен пост {message_id} в чате {chat_id}")
+
+                    # Если отправлено новое сообщение, обновляем message_id
+                    if sent_message and (not message_id or message_id != sent_message.message_id):
+                        updated_published_messages.append({
+                            'chat_id': chat_id,
+                            'message_id': sent_message.message_id,
+                            'message_type': current_message_type
+                        })
+                        logger.info(f"Создано новое сообщение {sent_message.message_id} в чате {chat_id}")
+                    else:
+                        updated_published_messages.append({
+                            'chat_id': chat_id,
+                            'message_id': message_id,
+                            'message_type': current_message_type
+                        })
+                        logger.info(f"Отредактировано сообщение {message_id} в чате {chat_id}")
 
                 except Exception as e:
                     logger.error(f"🚫 Ошибка обновления поста {message_id} в чате {chat_id}: {str(e)}")
+                    updated_published_messages.append(message)  # Сохраняем старые данные в случае ошибки
                     continue
+
+            # Обновляем published_messages в базе данных
+            cursor.execute(
+                "UPDATE giveaways SET published_messages = %s WHERE id = %s",
+                (json.dumps(updated_published_messages), giveaway_id)
+            )
+            conn.commit()
+            logger.info(f"Обновлены published_messages для розыгрыша {giveaway_id}")
 
         except Exception as e:
             logger.error(f"🚫 Ошибка в update_published_posts_active для розыгрыша {giveaway_id}: {str(e)}")
+            conn.rollback()
             raise
 
     async def _show_edit_menu_active(user_id: int, giveaway_id: str, message_id: int = None, state: FSMContext = None):
@@ -356,7 +450,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         columns = [desc[0] for desc in cursor.description]
         giveaway = dict(zip(columns, cursor.fetchone()))
         if not giveaway:
-            await send_message_auto(
+            data = await state.get_data() if state else {}
+            previous_message_type = data.get('previous_message_type', 'photo')
+            sent_message = await send_message_auto(
                 bot,
                 user_id,
                 "🔍 Розыгрыш не найден 😕",
@@ -364,8 +460,14 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                media_type=None
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if sent_message and state:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type='photo'
+                )
             return
 
         if state:
@@ -412,30 +514,52 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     <tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
     """
 
-        try:
-            image_url = None
-            media_type = None
-            if giveaway['media_type'] and giveaway['media_file_id']:
-                image_url = giveaway['media_file_id']
-                media_type = giveaway['media_type']
-                if not image_url.startswith('http'):
-                    image_url = await get_file_url(bot, giveaway['media_file_id'])
-            else:
-                image_url = DEFAULT_IMAGE_URL
+        image_url = None
+        media_type = None
+        if giveaway['media_type'] and giveaway['media_file_id']:
+            image_url = giveaway['media_file_id']
+            media_type = giveaway['media_type']
+            if not image_url.startswith('http'):
+                image_url = await get_file_url(bot, giveaway['media_file_id'])
+        else:
+            image_url = DEFAULT_IMAGE_URL
 
-            await send_message_auto(
+        # Получаем данные состояния
+        data = await state.get_data() if state else {}
+        previous_message_type = data.get('previous_message_type', 'photo')
+        current_message_type = media_type or (
+            'image' if count_length_with_custom_emoji(giveaway_info) > 800 else 'photo')
+
+        try:
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type and message_id:
+                try:
+                    await bot.delete_message(chat_id=user_id, message_id=message_id)
+                    logger.info(
+                        f"Удалено старое сообщение {message_id} перед отправкой нового в _show_edit_menu_active")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
                 bot,
                 user_id,
                 giveaway_info,
                 reply_markup=keyboard.as_markup(),
-                message_id=message_id,
+                message_id=None if previous_message_type != current_message_type else message_id,
                 parse_mode='HTML',
                 image_url=image_url,
-                media_type=media_type
+                media_type=media_type,
+                previous_message_type=previous_message_type
             )
+
+            if state and sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
-            await send_message_auto(
+            sent_message = await send_message_auto(
                 bot,
                 user_id,
                 "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Ошибка загрузки меню 😔",
@@ -443,15 +567,21 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                media_type=None
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if state and sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type='photo'
+                )
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: types.CallbackQuery):
         await bot.answer_callback_query(callback_query.id)
 
     @dp.callback_query(lambda c: c.data.startswith('view_active_giveaway:'))
-    async def process_view_active_giveaway(callback_query: CallbackQuery):
+    async def process_view_active_giveaway(callback_query: CallbackQuery, state: FSMContext):
         """Просмотр активного розыгрыша 👀"""
         giveaway_id = callback_query.data.split(':')[1]
         try:
@@ -460,7 +590,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
-                await send_message_auto(
+                data = await state.get_data()
+                previous_message_type = data.get('previous_message_type', 'photo')
+                sent_message = await send_message_auto(
                     bot,
                     callback_query.from_user.id,
                     "🔍 Розыгрыш не найден 😕",
@@ -468,15 +600,21 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
                     image_url=DEFAULT_IMAGE_URL,
-                    media_type=None
+                    media_type=None,
+                    previous_message_type=previous_message_type
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type='photo'
+                    )
                 return
 
             cursor.execute("SELECT COUNT(*) FROM participations WHERE giveaway_id = %s", (giveaway_id,))
             participants_count = cursor.fetchone()[0]
 
             published_messages = get_json_field(cursor, "SELECT published_messages FROM giveaways WHERE id = %s",
-                                                (giveaway_id,)) if giveaway['published_messages'] else []
+                                               (giveaway_id,)) if giveaway['published_messages'] else []
             channel_info = ""
             if published_messages:
                 channel_links = []
@@ -529,22 +667,52 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             else:
                 image_url = DEFAULT_IMAGE_URL
 
+            # Получаем данные состояния
+            data = await state.get_data()
+            previous_message_type = data.get('previous_message_type', 'photo')
+            current_message_type = media_type or (
+                'image' if count_length_with_custom_emoji(giveaway_info) > 800 else 'photo')
+
             await bot.answer_callback_query(callback_query.id)
-            await send_message_auto(
+
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type and callback_query.message.message_id:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} перед отправкой нового в process_view_active_giveaway")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            # Отправляем сообщение с учетом типа медиа
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
                 giveaway_info,
                 reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id,
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
                 parse_mode='HTML',
                 image_url=image_url,
-                media_type=media_type
+                media_type=media_type,
+                previous_message_type=previous_message_type
             )
+
+            # Обновляем состояние
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка загрузки розыгрыша 😔")
-            await send_message_auto(
+            data = await state.get_data()
+            previous_message_type = data.get('previous_message_type', 'photo')
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
                 "⚠️ Упс Что-то пошло не так. Попробуйте снова 😔",
@@ -552,31 +720,63 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                media_type=None
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type='photo'
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_force_end_giveaway:'))
-    async def process_confirm_force_end_giveaway(callback_query: CallbackQuery):
+    async def process_confirm_force_end_giveaway(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="✅ Да", callback_data=f"force_end_giveaway:{giveaway_id}")
         keyboard.button(text="❌ Нет", callback_data=f"view_active_giveaway:{giveaway_id}")
         keyboard.adjust(2)
 
+        # Получаем данные состояния
+        data = await state.get_data()
+        previous_message_type = data.get('previous_message_type', 'photo')
+        current_message_type = 'photo'
+
         await bot.answer_callback_query(callback_query.id)
-        await send_message_auto(
+
+        # Пытаемся удалить старое сообщение, если тип изменился
+        if previous_message_type != current_message_type:
+            try:
+                await bot.delete_message(
+                    chat_id=callback_query.from_user.id,
+                    message_id=callback_query.message.message_id
+                )
+                logger.info(
+                    f"Удалено старое сообщение {callback_query.message.message_id} в process_confirm_force_end_giveaway")
+            except Exception as e:
+                logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+        sent_message = await send_message_auto(
             bot,
             callback_query.from_user.id,
             "<tg-emoji emoji-id='5445267414562389170'>🗑</tg-emoji> Вы уверены, что хотите завершить розыгрыш?",
             reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
+            message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
             parse_mode='HTML',
-            image_url=DEFAULT_IMAGE_URL
+            image_url=DEFAULT_IMAGE_URL,
+            media_type=None,
+            previous_message_type=previous_message_type
         )
 
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_type=current_message_type
+            )
+
     @dp.callback_query(lambda c: c.data.startswith('force_end_giveaway:'))
-    async def process_force_end_giveaway(callback_query: CallbackQuery):
-        global result_message, keyboard, image_url, media_type
+    async def process_force_end_giveaway(callback_query: CallbackQuery, state: FSMContext):
+        global image_url, keyboard, media_type, result_message
         giveaway_id = callback_query.data.split(':')[1]
         try:
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
@@ -584,6 +784,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
                 raise Exception("Розыгрыш не найден")
+
+            # Получаем данные состояния
+            data = await state.get_data()
+            previous_message_type = data.get('previous_message_type', 'photo')
 
             image_url = None
             media_type = None
@@ -595,16 +799,37 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             else:
                 image_url = DEFAULT_IMAGE_URL
 
-            await send_message_auto(
+            current_message_type = media_type or 'photo'
+
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} в process_force_end_giveaway")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
                 "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Завершаем розыгрыш...",
                 reply_markup=None,
-                message_id=callback_query.message.message_id,
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                media_type=None
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type='photo'
+                )
 
             participants = []
             limit = 1000
@@ -629,8 +854,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await end_giveaway(bot=bot, giveaway_id=giveaway_id, conn=conn, cursor=cursor, notify_creator=False)
 
             participant_counter_tasks = get_json_field(cursor,
-                                                       "SELECT participant_counter_tasks FROM giveaways WHERE id = %s",
-                                                       (giveaway_id,))
+                                                      "SELECT participant_counter_tasks FROM giveaways WHERE id = %s",
+                                                      (giveaway_id,))
             channel_links = []
             if participant_counter_tasks:
                 unique_chat_ids = set(task['chat_id'] for task in participant_counter_tasks)
@@ -690,45 +915,66 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
 
             await bot.answer_callback_query(callback_query.id)
-            if image_url:
-                await send_message_auto(
-                    bot,
-                    callback_query.from_user.id,
-                    result_message,
-                    reply_markup=keyboard.as_markup(),
-                    message_id=callback_query.message.message_id,
-                    parse_mode='HTML',
-                    image_url=image_url,
-                    media_type=media_type
-                )
-            else:
-                await bot.edit_message_text(
-                    chat_id=callback_query.from_user.id,
-                    message_id=callback_query.message.message_id,
-                    text=result_message,
-                    reply_markup=keyboard.as_markup(),
-                    parse_mode='HTML'
+
+            current_message_type = media_type or (
+                'image' if count_length_with_custom_emoji(result_message) > 800 else 'photo')
+
+            # Удаляем предыдущее сообщение, если тип изменился
+            last_message_id = data.get('last_message_id')
+            if previous_message_type != current_message_type and last_message_id:
+                try:
+                    await bot.delete_message(chat_id=callback_query.from_user.id, message_id=last_message_id)
+                    logger.info(f"Удалено старое сообщение {last_message_id} в process_force_end_giveaway (результат)")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                result_message,
+                reply_markup=keyboard.as_markup(),
+                message_id=None,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=media_type,
+                previous_message_type=previous_message_type
+            )
+
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
                 )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка при завершении 😔")
+            data = await state.get_data()
+            previous_message_type = data.get('previous_message_type', 'photo')
             cursor.execute("SELECT is_active, is_completed FROM giveaways WHERE id = %s", (giveaway_id,))
             result = cursor.fetchone()
             if result and result[0] == 'false' and result[1] == 'true':
                 logger.info(f"Розыгрыш {giveaway_id} все же завершился, отправляем результат")
-                await send_message_auto(
+                current_message_type = media_type or (
+                    'image' if count_length_with_custom_emoji(result_message) > 800 else 'photo')
+                sent_message = await send_message_auto(
                     bot,
                     callback_query.from_user.id,
                     result_message,
                     reply_markup=keyboard.as_markup(),
-                    message_id=callback_query.message.message_id,
+                    message_id=None,
                     parse_mode='HTML',
                     image_url=image_url,
-                    media_type=media_type
+                    media_type=media_type,
+                    previous_message_type=previous_message_type
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
             else:
-                await send_message_auto(
+                sent_message = await send_message_auto(
                     bot,
                     callback_query.from_user.id,
                     "Ошибка при завершении 😔",
@@ -736,8 +982,14 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
                     image_url=DEFAULT_IMAGE_URL,
-                    media_type=None
+                    media_type=None,
+                    previous_message_type=previous_message_type
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type='photo'
+                    )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_active_post:'))
     async def process_edit_active_post(callback_query: CallbackQuery):
@@ -749,6 +1001,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway_id = callback_query.data.split(':')[1]
         cursor.execute("SELECT name FROM giveaways WHERE id = %s", (giveaway_id,))
         current_name = cursor.fetchone()[0]
+
+        # Получаем данные состояния
+        data = await state.get_data()
+        previous_message_type = data.get('previous_message_type', 'photo')
 
         await state.update_data(
             giveaway_id=giveaway_id,
@@ -772,15 +1028,56 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
-        await send_message_auto(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML',
-            image_url=image_url
-        )
+        current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+
+        try:
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} в process_edit_name_active")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+        except Exception as e:
+            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+
         await bot.answer_callback_query(callback_query.id)
 
     @dp.message(EditGiveawayStates.waiting_for_new_name_active)
@@ -796,7 +1093,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             last_message_id=last_message_id,
             field='name',
             max_length=MAX_NAME_LENGTH,
-            formatting_guide=FORMATTING_GUIDE,
+            formatting_guide="",
             image_url=image_url,
             bot=bot,
             conn=conn,
@@ -810,6 +1107,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway_id = callback_query.data.split(':')[1]
         cursor.execute("SELECT description FROM giveaways WHERE id = %s", (giveaway_id,))
         current_description = cursor.fetchone()[0]
+
+        # Получаем данные состояния
+        data = await state.get_data()
+        previous_message_type = data.get('previous_message_type', 'photo')
 
         await state.update_data(
             giveaway_id=giveaway_id,
@@ -833,15 +1134,56 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
-        await send_message_auto(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML',
-            image_url=image_url
-        )
+        current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+
+        try:
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} в process_edit_description_active")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+        except Exception as e:
+            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+
         await bot.answer_callback_query(callback_query.id)
 
     @dp.message(EditGiveawayStates.waiting_for_new_description_active)
@@ -872,6 +1214,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         cursor.execute("SELECT button FROM giveaways WHERE id = %s", (giveaway_id,))
         current_button = cursor.fetchone()[0] or "🎉 Участвовать"
 
+        # Получаем данные состояния
+        data = await state.get_data()
+        previous_message_type = data.get('previous_message_type', 'photo')
+
         await state.update_data(
             giveaway_id=giveaway_id,
             last_message_id=callback_query.message.message_id,
@@ -892,42 +1238,122 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
-        await send_message_auto(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML',
-            image_url=image_url
-        )
+        current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+
+        try:
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} в process_edit_button_active")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+        except Exception as e:
+            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+
         await bot.answer_callback_query(callback_query.id)
 
     @dp.message(EditGiveawayStates.waiting_for_new_button_active)
     async def process_new_button_active(message: types.Message, state: FSMContext):
+        logger.info(f"Received message: {message.text}")
+        current_state = await state.get_state()
+        logger.info(f"Current state: {current_state}")
+
         data = await state.get_data()
         giveaway_id = data.get('giveaway_id')
         last_message_id = data.get('last_message_id')
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
-        await process_long_message_active(
-            message=message,
-            state=state,
-            giveaway_id=giveaway_id,
-            last_message_id=last_message_id,
-            field='button',
-            max_length=50,
-            formatting_guide=FORMATTING_GUIDE,
-            image_url=image_url,
-            bot=bot,
-            conn=conn,
-            cursor=cursor,
-            update_published_posts_active=update_published_posts_active,
-            _show_edit_menu_active=_show_edit_menu_active
-        )
+
+        if not giveaway_id:
+            logger.error("No giveaway_id in state data")
+            await message.reply("Ошибка: не найден идентификатор розыгрыша 😔")
+            await state.clear()
+            return
+
+        combined_message = message.text
+        current_length = count_length_with_custom_emoji(combined_message)
+        logger.info(f"Text: {combined_message}, Length: {current_length}")
+
+        if current_length > 50:
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            await message.reply(
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Текст кнопки превышает лимит (50 символов). Текущая длина: {current_length}",
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
+            )
+            return
+
+        try:
+            cursor.execute(
+                "UPDATE giveaways SET button = %s WHERE id = %s",
+                (combined_message, giveaway_id)
+            )
+            conn.commit()
+            logger.info(f"Button updated for giveaway {giveaway_id}")
+
+            cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
+            giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
+            await update_published_posts_active(giveaway_id, giveaway)
+
+            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id)
+            await state.clear()
+        except Exception as e:
+            logger.error(f"Error updating button: {str(e)}")
+            conn.rollback()
+            keyboard = InlineKeyboardBuilder()
+            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            await message.reply(
+                "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить текст кнопки 😔",
+                reply_markup=keyboard.as_markup(),
+                parse_mode='HTML'
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_winner_count_active:'))
     async def process_edit_winner_count_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        # Получаем данные состояния
+        data = await state.get_data()
+        previous_message_type = data.get('previous_message_type', 'photo')
+
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_winner_count_active)
 
@@ -937,16 +1363,60 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
 
-        await send_message_auto(
-            bot,
-            callback_query.from_user.id,
+        message_text = (
             f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Текущее количество победителей: <b>{current_winner_count}</b>\n\n"
-            f"Укажите новое число (максимум {MAX_WINNERS}):",
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML',
-            image_url=DEFAULT_IMAGE_URL
+            f"Укажите новое число (максимум {MAX_WINNERS}):"
         )
+        current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+
+        try:
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} в process_edit_winner_count_active")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+        except Exception as e:
+            logger.error(f"Ошибка отправки сообщения: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+
         await bot.answer_callback_query(callback_query.id)
 
     @dp.message(EditGiveawayStates.waiting_for_new_winner_count_active)
@@ -954,6 +1424,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
         last_message_id = data['last_message_id']
+        previous_message_type = data.get('previous_message_type', 'photo')
 
         try:
             new_winner_count = int(message.text)
@@ -963,16 +1434,31 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if new_winner_count > MAX_WINNERS:
                 keyboard = InlineKeyboardBuilder()
                 keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+                current_message_type = 'photo'
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-                await send_message_auto(
+                if previous_message_type != current_message_type and last_message_id:
+                    try:
+                        await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                        logger.info(
+                            f"Удалено старое сообщение {last_message_id} в process_new_winner_count_active (лимит)")
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+                sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
                     f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Слишком много победителей Максимум {MAX_WINNERS}",
                     reply_markup=keyboard.as_markup(),
-                    message_id=last_message_id,
+                    message_id=None,
                     parse_mode='HTML',
-                    image_url=DEFAULT_IMAGE_URL
+                    image_url=DEFAULT_IMAGE_URL,
+                    media_type=None,
+                    previous_message_type=previous_message_type
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
             cursor.execute("SELECT winner_count FROM giveaways WHERE id = %s", (giveaway_id,))
@@ -1001,34 +1487,68 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except ValueError:
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            current_message_type = 'photo'
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await send_message_auto(
+            if previous_message_type != current_message_type and last_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                    logger.info(
+                        f"Удалено старое сообщение {last_message_id} в process_new_winner_count_active (ошибка)")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
                 "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число Например, 3",
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-            await send_message_auto(
+            current_message_type = 'photo'
+            if previous_message_type != current_message_type and last_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                    logger.info(
+                        f"Удалено старое сообщение {last_message_id} в process_new_winner_count_active (общая ошибка)")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
                 "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить победителей 😔",
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('change_end_date_active:'))
     async def process_change_end_date_active(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        # Получаем данные состояния
+        data = await state.get_data()
+        previous_message_type = data.get('previous_message_type', 'photo')
+
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_end_time_active)
 
@@ -1042,19 +1562,60 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Текущее время окончания: <b>{formatted_end_time}</b>
 
-Укажите новую дату завершения в формате ДД.ММ.ГГГГ ЧЧ:ММ по МСК
+    Укажите новую дату завершения в формате ДД.ММ.ГГГГ ЧЧ:ММ по МСК
 
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
-"""
-        await send_message_auto(
-            bot,
-            callback_query.from_user.id,
-            html_message,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML',
-            image_url=DEFAULT_IMAGE_URL
-        )
+    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
+    """
+        current_message_type = 'photo' if count_length_with_custom_emoji(html_message) <= 800 else 'image'
+
+        try:
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} в process_change_end_date_active")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                html_message,
+                reply_markup=keyboard.as_markup(),
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+        except Exception as e:
+            logger.error(f"Ошибка отправки сообщения: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                html_message,
+                reply_markup=keyboard.as_markup(),
+                message_id=None,
+                parse_mode='HTML',
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+
         await bot.answer_callback_query(callback_query.id)
 
     @dp.message(EditGiveawayStates.waiting_for_new_end_time_active)
@@ -1062,6 +1623,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
         last_message_id = data['last_message_id']
+        previous_message_type = data.get('previous_message_type', 'photo')
 
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         if message.text.lower() == 'отмена':
@@ -1088,31 +1650,60 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             html_message = f"""<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты Используйте ДД.ММ.ГГГГ ЧЧ:ММ
 
-<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
-"""
-            await send_message_auto(
+    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
+    """
+            current_message_type = 'photo'
+            if previous_message_type != current_message_type and last_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                    logger.info(f"Удалено старое сообщение {last_message_id} в process_new_end_time_active (ошибка)")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
                 html_message,
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-            await send_message_auto(
+            current_message_type = 'photo'
+            if previous_message_type != current_message_type and last_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                    logger.info(
+                        f"Удалено старое сообщение {last_message_id} в process_new_end_time_active (общая ошибка)")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
                 "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить дату 😔",
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('manage_media_active:'))
     async def process_manage_media_active(callback_query: CallbackQuery, state: FSMContext):
@@ -1121,7 +1712,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
 
         if not giveaway:
-            await send_message_auto(
+            data = await state.get_data()
+            previous_message_type = data.get('previous_message_type', 'photo')
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
                 "🔍 Розыгрыш не найден 😕",
@@ -1129,10 +1722,20 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                media_type=None
+                media_type=None,
+                previous_message_type=previous_message_type
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type='photo'
+                )
             await bot.answer_callback_query(callback_query.id)
             return
+
+        # Получаем данные состояния
+        data = await state.get_data()
+        previous_message_type = data.get('previous_message_type', 'photo')
 
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(EditGiveawayStates.waiting_for_new_media_active)
@@ -1159,16 +1762,56 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         else:
             image_url = DEFAULT_IMAGE_URL
 
-        await send_message_auto(
-            bot,
-            callback_query.from_user.id,
-            message_text,
-            reply_markup=keyboard.as_markup(),
-            message_id=callback_query.message.message_id,
-            parse_mode='HTML',
-            image_url=image_url,
-            media_type=media_type
-        )
+        current_message_type = media_type if media_type else (
+            'image' if count_length_with_custom_emoji(message_text) > 800 else 'photo')
+
+        try:
+            # Пытаемся удалить старое сообщение, если тип изменился
+            if previous_message_type != current_message_type:
+                try:
+                    await bot.delete_message(
+                        chat_id=callback_query.from_user.id,
+                        message_id=callback_query.message.message_id
+                    )
+                    logger.info(
+                        f"Удалено старое сообщение {callback_query.message.message_id} в process_manage_media_active")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
+
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=media_type,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
+        except Exception as e:
+            logger.error(f"Ошибка редактирования медиа: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                callback_query.from_user.id,
+                message_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=None,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=media_type,
+                previous_message_type=previous_message_type
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
         await bot.answer_callback_query(callback_query.id)
 
