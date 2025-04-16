@@ -507,12 +507,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         giveaway_info = f"""<b>Название:</b> {giveaway['name']}
-    <b>Описание:\n</b> {giveaway['description']}
+<b>Описание:\n</b> {giveaway['description']}
 
-    {dop_info}
+{dop_info}
 
-    <tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
-    """
+<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Что хотите изменить?
+"""
 
         image_url = None
         media_type = None
@@ -644,9 +644,9 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             giveaway_info = f"""{formatted_description}
 
-    <tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
-    {channel_info}
-    """
+<tg-emoji emoji-id='5451882707875276247'>🕯</tg-emoji> <b>Участников:</b> {participants_count}
+{channel_info}
+"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="✏️ Редактировать", callback_data=f"edit_active_post:{giveaway_id}")
@@ -885,31 +885,31 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 winners_list = '\n'.join(winners_formatted)
                 result_message = f"""<b>Розыгрыш завершен <tg-emoji emoji-id='5461151367559141950'>🎉</tg-emoji></b>
 
-    {giveaway['name']}
+{giveaway['name']}
 
-    <b>Победители:</b> 
-    <blockquote expandable>
-    {winners_list}
-    </blockquote>
-    """
+<b>Победители:</b> 
+<blockquote expandable>
+{winners_list}
+</blockquote>
+"""
             else:
                 result_message = f"""
-    <b>Розыгрыш завершен</b>
+<b>Розыгрыш завершен</b>
 
-    {giveaway['name']}
+{giveaway['name']}
 
-    К сожалению, в этом розыгрыше не было участников.
-    """
+К сожалению, в этом розыгрыше не было участников.
+"""
 
             if winners and len(winners) < giveaway['winner_count']:
                 result_message += f"""
-    Не все призовые места были распределены.
-    """
+Не все призовые места были распределены.
+"""
 
             if channel_links:
                 result_message += f"""
-    <tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
-    """
+<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> <b>Результаты опубликованы в:</b> {', '.join(channel_links)}
+"""
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
@@ -1562,10 +1562,10 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
         html_message = f"""<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Текущее время окончания: <b>{formatted_end_time}</b>
 
-    Укажите новую дату завершения в формате ДД.ММ.ГГГГ ЧЧ:ММ по МСК
+Укажите новую дату завершения в формате ДД.ММ.ГГГГ ЧЧ:ММ по МСК
 
-    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
-    """
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
+"""
         current_message_type = 'photo' if count_length_with_custom_emoji(html_message) <= 800 else 'image'
 
         try:
@@ -1650,8 +1650,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             current_time = datetime.now(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')
             html_message = f"""<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Неправильный формат даты Используйте ДД.ММ.ГГГГ ЧЧ:ММ
 
-    <tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
-    """
+<tg-emoji emoji-id='5413879192267805083'>🗓</tg-emoji> Сейчас в Москве:\n<code>{current_time}</code>
+"""
             current_message_type = 'photo'
             if previous_message_type != current_message_type and last_message_id:
                 try:
