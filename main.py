@@ -177,7 +177,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
     keyboard.adjust(1)
 
     message_text = "<tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji> Добро пожаловать Выберите действие:"
-    current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+    current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
 
     data = await state.get_data()
     previous_message_type = data.get('previous_message_type')
@@ -275,7 +275,7 @@ async def back_to_main_menu(callback_query: CallbackQuery, state: FSMContext):
     keyboard.adjust(1)
 
     message_text = "<tg-emoji emoji-id='5210956306952758910'>👀</tg-emoji> Выберите действие:"
-    current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+    current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
 
     data = await state.get_data()
     previous_message_type = data.get('previous_message_type')
@@ -359,7 +359,7 @@ async def cmd_help(message: types.Message, state: FSMContext):
     keyboard.button(text="🏠 В главное меню", callback_data="back_to_main_menu")
     keyboard.adjust(1)
 
-    current_message_type = 'image' if count_length_with_custom_emoji(help_text) > 800 else 'photo'
+    current_message_type = 'image' if count_length_with_custom_emoji(help_text) > 1024 else 'photo'
 
     data = await state.get_data()
     previous_message_type = data.get('previous_message_type')
