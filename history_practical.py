@@ -14,7 +14,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
     @dp.callback_query(lambda c: c.data == 'giveaway_history' or c.data.startswith('giveaway_history_page:'))
     async def process_giveaway_history(callback_query: CallbackQuery, state: FSMContext):
-        global previous_message_type, last_message_id
+        global previous_message_length, last_message_id, previous_message_length
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
@@ -23,7 +23,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
-            previous_message_type = data.get('previous_message_type', 'photo')
+            previous_message_length = data.get('previous_message_length', 'short')
 
             # Получаем общее количество завершенных розыгрышей
             cursor.execute(
@@ -49,12 +49,12 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                     media_type=None,
-                    previous_message_type=previous_message_type
+                    previous_message_length=previous_message_length
                 )
                 if sent_message:
                     await state.update_data(
                         last_message_id=sent_message.message_id,
-                        previous_message_type=current_message_type
+                        previous_message_length=current_message_type
                     )
                 return
 
@@ -115,12 +115,12 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                 media_type=None,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_length=current_message_type
                 )
 
         except Exception as e:
@@ -139,18 +139,18 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                 media_type=None,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_length=current_message_type
                 )
 
     @dp.callback_query(lambda c: c.data.startswith('view_completed_giveaway:'))
     async def process_view_completed_giveaway(callback_query: CallbackQuery, state: FSMContext):
         """Обработка просмотра детальной информации о завершенном розыгрыше с победителями."""
-        global previous_message_type, last_message_id
+        global previous_message_length, last_message_id, previous_message_length
         giveaway_id = callback_query.data.split(':')[1]
         user_id = callback_query.from_user.id
 
@@ -158,7 +158,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
-            previous_message_type = data.get('previous_message_type', 'photo')
+            previous_message_length = data.get('previous_message_length', 'short')
 
             # Получение данных о розыгрыше
             cursor.execute(
@@ -179,7 +179,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
 
                 # Удаляем старое сообщение, если тип изменился
-                if previous_message_type != current_message_type and last_message_id:
+                if previous_message_length != current_message_type and last_message_id:
                     try:
                         await bot.delete_message(chat_id=user_id, message_id=last_message_id)
                         logger.info(
@@ -192,16 +192,16 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     chat_id=user_id,
                     text=message_text,
                     reply_markup=keyboard.as_markup(),
-                    message_id=None if previous_message_type != current_message_type else last_message_id,
+                    message_id=None if previous_message_length != current_message_type else last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                     media_type=None,
-                    previous_message_type=previous_message_type
+                    previous_message_length=previous_message_length
                 )
                 if sent_message:
                     await state.update_data(
                         last_message_id=sent_message.message_id,
-                        previous_message_type=current_message_type
+                        previous_message_length=current_message_type
                     )
                 return
 
@@ -266,7 +266,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 'photo' if count_length_with_custom_emoji(giveaway_info) <= 800 else 'image')
 
             # Удаляем старое сообщение, если тип изменился
-            if previous_message_type != current_message_type and last_message_id:
+            if previous_message_length != current_message_type and last_message_id:
                 try:
                     await bot.delete_message(chat_id=user_id, message_id=last_message_id)
                     logger.info(f"Удалено старое сообщение {last_message_id} в process_view_completed_giveaway")
@@ -279,16 +279,16 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 chat_id=user_id,
                 text=giveaway_info,
                 reply_markup=keyboard.as_markup(),
-                message_id=None if previous_message_type != current_message_type else last_message_id,
+                message_id=None if previous_message_length != current_message_type else last_message_id,
                 parse_mode='HTML',
                 image_url=image_url,
                 media_type=media_type,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_length=current_message_type
                 )
 
         except Exception as e:
@@ -301,7 +301,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
 
             # Удаляем старое сообщение, если тип изменился
-            if previous_message_type != current_message_type and last_message_id:
+            if previous_message_length != current_message_type and last_message_id:
                 try:
                     await bot.delete_message(chat_id=user_id, message_id=last_message_id)
                     logger.info(
@@ -314,14 +314,14 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 chat_id=user_id,
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=None if previous_message_type != current_message_type else last_message_id,
+                message_id=None if previous_message_length != current_message_type else last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                 media_type=None,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_length=current_message_type
                 )
