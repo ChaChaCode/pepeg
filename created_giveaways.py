@@ -15,9 +15,9 @@ import requests
 from aiogram.types import CallbackQuery
 import logging
 from utils import truncate_text, count_length_with_custom_emoji, FORMATTING_GUIDE, FORMATTING_GUIDE2, DEFAULT_IMAGE_URL, \
-    MAX_MEDIA_SIZE_MB, MAX_NAME_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_WINNERS, get_file_url, s3_client, YANDEX_BUCKET_NAME
+    MAX_MEDIA_SIZE_MB, MAX_NAME_LENGTH, MAX_DESCRIPTION_LENGTH, MAX_WINNERS, get_file_url, s3_client, \
+    YANDEX_BUCKET_NAME, strip_formatting
 from utils import send_message_auto
-
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -106,16 +106,6 @@ async def build_community_selection_ui(user_id: int, giveaway_id: str, bot: Bot,
     return message_text, keyboard.as_markup(), image_url
 
 async def get_bound_communities(bot, user_id: int, cursor) -> List[Dict[str, Any]]:
-    """Получает список сообществ, где пользователь является администратором.
-
-    Args:
-        bot: Экземпляр бота Aiogram для выполнения запросов к Telegram API.
-        user_id (int): ID пользователя, для которого получаем сообщества.
-        cursor: Курсор базы данных для выполнения SQL-запросов.
-
-    Returns:
-        List[Dict[str, Any]]: Список словарей с информацией о сообществах.
-    """
     try:
         cursor.execute("SELECT * FROM bound_communities WHERE user_id = %s", (user_id,))
         rows = cursor.fetchall()
@@ -221,11 +211,11 @@ def truncate_name(name, max_length=20):
     return name if len(name) <= max_length else name[:max_length - 3] + "..."
 
 def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
-    from main import cursor
     """Регистрирует обработчики для управления розыгрышами 🎁"""
 
     @dp.callback_query(lambda c: c.data == 'created_giveaways' or c.data.startswith('created_giveaways_page:'))
-    async def process_created_giveaways(callback_query: CallbackQuery):
+    async def process_created_giveaways(callback_query: CallbackQuery, state: FSMContext):
+        global data
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if ':' in callback_query.data else 1
@@ -238,18 +228,26 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 (user_id,)
             )
             total_giveaways = cursor.fetchone()[0]
+            data = await state.get_data()
+            previous_message_length = data.get('previous_message_length', 'short')
             if total_giveaways == 0:
                 await bot.answer_callback_query(callback_query.id,
                                                 text="📭 Пока нет незавершенных розыгрышей? Создайте свой первый 🚀")
-                await send_message_auto(
+                sent_message = await send_message_auto(
                     bot,
                     user_id,
                     "📭 Пока нет незавершенных розыгрышей? Создайте свой первый 🚀",
                     reply_markup=None,
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
-                    image_url=DEFAULT_IMAGE_URL
+                    image_url=DEFAULT_IMAGE_URL,
+                    previous_message_length=previous_message_length
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_length='short'
+                    )
                 return
             total_pages = max(1, math.ceil(total_giveaways / ITEMS_PER_PAGE))
             offset = (current_page - 1) * ITEMS_PER_PAGE
@@ -304,28 +302,43 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 f"Всего розыгрышей: {total_giveaways}"
             )
             message_text = truncate_text(message_text, 4000)
+            message_length = count_length_with_custom_emoji(message_text)
+            current_message_length = 'long' if message_length > 1024 else 'short'
             await bot.answer_callback_query(callback_query.id)
-            await send_message_auto(
+            sent_message = await send_message_auto(
                 bot,
                 user_id,
                 message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_length=current_message_length
+                )
         except Exception as e:
+            previous_message_length = data.get('previous_message_length', 'short')
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Упс Что-то пошло не так 😔")
-            await send_message_auto(
+            sent_message = await send_message_auto(
                 bot,
                 user_id,
                 "⚠️ Упс Что-то пошло не так. Попробуйте снова 😔",
                 reply_markup=None,
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_length='short'
+                )
 
     @dp.callback_query(lambda c: c.data == "ignore")
     async def process_ignore(callback_query: types.CallbackQuery):
@@ -340,7 +353,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             giveaway = dict(zip(columns, cursor.fetchone()))
             if not giveaway:
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден 😕")
-                await send_message_auto(
+                data = await state.get_data()
+                previous_message_length = data.get('previous_message_length', 'short')
+                sent_message = await send_message_auto(
                     bot,
                     callback_query.from_user.id,
                     "🔍 Розыгрыш не найден 😕",
@@ -348,8 +363,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     message_id=callback_query.message.message_id,
                     parse_mode='HTML',
                     image_url=DEFAULT_IMAGE_URL,
-                    previous_message_type='photo'  # Добавляем по умолчанию
+                    previous_message_length=previous_message_length
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_length='short'
+                    )
                 return
 
             keyboard = InlineKeyboardBuilder()
@@ -380,50 +400,35 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             else:
                 image_url = DEFAULT_IMAGE_URL
 
-            # Получаем данные состояния
             data = await state.get_data()
-            previous_message_type = data.get('previous_message_type', 'photo')  # По умолчанию 'photo'
-            current_message_type = media_type or (
-                'image' if count_length_with_custom_emoji(giveaway_info) > 800 else 'photo')
+            previous_message_length = data.get('previous_message_length', 'short')
+            message_length = count_length_with_custom_emoji(giveaway_info)
+            current_message_length = 'long' if message_length > 1024 else 'short'
 
             await bot.answer_callback_query(callback_query.id)
-
-            # Пытаемся удалить старое сообщение, если тип изменился
-            if previous_message_type != current_message_type and callback_query.message.message_id:
-                try:
-                    await bot.delete_message(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id
-                    )
-                    logger.info(f"Удалено старое сообщение {callback_query.message.message_id} перед отправкой нового")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
-
-            # Отправляем сообщение с учетом типа медиа
             sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
                 giveaway_info,
                 reply_markup=keyboard.as_markup(),
-                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+                message_id=callback_query.message.message_id,
                 parse_mode='HTML',
                 image_url=image_url,
                 media_type=media_type,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
 
-            # Обновляем состояние
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_length=current_message_length
                 )
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Ошибка загрузки розыгрыша 😔")
             data = await state.get_data()
-            previous_message_type = data.get('previous_message_type', 'photo')
+            previous_message_length = data.get('previous_message_length', 'short')
             sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
@@ -432,12 +437,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type='photo'
+                    previous_message_length='short'
                 )
 
     @dp.callback_query(lambda c: c.data.startswith('add_invite_task:'))
@@ -447,9 +452,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         columns = [desc[0] for desc in cursor.description]
         giveaway = dict(zip(columns, cursor.fetchone()))
 
-        # Получаем данные состояния
         data = await state.get_data()
-        previous_message_type = data.get('previous_message_type', 'photo')
+        previous_message_length = data.get('previous_message_length', 'short')
 
         keyboard = InlineKeyboardBuilder()
         if giveaway['invite']:
@@ -464,42 +468,33 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.adjust(2)
             message_text = "<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Хотите добавить задание 'Пригласить друга'?"
 
-        current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_length = 'long' if message_length > 1024 else 'short'
 
         await bot.answer_callback_query(callback_query.id)
         await state.clear()
-
-        # Пытаемся удалить старое сообщение, если тип изменился
-        if previous_message_type != current_message_type:
-            try:
-                await bot.delete_message(
-                    chat_id=callback_query.from_user.id,
-                    message_id=callback_query.message.message_id
-                )
-                logger.info(f"Удалено старое сообщение {callback_query.message.message_id} в process_add_invite_task")
-            except Exception as e:
-                logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
-
         sent_message = await send_message_auto(
             bot,
             callback_query.from_user.id,
             message_text,
             reply_markup=keyboard.as_markup(),
-            message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
+            message_id=callback_query.message.message_id,
             parse_mode='HTML',
             image_url=DEFAULT_IMAGE_URL,
-            previous_message_type=previous_message_type
+            previous_message_length=previous_message_length
         )
 
         if sent_message:
             await state.update_data(
                 last_message_id=sent_message.message_id,
-                previous_message_type=current_message_type
+                previous_message_length=current_message_length
             )
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_invite_task:'))
     async def process_confirm_invite_task(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(GiveawayStates.waiting_for_invite_quantity)
 
@@ -507,19 +502,28 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="◀️ Назад", callback_data=f"add_invite_task:{giveaway_id}")
 
         await bot.answer_callback_query(callback_query.id)
-        await send_message_auto(
+        sent_message = await send_message_auto(
             bot,
             callback_query.from_user.id,
             "<tg-emoji emoji-id='5271604874419647061'>🔗</tg-emoji> Сколько друзей должен пригласить участник?\nВведите число",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML',
-            image_url=DEFAULT_IMAGE_URL
+            image_url=DEFAULT_IMAGE_URL,
+            previous_message_length=previous_message_length
         )
+
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_length='short'
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('change_invite_quantity:'))
     async def process_change_invite_quantity(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(GiveawayStates.waiting_for_invite_quantity)
 
@@ -527,15 +531,22 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard.button(text="◀️ Назад", callback_data=f"add_invite_task:{giveaway_id}")
 
         await bot.answer_callback_query(callback_query.id)
-        await send_message_auto(
+        sent_message = await send_message_auto(
             bot,
             callback_query.from_user.id,
             "<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Введите новое количество друзей для приглашения",
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML',
-            image_url=DEFAULT_IMAGE_URL
+            image_url=DEFAULT_IMAGE_URL,
+            previous_message_length=previous_message_length
         )
+
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_length='short'
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('remove_invite_task:'))
     async def process_remove_invite_task(callback_query: CallbackQuery, state: FSMContext):
@@ -558,23 +569,32 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
+            data = await state.get_data()
+            previous_message_length = data.get('previous_message_length', 'short')
             await bot.answer_callback_query(callback_query.id,
                                             text="Упс Не удалось убрать задание 😔")
-            await send_message_auto(
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
                 "⚠️ Упс Не удалось убрать задание 😔",
                 reply_markup=None,
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_length='short'
+                )
 
     @dp.message(GiveawayStates.waiting_for_invite_quantity)
     async def process_invite_quantity(message: types.Message, state: FSMContext):
         data = await state.get_data()
         giveaway_id = data['giveaway_id']
-        last_message_id = data['last_message_id']
+        last_message_id = data.get('last_message_id')
+        previous_message_length = data.get('previous_message_length', 'short')
 
         try:
             quantity = int(message.text)
@@ -594,35 +614,55 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="◀️ Назад", callback_data=f"view_created_giveaway:{giveaway_id}")
             keyboard.adjust(1)
 
-            await send_message_auto(
+            message_text = f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Задание добавлено\n\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласить {quantity} друга(зей) для участия"
+            message_length = count_length_with_custom_emoji(message_text)
+            current_message_length = 'long' if message_length > 1024 else 'short'
+
+            sent_message = await send_message_auto(
                 bot,
                 message.from_user.id,
-                f"<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Задание добавлено\n\n<tg-emoji emoji-id='5424818078833715060'>📣</tg-emoji> Пригласить {quantity} друга(зей) для участия",
+                message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
             await state.clear()
+
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_length=current_message_length
+                )
 
         except ValueError:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"add_invite_task:{giveaway_id}")
-            await send_message_auto(
+            message_text = "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число Например, 5"
+            message_length = count_length_with_custom_emoji(message_text)
+            current_message_length = 'long' if message_length > 1024 else 'short'
+            sent_message = await send_message_auto(
                 bot,
                 message.from_user.id,
-                "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число Например, 5",
+                message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_length=current_message_length
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_post:'))
-    async def process_edit_post(callback_query: CallbackQuery):
+    async def process_edit_post(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
-        await _show_edit_menu(callback_query.from_user.id, giveaway_id, callback_query.message.message_id)
+        await _show_edit_menu(callback_query.from_user.id, giveaway_id, callback_query.message.message_id, state)
 
     async def _show_edit_menu(user_id: int, giveaway_id: str, message_id: int = None, state: FSMContext = None):
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
@@ -630,8 +670,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway = dict(zip(columns, cursor.fetchone()))
         if not giveaway:
             data = await state.get_data() if state else {}
-            previous_message_type = data.get('previous_message_type', 'photo')
-            await send_message_auto(
+            previous_message_length = data.get('previous_message_length', 'short')
+            sent_message = await send_message_auto(
                 bot,
                 user_id,
                 "🔍 Розыгрыш не найден 😕",
@@ -639,8 +679,13 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
+            if sent_message and state:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_length='short'
+                )
             return
 
         if state:
@@ -692,37 +737,28 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         else:
             image_url = DEFAULT_IMAGE_URL
 
-        # Получаем данные состояния
         data = await state.get_data() if state else {}
-        previous_message_type = data.get('previous_message_type', 'photo')
-        current_message_type = media_type or (
-            'image' if count_length_with_custom_emoji(giveaway_info) > 800 else 'photo')
+        previous_message_length = data.get('previous_message_length', 'short')
+        message_length = count_length_with_custom_emoji(giveaway_info)
+        current_message_length = 'long' if message_length > 1024 else 'short'
 
         try:
-            # Пытаемся удалить старое сообщение, если тип изменился
-            if previous_message_type != current_message_type and message_id:
-                try:
-                    await bot.delete_message(chat_id=user_id, message_id=message_id)
-                    logger.info(f"Удалено старое сообщение {message_id} перед отправкой нового в _show_edit_menu")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {message_id}: {str(e)}")
-
             sent_message = await send_message_auto(
                 bot,
                 user_id,
                 giveaway_info,
                 reply_markup=keyboard.as_markup(),
-                message_id=None if previous_message_type != current_message_type else message_id,
+                message_id=message_id,
                 parse_mode='HTML',
                 image_url=image_url,
                 media_type=media_type,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
 
             if state and sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_length=current_message_length
                 )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
@@ -734,12 +770,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 message_id=message_id,
                 parse_mode='HTML',
                 image_url=DEFAULT_IMAGE_URL,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if state and sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type='photo'
+                    previous_message_length='short'
                 )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_button:'))
@@ -747,6 +783,9 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway_id = callback_query.data.split(':')[1]
         cursor.execute("SELECT button FROM giveaways WHERE id = %s", (giveaway_id,))
         current_button = cursor.fetchone()[0] or "🎉 Участвовать"
+
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
 
         await state.update_data(
             giveaway_id=giveaway_id,
@@ -766,32 +805,26 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             f"<tg-emoji emoji-id='5271604874419647061'>🔗</tg-emoji> Текущий текст кнопки: <b>{current_button}</b>\n\n"
             f"Отправьте новый текст для кнопки (до 50 символов)"
         )
-
-        try:
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
-            await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=callback_query.message.message_id,
-                parse_mode='HTML',
-                image_url=image_url
-            )
-        except Exception as e:
-            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
-            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
-            sent_message = await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                parse_mode='HTML',
-                image_url=image_url
-            )
-            await state.update_data(last_message_id=sent_message.message_id)
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_button2.jpg'
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_length = 'long' if message_length > 1024 else 'short'
 
         await bot.answer_callback_query(callback_query.id)
+        sent_message = await send_message_auto(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=image_url,
+            previous_message_length=previous_message_length
+        )
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_length=current_message_length
+            )
 
     @dp.message(GiveawayStates.waiting_for_edit_button)
     async def process_new_button_text(message: types.Message, state: FSMContext):
@@ -813,9 +846,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         cursor.execute("SELECT name FROM giveaways WHERE id = %s", (giveaway_id,))
         current_name = cursor.fetchone()[0]
 
-        # Получаем данные из состояния
         data = await state.get_data()
-        previous_message_type = data.get('previous_message_type', 'photo')  # Значение по умолчанию 'photo'
+        previous_message_length = data.get('previous_message_length', 'short')
 
         await state.update_data(
             giveaway_id=giveaway_id,
@@ -823,7 +855,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             user_messages=[],
             current_message_parts=[],
             limit_exceeded=False,
-            last_message_time=None
+            last_message_time=None,
+            previous_message_length=previous_message_length
         )
         await state.set_state(GiveawayStates.waiting_for_edit_name)
 
@@ -839,54 +872,25 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
-        current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
-
-        try:
-            # Пытаемся удалить старое сообщение, если тип изменился
-            if previous_message_type != current_message_type:
-                try:
-                    await bot.delete_message(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id
-                    )
-                    logger.info(f"Удалено старое сообщение {callback_query.message.message_id} в process_edit_name")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
-
-            sent_message = await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
-                parse_mode='HTML',
-                image_url=image_url,
-                previous_message_type=previous_message_type
-            )
-            if sent_message:
-                await state.update_data(
-                    last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
-                )
-        except Exception as e:
-            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
-            sent_message = await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=None,  # Отправляем новое сообщение
-                parse_mode='HTML',
-                image_url=image_url,
-                previous_message_type=previous_message_type
-            )
-            if sent_message:
-                await state.update_data(
-                    last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
-                )
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_length = 'long' if message_length > 1024 else 'short'
 
         await bot.answer_callback_query(callback_query.id)
+        sent_message = await send_message_auto(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=image_url,
+            previous_message_length=previous_message_length
+        )
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_length=current_message_length
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_description:'))
     async def process_edit_description(callback_query: CallbackQuery, state: FSMContext):
@@ -894,9 +898,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         cursor.execute("SELECT description FROM giveaways WHERE id = %s", (giveaway_id,))
         current_description = cursor.fetchone()[0]
 
-        # Получаем данные из состояния
         data = await state.get_data()
-        previous_message_type = data.get('previous_message_type', 'photo')  # Значение по умолчанию 'photo'
+        previous_message_length = data.get('previous_message_length', 'short')
 
         await state.update_data(
             giveaway_id=giveaway_id,
@@ -904,7 +907,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             user_messages=[],
             current_message_parts=[],
             limit_exceeded=False,
-            last_message_time=None
+            last_message_time=None,
+            previous_message_length=previous_message_length
         )
         await state.set_state(GiveawayStates.waiting_for_edit_description)
 
@@ -920,59 +924,31 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         )
 
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
-        current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
-
-        try:
-            # Пытаемся удалить старое сообщение, если тип изменился
-            if previous_message_type != current_message_type:
-                try:
-                    await bot.delete_message(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id
-                    )
-                    logger.info(
-                        f"Удалено старое сообщение {callback_query.message.message_id} в process_edit_description")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
-
-            sent_message = await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
-                parse_mode='HTML',
-                image_url=image_url,
-                previous_message_type=previous_message_type
-            )
-            if sent_message:
-                await state.update_data(
-                    last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
-                )
-        except Exception as e:
-            logger.error(f"Ошибка редактирования сообщения: {str(e)}")
-            sent_message = await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=None,  # Отправляем новое сообщение
-                parse_mode='HTML',
-                image_url=image_url,
-                previous_message_type=previous_message_type
-            )
-            if sent_message:
-                await state.update_data(
-                    last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
-                )
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_length = 'long' if message_length > 1024 else 'short'
 
         await bot.answer_callback_query(callback_query.id)
+        sent_message = await send_message_auto(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=image_url,
+            previous_message_length=previous_message_length
+        )
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_length=current_message_length
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('edit_winner_count:'))
     async def process_edit_winner_count(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(GiveawayStates.waiting_for_edit_winner_count)
         await bot.answer_callback_query(callback_query.id)
@@ -983,16 +959,25 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
 
-        await send_message_auto(
+        message_text = f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Текущее количество победителей: <b>{current_winner_count}</b>\n\nЕсли хотите изменить, укажите новое число (максимум {MAX_WINNERS}):"
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_type = 'photo' if message_length <= 1024 else 'image'
+
+        sent_message = await send_message_auto(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5440539497383087970'>🥇</tg-emoji> Текущее количество победителей: <b>{current_winner_count}</b>\n\n"
-            f"Если хотите изменить, укажите новое число (максимум {MAX_WINNERS}):",
+            message_text,
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML',
-            image_url=DEFAULT_IMAGE_URL
+            image_url=DEFAULT_IMAGE_URL,
+            previous_message_length=previous_message_length
         )
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_type=current_message_type
+            )
 
     async def process_long_message(
             message: types.Message,
@@ -1015,7 +1000,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         limit_exceeded = data.get('limit_exceeded', False)
         current_message_parts = data.get('current_message_parts', [])
         last_message_time = data.get('last_message_time')
-        previous_message_type = data.get('previous_message_type', 'photo')  # Значение по умолчанию 'photo'
+        previous_message_length = data.get('previous_message_length', 'short')
         new_text = message.html_text if message.text else ""
 
         current_time = datetime.now().timestamp()
@@ -1051,14 +1036,17 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         combined_current_message = "".join(current_message_parts)
         current_length = count_length_with_custom_emoji(combined_current_message)
-        current_message_type = 'photo' if current_length <= 800 else 'image'
+        current_message_type = 'photo' if current_length <= 1024 else 'image'
 
         if limit_exceeded:
             if 0 < current_length <= max_length:
                 try:
+                    # Strip formatting for button and name fields
+                    text_to_save = strip_formatting(combined_current_message) if field in ['button',
+                                                                                           'name'] else combined_current_message
                     cursor.execute(
                         f"UPDATE giveaways SET {field} = %s WHERE id = %s",
-                        (combined_current_message, giveaway_id)
+                        (text_to_save, giveaway_id)
                     )
                     conn.commit()
 
@@ -1066,14 +1054,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                     except Exception as e:
                         logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
-
-                    # Удаляем старое сообщение бота, если тип изменился
-                    if previous_message_type != current_message_type and last_message_id:
-                        try:
-                            await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
-                            logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message (успех)")
-                        except Exception as e:
-                            logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
                     await state.update_data(
                         user_messages=[],
@@ -1091,21 +1071,15 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
                     except Exception as e:
                         logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
-                    if previous_message_type != 'photo' and last_message_id:
-                        try:
-                            await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
-                            logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message (ошибка)")
-                        except Exception as e:
-                            logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
                     sent_message = await send_message_auto(
                         bot,
                         message.chat.id,
                         f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить {field_translations[field]} 😔",
                         reply_markup=keyboard.as_markup(),
-                        message_id=None,
+                        message_id=last_message_id,
                         parse_mode='HTML',
                         image_url=image_url,
-                        previous_message_type=previous_message_type
+                        previous_message_length=previous_message_length
                     )
                     if sent_message:
                         await state.update_data(
@@ -1113,22 +1087,21 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                             previous_message_type='photo'
                         )
             else:
-                if last_message_id:
-                    try:
-                        await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
-                        logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message (лимит)")
-                    except Exception as e:
-                        logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
 
+                message_text = f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} должно быть от 1 до {max_length} символов. Текущее: {current_length}\n{formatting_guide}"
                 sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
-                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} должно быть от 1 до {max_length} символов. Текущее: {current_length}\n{formatting_guide}",
+                    message_text,
                     reply_markup=keyboard.as_markup(),
-                    message_id=None,
+                    message_id=last_message_id,
                     parse_mode='HTML',
                     image_url=image_url,
-                    previous_message_type=previous_message_type
+                    previous_message_length=previous_message_length
                 )
                 if sent_message:
                     await state.update_data(
@@ -1143,30 +1116,28 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         total_length += current_length
 
         if total_length > max_length or not combined_current_message:
-            if last_message_id:
-                try:
-                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
-                    logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message (лимит)")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
 
             await state.update_data(
                 user_messages=user_messages,
                 current_message_parts=current_message_parts,
                 limit_exceeded=True,
-                last_message_id=None,
                 last_message_time=current_time
             )
 
+            message_text = f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов).\nОбщая длина: {total_length}\nОтправьте новое {field_translations[field].lower()}.\n{formatting_guide}"
             sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов).\nОбщая длина: {total_length}\nОтправьте новое {field_translations[field].lower()}.\n{formatting_guide}",
+                message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=None,
+                message_id=last_message_id,
                 parse_mode='HTML',
                 image_url=image_url,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
@@ -1176,9 +1147,12 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             return
 
         try:
+            # Strip formatting for button and name fields
+            text_to_save = strip_formatting(combined_current_message) if field in ['button',
+                                                                                   'name'] else combined_current_message
             cursor.execute(
                 f"UPDATE giveaways SET {field} = %s WHERE id = %s",
-                (combined_current_message, giveaway_id)
+                (text_to_save, giveaway_id)
             )
             conn.commit()
 
@@ -1186,14 +1160,6 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             except Exception as e:
                 logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
-
-            # Удаляем старое сообщение бота, если тип изменился
-            if previous_message_type != current_message_type and last_message_id:
-                try:
-                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
-                    logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message (успех)")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
             await state.update_data(
                 user_messages=[],
@@ -1210,21 +1176,16 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             except Exception as e:
                 logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
-            if previous_message_type != 'photo' and last_message_id:
-                try:
-                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
-                    logger.info(f"Удалено старое сообщение {last_message_id} в process_long_message (ошибка)")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+            message_text = f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить {field_translations[field]} 😔"
             sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить {field_translations[field]} 😔",
+                message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=None,
+                message_id=last_message_id,
                 parse_mode='HTML',
                 image_url=image_url,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
@@ -1263,38 +1224,57 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.message(GiveawayStates.waiting_for_edit_winner_count)
     async def process_new_winner_count(message: types.Message, state: FSMContext):
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+        data = await state.get_data()
+        giveaway_id = data.get('giveaway_id')
+        last_message_id = data.get('last_message_id')
+        previous_message_length = data.get('previous_message_length', 'short')
+
         try:
             new_winner_count = int(message.text)
             if new_winner_count <= 0:
                 raise ValueError("Количество должно быть положительным")
 
             if new_winner_count > MAX_WINNERS:
-                data = await state.get_data()
                 keyboard = InlineKeyboardBuilder()
-                keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
-                await send_message_auto(
+                keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
+                message_text = f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Слишком много победителей Максимум {MAX_WINNERS}"
+                current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
+                sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
-                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Слишком много победителей Максимум {MAX_WINNERS}",
-                    message_id=data.get('last_message_id'),
+                    message_text,
+                    message_id=last_message_id,
                     reply_markup=keyboard.as_markup(),
                     parse_mode='HTML',
-                    image_url=DEFAULT_IMAGE_URL
+                    image_url=DEFAULT_IMAGE_URL,
+                    previous_message_length=previous_message_length
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
-            data = await state.get_data()
-            giveaway_id = data['giveaway_id']
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
-            await send_message_auto(
+            message_text = "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Обновляем количество победителей..."
+            current_message_type = 'photo'
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                "<tg-emoji emoji-id='5386367538735104399'>⌛️</tg-emoji> Обновляем количество победителей...",
-                message_id=data.get('last_message_id'),
+                message_text,
+                message_id=last_message_id,
+                reply_markup=keyboard.as_markup(),
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
             cursor.execute("SELECT winner_count FROM giveaways WHERE id = %s", (giveaway_id,))
             current_winner_count = cursor.fetchone()[0]
@@ -1321,36 +1301,50 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             conn.commit()
             await state.clear()
-            await _show_edit_menu(message.from_user.id, giveaway_id, data['last_message_id'])
+            await _show_edit_menu(message.from_user.id, giveaway_id, last_message_id)
 
         except ValueError:
-            data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
-            await send_message_auto(
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
+            message_text = "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число Например, 3"
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Введите положительное число Например, 3",
-                message_id=data.get('last_message_id'),
+                message_text,
+                message_id=last_message_id,
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
-            data = await state.get_data()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{data['giveaway_id']}")
-            await send_message_auto(
+            keyboard.button(text="◀️ Отмена", callback_data=f"edit_post:{giveaway_id}")
+            message_text = "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить победителей 😔"
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить победителей 😔",
-                message_id=data.get('last_message_id'),
+                message_text,
+                message_id=last_message_id,
                 reply_markup=keyboard.as_markup(),
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('manage_media:'))
     async def process_manage_media(callback_query: CallbackQuery, state: FSMContext):
@@ -1363,9 +1357,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         media_type = giveaway.get('media_type')
         has_media = media_file_id and media_type
 
-        # Получаем данные состояния
         data = await state.get_data()
-        previous_message_type = data.get('previous_message_type', 'photo')
+        previous_message_length = data.get('previous_message_length', 'short')
 
         await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(GiveawayStates.waiting_for_media_edit)
@@ -1390,87 +1383,66 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         else:
             image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
 
-        current_message_type = media_type if has_media else 'photo'
-
-        try:
-            # Пытаемся удалить старое сообщение, если тип изменился
-            if previous_message_type != current_message_type:
-                try:
-                    await bot.delete_message(
-                        chat_id=callback_query.from_user.id,
-                        message_id=callback_query.message.message_id
-                    )
-                    logger.info(f"Удалено старое сообщение {callback_query.message.message_id} в process_manage_media")
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить старое сообщение {callback_query.message.message_id}: {str(e)}")
-
-            sent_message = await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=None if previous_message_type != current_message_type else callback_query.message.message_id,
-                parse_mode='HTML',
-                image_url=image_url,
-                media_type=media_type if has_media else None,
-                previous_message_type=previous_message_type
-            )
-            if sent_message:
-                await state.update_data(
-                    last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
-                )
-        except Exception as e:
-            logger.error(f"Ошибка редактирования медиа: {str(e)}")
-            sent_message = await send_message_auto(
-                bot,
-                callback_query.from_user.id,
-                message_text,
-                reply_markup=keyboard.as_markup(),
-                message_id=None,
-                parse_mode='HTML',
-                image_url=image_url,
-                media_type=media_type if has_media else None,
-                previous_message_type=previous_message_type
-            )
-            if sent_message:
-                await state.update_data(
-                    last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
-                )
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_type = media_type if has_media else ('photo' if message_length <= 1024 else 'image')
 
         await bot.answer_callback_query(callback_query.id)
+        sent_message = await send_message_auto(
+            bot,
+            callback_query.from_user.id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
+            parse_mode='HTML',
+            image_url=image_url,
+            media_type=media_type if has_media else None,
+            previous_message_length=previous_message_length
+        )
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_type=current_message_type
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('add_media:') or c.data.startswith('change_media:'))
     async def process_add_or_change_media(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
-        await state.update_data(giveaway_id=giveaway_id)
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
+        await state.update_data(giveaway_id=giveaway_id, last_message_id=callback_query.message.message_id)
         await state.set_state(GiveawayStates.waiting_for_media_edit)
 
-        data = await state.get_data()
-        last_message_id = data.get('last_bot_message_id') or callback_query.message.message_id
+        keyboard = InlineKeyboardBuilder()
+        keyboard.button(text="◀️ Назад", callback_data=f"manage_media:{giveaway_id}")
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="◀️ Назад", callback_data=f"manage_media:{giveaway_id}")]])
+        message_text = f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)"
+        image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_type = 'photo' if message_length <= 1024 else 'image'
 
-        message = await send_message_auto(
+        await bot.answer_callback_query(callback_query.id)
+        sent_message = await send_message_auto(
             bot,
             callback_query.from_user.id,
-            f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)",
-            reply_markup=keyboard,
-            message_id=last_message_id,
+            message_text,
+            reply_markup=keyboard.as_markup(),
+            message_id=callback_query.message.message_id,
             parse_mode='HTML',
-            image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
+            image_url=image_url,
+            previous_message_length=previous_message_length
         )
-        if message:
-            await state.update_data(last_bot_message_id=message.message_id)
-        await bot.answer_callback_query(callback_query.id)
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_type=current_message_type
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('back_to_edit_menu:'))
     async def process_back_to_edit_menu(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
         data = await state.get_data()
-        last_message_id = data.get('last_bot_message_id') or callback_query.message.message_id
-        await _show_edit_menu(callback_query.from_user.id, giveaway_id, last_message_id)
+        last_message_id = data.get('last_message_id', callback_query.message.message_id)
+        await _show_edit_menu(callback_query.from_user.id, giveaway_id, last_message_id, state)
         await bot.answer_callback_query(callback_query.id)
 
     @dp.message(GiveawayStates.waiting_for_media_edit)
@@ -1478,6 +1450,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         data = await state.get_data()
         giveaway_id = data.get('giveaway_id')
         last_message_id = data.get('last_message_id', message.message_id)
+        previous_message_length = data.get('previous_message_length', 'short')
 
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="◀️ Назад", callback_data=f"edit_post:{giveaway_id}")
@@ -1498,15 +1471,23 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 file_ext = 'mp4'
             else:
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-                await send_message_auto(
+                message_text = "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Отправьте фото, GIF или видео"
+                current_message_type = 'photo'
+                sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
-                    "<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Отправьте фото, GIF или видео",
+                    message_text,
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
-                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
+                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg',
+                    previous_message_length=previous_message_length
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
             file = await bot.get_file(file_id)
@@ -1515,15 +1496,23 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             file_size_mb = file.file_size / (1024 * 1024)
             if file_size_mb > MAX_MEDIA_SIZE_MB:
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-                await send_message_auto(
+                message_text = f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой Максимум {MAX_MEDIA_SIZE_MB} МБ"
+                current_message_type = 'photo'
+                sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
-                    f"<tg-emoji emoji-id='5197564405650307134'>🤯</tg-emoji> Файл слишком большой Максимум {MAX_MEDIA_SIZE_MB} МБ",
+                    message_text,
                     reply_markup=keyboard.as_markup(),
                     message_id=last_message_id,
                     parse_mode='HTML',
-                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
+                    image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg',
+                    previous_message_length=previous_message_length
                 )
+                if sent_message:
+                    await state.update_data(
+                        last_message_id=sent_message.message_id,
+                        previous_message_type=current_message_type
+                    )
                 return
 
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -1540,84 +1529,130 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             conn.commit()
 
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await _show_edit_menu(message.from_user.id, giveaway_id, last_message_id)
+            await _show_edit_menu(message.from_user.id, giveaway_id, last_message_id, state)
             await state.clear()
 
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await send_message_auto(
+            message_text = "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось загрузить медиа 😔"
+            current_message_type = 'photo'
+            sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось загрузить медиа 😔",
+                message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
+                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg',
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
             await state.clear()
 
     @dp.callback_query(lambda c: c.data.startswith('delete_media:'))
     async def process_delete_media(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
+        last_message_id = data.get('last_message_id', callback_query.message.message_id)
+
         try:
             cursor.execute(
                 "UPDATE giveaways SET media_type = NULL, media_file_id = NULL WHERE id = %s",
                 (giveaway_id,)
             )
             conn.commit()
-            data = await state.get_data()
-            last_message_id = data.get('last_message_id', callback_query.message.message_id)
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="◀️ Назад", callback_data=f"edit_post:{giveaway_id}")
             keyboard.adjust(1)
 
-            await send_message_auto(
+            message_text = f"<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до {MAX_MEDIA_SIZE_MB} МБ)"
+            image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
+            message_length = count_length_with_custom_emoji(message_text)
+            current_message_type = 'photo' if message_length <= 1024 else 'image'
+
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
-                "<tg-emoji emoji-id='5235837920081887219'>📸</tg-emoji> Отправьте фото, GIF или видео (до 10 МБ)",
+                message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
-                image_url='https://storage.yandexcloud.net/raffle/snapi/snapi_media2.jpg'
+                image_url=image_url,
+                previous_message_length=previous_message_length
             )
             await bot.answer_callback_query(callback_query.id, text="Медиа удалено")
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             await bot.answer_callback_query(callback_query.id, text="Не удалось удалить медиа")
-            await send_message_auto(
+            message_text = "⚠️ Не удалось удалить медиа 😔"
+            current_message_type = 'photo'
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
-                "⚠️ Не удалось удалить медиа 😔",
+                message_text,
                 reply_markup=None,
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('delete_giveaway:'))
-    async def process_delete_giveaway(callback_query: CallbackQuery):
+    async def process_delete_giveaway(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
+
         keyboard = InlineKeyboardBuilder()
         keyboard.button(text="✅ Да", callback_data=f"confirm_delete_giveaway:{giveaway_id}")
         keyboard.button(text="❌ Нет", callback_data=f"cancel_delete_giveaway:{giveaway_id}")
         keyboard.adjust(2)
-        await send_message_auto(
+
+        message_text = "<tg-emoji emoji-id='5445267414562389170'>🗑</tg-emoji> Вы уверены, что хотите удалить розыгрыш?"
+        message_length = count_length_with_custom_emoji(message_text)
+        current_message_type = 'photo' if message_length <= 1024 else 'image'
+
+        await bot.answer_callback_query(callback_query.id)
+        sent_message = await send_message_auto(
             bot,
             callback_query.from_user.id,
-            "<tg-emoji emoji-id='5445267414562389170'>🗑</tg-emoji> Вы уверены, что хотите удалить розыгрыш?",
+            message_text,
             reply_markup=keyboard.as_markup(),
             message_id=callback_query.message.message_id,
             parse_mode='HTML',
-            image_url=DEFAULT_IMAGE_URL
+            image_url=DEFAULT_IMAGE_URL,
+            previous_message_length=previous_message_length
         )
+        if sent_message:
+            await state.update_data(
+                last_message_id=sent_message.message_id,
+                previous_message_type=current_message_type
+            )
 
     @dp.callback_query(lambda c: c.data.startswith('confirm_delete_giveaway:'))
-    async def process_confirm_delete_giveaway(callback_query: CallbackQuery):
+    async def process_confirm_delete_giveaway(callback_query: CallbackQuery, state: FSMContext):
         giveaway_id = callback_query.data.split(':')[1]
+        data = await state.get_data()
+        previous_message_length = data.get('previous_message_length', 'short')
         try:
             cursor.execute("DELETE FROM giveaway_communities WHERE giveaway_id = %s", (giveaway_id,))
             cursor.execute("DELETE FROM participations WHERE giveaway_id = %s", (giveaway_id,))
@@ -1627,29 +1662,50 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
-            await send_message_auto(
+
+            message_text = "<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Розыгрыш успешно удалён"
+            message_length = count_length_with_custom_emoji(message_text)
+            current_message_type = 'photo' if message_length <= 1024 else 'image'
+
+            await bot.answer_callback_query(callback_query.id)
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
-                "<tg-emoji emoji-id='5206607081334906820'>✔️</tg-emoji> Розыгрыш успешно удалён",
+                message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
-            await send_message_auto(
+            message_text = "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс Не удалось удалить розыгрыш 😔"
+            current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 1024 else 'image'
+            await bot.answer_callback_query(callback_query.id)
+            sent_message = await send_message_auto(
                 bot,
                 callback_query.from_user.id,
-                "<tg-emoji emoji-id='5422649047334794716'>😵</tg-emoji> Упс Не удалось удалить розыгрыш 😔",
+                message_text,
                 reply_markup=keyboard.as_markup(),
                 message_id=callback_query.message.message_id,
                 parse_mode='HTML',
-                image_url=DEFAULT_IMAGE_URL
+                image_url=DEFAULT_IMAGE_URL,
+                previous_message_length=previous_message_length
             )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_type=current_message_type
+                )
 
     @dp.callback_query(lambda c: c.data.startswith('cancel_delete_giveaway:'))
     async def process_cancel_delete_giveaway(callback_query: CallbackQuery, state: FSMContext):
