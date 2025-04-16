@@ -21,7 +21,7 @@ def replace_variables(description, winner_count, end_time):
 def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     @dp.callback_query(lambda c: c.data == 'my_participations' or c.data.startswith('my_participations_page:'))
     async def process_my_participations(callback_query: CallbackQuery, state: FSMContext):
-        global last_message_id, previous_message_type
+        global last_message_id, previous_message_type, previous_message_length
         user_id = callback_query.from_user.id
         ITEMS_PER_PAGE = 5
         current_page = int(callback_query.data.split(':')[1]) if callback_query.data.startswith(
@@ -31,7 +31,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
-            previous_message_type = data.get('previous_message_type')
+            previous_message_length = data.get('previous_message_length', 'short')
 
             # Получаем активные розыгрыши, в которых пользователь участвует
             cursor.execute(
@@ -73,7 +73,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                     media_type=None,
-                    previous_message_type=previous_message_type
+                    previous_message_length=previous_message_length
                 )
                 if sent_message:
                     await state.update_data(
@@ -187,7 +187,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                 media_type=None,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
@@ -211,7 +211,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                 media_type=None,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
@@ -225,14 +225,14 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
     @dp.callback_query(lambda c: c.data.startswith('giveaway_'))
     async def process_giveaway_details(callback_query: CallbackQuery, state: FSMContext):
-        global previous_message_type, last_message_id
+        global previous_message_type, last_message_id, previous_message_length
         giveaway_id = callback_query.data.split('_')[1]
         user_id = callback_query.from_user.id
         try:
             # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
-            previous_message_type = data.get('previous_message_type')
+            previous_message_length = data.get('previous_message_length', 'short')
 
             # Запрос к таблице giveaways, включая winner_count и is_active
             cursor.execute(
@@ -259,7 +259,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                     media_type=None,
-                    previous_message_type=previous_message_type
+                    previous_message_length=previous_message_length
                 )
                 if sent_message:
                     await state.update_data(
@@ -353,7 +353,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 parse_mode='HTML',
                 image_url=image_url,
                 media_type=media_type,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
@@ -381,7 +381,7 @@ def register_my_participations_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                 media_type=None,
-                previous_message_type=previous_message_type
+                previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
