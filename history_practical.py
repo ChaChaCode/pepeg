@@ -8,6 +8,7 @@ from utils import send_message_auto, count_length_with_custom_emoji, strip_html_
 
 logger = logging.getLogger(__name__)
 
+
 def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
     """Регистрация обработчиков для истории розыгрышей."""
 
@@ -22,7 +23,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
-            previous_message_type = data.get('previous_message_type')
+            previous_message_type = data.get('previous_message_type', 'photo')
 
             # Получаем общее количество завершенных розыгрышей
             cursor.execute(
@@ -123,7 +124,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 )
 
         except Exception as e:
-            logger.error(f"🚫 Ошибка: {str(e)}")
+            logger.error(f"🚫 Ошибка в process_giveaway_history: {str(e)}")
             await bot.answer_callback_query(callback_query.id, text="Упс Что-то пошло не так 😔")
             keyboard = InlineKeyboardBuilder()
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
@@ -157,7 +158,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             # Получаем данные из состояния
             data = await state.get_data()
             last_message_id = data.get('last_message_id', callback_query.message.message_id)
-            previous_message_type = data.get('previous_message_type')
+            previous_message_type = data.get('previous_message_type', 'photo')
 
             # Получение данных о розыгрыше
             cursor.execute(
@@ -176,12 +177,22 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.answer_callback_query(callback_query.id, text="🔍 Розыгрыш не найден или не завершен 😕")
                 message_text = "🔍 Розыгрыш не найден или не завершен 😕"
                 current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+
+                # Удаляем старое сообщение, если тип изменился
+                if previous_message_type != current_message_type and last_message_id:
+                    try:
+                        await bot.delete_message(chat_id=user_id, message_id=last_message_id)
+                        logger.info(
+                            f"Удалено старое сообщение {last_message_id} в process_view_completed_giveaway (не найден)")
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+
                 sent_message = await send_message_auto(
                     bot,
                     chat_id=user_id,
                     text=message_text,
                     reply_markup=keyboard.as_markup(),
-                    message_id=last_message_id,
+                    message_id=None if previous_message_type != current_message_type else last_message_id,
                     parse_mode='HTML',
                     image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                     media_type=None,
@@ -250,7 +261,17 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
                 media_type = None
 
-            current_message_type = media_type or ('photo' if count_length_with_custom_emoji(giveaway_info) <= 800 else 'image')
+            # Определяем текущий тип сообщения
+            current_message_type = media_type or (
+                'photo' if count_length_with_custom_emoji(giveaway_info) <= 800 else 'image')
+
+            # Удаляем старое сообщение, если тип изменился
+            if previous_message_type != current_message_type and last_message_id:
+                try:
+                    await bot.delete_message(chat_id=user_id, message_id=last_message_id)
+                    logger.info(f"Удалено старое сообщение {last_message_id} в process_view_completed_giveaway")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
 
             await bot.answer_callback_query(callback_query.id)
             sent_message = await send_message_auto(
@@ -258,7 +279,7 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 chat_id=user_id,
                 text=giveaway_info,
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None if previous_message_type != current_message_type else last_message_id,
                 parse_mode='HTML',
                 image_url=image_url,
                 media_type=media_type,
@@ -278,12 +299,22 @@ def register_history_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             keyboard.button(text="В меню", callback_data="back_to_main_menu")
             message_text = "⚠️ Упс Что-то пошло не так. Попробуйте снова"
             current_message_type = 'photo' if count_length_with_custom_emoji(message_text) <= 800 else 'image'
+
+            # Удаляем старое сообщение, если тип изменился
+            if previous_message_type != current_message_type and last_message_id:
+                try:
+                    await bot.delete_message(chat_id=user_id, message_id=last_message_id)
+                    logger.info(
+                        f"Удалено старое сообщение {last_message_id} в process_view_completed_giveaway (ошибка)")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить старое сообщение {last_message_id}: {str(e)}")
+
             sent_message = await send_message_auto(
                 bot,
                 chat_id=user_id,
                 text=message_text,
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None if previous_message_type != current_message_type else last_message_id,
                 parse_mode='HTML',
                 image_url='https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg',
                 media_type=None,
