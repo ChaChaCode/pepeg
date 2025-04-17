@@ -1006,7 +1006,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         current_time = datetime.now().timestamp()
 
         keyboard = InlineKeyboardBuilder()
-        keyboard.button(text="◀️ Назад", callback_data=f"edit_post:{giveaway_id}")
+        keyboard.button(text="◶️ Назад", callback_data=f"edit_post:{giveaway_id}")
         keyboard.adjust(1)
 
         if last_message_time is not None and (current_time - last_message_time) <= 2:
@@ -1017,6 +1017,7 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 user_messages=user_messages,
                 limit_exceeded=limit_exceeded
             )
+            logger.debug(f"Сообщение добавлено в current_message_parts: {new_text}")
             return
 
         if current_message_parts:
@@ -1037,11 +1038,14 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         combined_current_message = "".join(current_message_parts)
         current_length = count_length_with_custom_emoji(combined_current_message)
         current_message_type = 'photo' if current_length <= 1024 else 'image'
+        current_message_length = 'long' if current_length > 1024 else 'short'
+
+        logger.info(
+            f"Processing long message: field={field}, current_length={current_length}, current_message_length={current_message_length}, previous_message_length={previous_message_length}")
 
         if limit_exceeded:
             if 0 < current_length <= max_length:
                 try:
-                    # Strip formatting for button and name fields
                     text_to_save = strip_formatting(combined_current_message) if field in ['button',
                                                                                            'name'] else combined_current_message
                     cursor.execute(
@@ -1059,7 +1063,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         user_messages=[],
                         current_message_parts=[],
                         limit_exceeded=False,
-                        last_message_time=None
+                        last_message_time=None,
+                        previous_message_length=current_message_length
                     )
 
                     await _show_edit_menu(message.from_user.id, giveaway_id, last_message_id, state)
@@ -1079,34 +1084,43 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                         message_id=last_message_id,
                         parse_mode='HTML',
                         image_url=image_url,
+                        media_type=None,
                         previous_message_length=previous_message_length
                     )
                     if sent_message:
                         await state.update_data(
                             last_message_id=sent_message.message_id,
-                            previous_message_type='photo'
+                            previous_message_type='photo',
+                            previous_message_length='short'
                         )
             else:
-                try:
-                    await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-                except Exception as e:
-                    logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+                # Удаляем предыдущее сообщение бота, если оно существует
+                if last_message_id:
+                    try:
+                        await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                        logger.info(f"Удалено предыдущее сообщение бота: last_message_id={last_message_id}")
+                    except Exception as e:
+                        logger.warning(f"Не удалось удалить предыдущее сообщение бота {last_message_id}: {str(e)}")
 
-                message_text = f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} должно быть от 1 до {max_length} символов. Текущее: {current_length}\n{formatting_guide}"
+                error_message = (
+                    f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} должно быть от 1 до {max_length} символов. Текущее: {current_length}\n{formatting_guide}"
+                )
                 sent_message = await send_message_auto(
                     bot,
                     message.chat.id,
-                    message_text,
+                    error_message,
                     reply_markup=keyboard.as_markup(),
-                    message_id=last_message_id,
+                    message_id=None,  # Отправляем новое сообщение
                     parse_mode='HTML',
                     image_url=image_url,
+                    media_type=None,
                     previous_message_length=previous_message_length
                 )
                 if sent_message:
                     await state.update_data(
                         last_message_id=sent_message.message_id,
                         previous_message_type=current_message_type,
+                        previous_message_length=current_message_length,
                         limit_exceeded=True,
                         last_message_time=current_time
                     )
@@ -1116,38 +1130,45 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         total_length += current_length
 
         if total_length > max_length or not combined_current_message:
-            try:
-                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            except Exception as e:
-                logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+            # Удаляем предыдущее сообщение бота, если оно существует
+            if last_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                    logger.info(f"Удалено предыдущее сообщение бота: last_message_id={last_message_id}")
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить предыдущее сообщение бота {last_message_id}: {str(e)}")
 
             await state.update_data(
                 user_messages=user_messages,
                 current_message_parts=current_message_parts,
                 limit_exceeded=True,
-                last_message_time=current_time
+                last_message_time=current_time,
+                previous_message_length=current_message_length
             )
 
-            message_text = f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов).\nОбщая длина: {total_length}\nОтправьте новое {field_translations[field].lower()}.\n{formatting_guide}"
+            error_message = (
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов). Текущая длина: {total_length}\n{formatting_guide}"
+            )
             sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                message_text,
+                error_message,
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None,  # Отправляем новое сообщение
                 parse_mode='HTML',
                 image_url=image_url,
+                media_type=None,
                 previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_type=current_message_type,
+                    previous_message_length=current_message_length
                 )
             return
 
         try:
-            # Strip formatting for button and name fields
             text_to_save = strip_formatting(combined_current_message) if field in ['button',
                                                                                    'name'] else combined_current_message
             cursor.execute(
@@ -1164,7 +1185,8 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             await state.update_data(
                 user_messages=[],
                 current_message_parts=[],
-                last_message_time=None
+                last_message_time=None,
+                previous_message_length=current_message_length
             )
 
             await _show_edit_menu(message.from_user.id, giveaway_id, last_message_id, state)
@@ -1176,21 +1198,22 @@ def register_created_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
             except Exception as e:
                 logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
-            message_text = f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить {field_translations[field]} 😔"
             sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
-                message_text,
+                f"<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Ой Не удалось обновить {field_translations[field]} 😔",
                 reply_markup=keyboard.as_markup(),
                 message_id=last_message_id,
                 parse_mode='HTML',
                 image_url=image_url,
+                media_type=None,
                 previous_message_length=previous_message_length
             )
             if sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type='photo'
+                    previous_message_type='photo',
+                    previous_message_length='short'
                 )
 
     @dp.message(GiveawayStates.waiting_for_edit_name)
