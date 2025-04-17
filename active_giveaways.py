@@ -78,20 +78,22 @@ def get_json_field(cursor, query, params):
     raise ValueError(f"Неподдерживаемый тип данных для JSON-поля: {type(result)}")
 
 async def process_long_message_active(
-        message: types.Message,
-        state: FSMContext,
-        giveaway_id: str,
-        last_message_id: int,
-        field: str,
-        max_length: int,
-        formatting_guide: str,
-        image_url: str,
-        bot: Bot,
-        conn,
-        cursor,
-        update_published_posts_active,
-        _show_edit_menu_active
+    message: types.Message,
+    state: FSMContext,
+    giveaway_id: str,
+    last_message_id: int,
+    field: str,
+    max_length: int,
+    formatting_guide: str,
+    image_url: str,
+    bot: Bot,
+    conn,
+    cursor,
+    update_published_posts_active,
+    _show_edit_menu_active
 ):
+    from datetime import datetime
+
     field_translations = {
         'name': 'Название',
         'description': 'Описание',
@@ -120,6 +122,7 @@ async def process_long_message_active(
             user_messages=user_messages,
             limit_exceeded=limit_exceeded
         )
+        logger.debug(f"Сообщение добавлено в current_message_parts: {new_text}")
         return
 
     if current_message_parts:
@@ -140,11 +143,13 @@ async def process_long_message_active(
     combined_current_message = "".join(current_message_parts)
     current_length = count_length_with_custom_emoji(combined_current_message)
     current_message_type = 'photo' if current_length <= 800 else 'image'
+    current_message_length = 'long' if current_length > 1024 else 'short'
+
+    logger.info(f"Processing long message: field={field}, current_length={current_length}, current_message_length={current_message_length}, previous_message_length={previous_message_length}")
 
     if limit_exceeded:
         if 0 < current_length <= max_length and current_length <= MAX_CAPTION_LENGTH:
             try:
-                # Strip formatting for button and name fields
                 text_to_save = strip_formatting(combined_current_message) if field in ['button', 'name'] else combined_current_message
                 cursor.execute(
                     f"UPDATE giveaways SET {field} = %s WHERE id = %s",
@@ -161,12 +166,13 @@ async def process_long_message_active(
                     user_messages=[],
                     current_message_parts=[],
                     limit_exceeded=False,
-                    last_message_time=None
+                    last_message_time=None,
+                    previous_message_length=current_message_length
                 )
 
                 cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
                 giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
-                await update_published_posts_active(giveaway_id, giveaway)
+                await update_published_posts_active(giveaway_id, giveaway, state)
 
                 await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id, state)
                 await state.clear()
@@ -191,20 +197,28 @@ async def process_long_message_active(
                 if sent_message:
                     await state.update_data(
                         last_message_id=sent_message.message_id,
-                        previous_message_type='photo'
+                        previous_message_type='photo',
+                        previous_message_length='short'
                     )
         else:
+            # Удаляем предыдущее сообщение бота, если оно существует
+            if last_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить предыдущее сообщение бота {last_message_id}: {str(e)}")
+
             error_message = (
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} должно быть от 1 до {max_length} символов. Текущее: {current_length}\n{formatting_guide}"
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов). Текущая длина: {current_length}\n{formatting_guide}"
                 if current_length > max_length or not combined_current_message
-                else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Текущее: {current_length}\n{formatting_guide}"
+                else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Текущая длина: {current_length}\n{formatting_guide}"
             )
             sent_message = await send_message_auto(
                 bot,
                 message.chat.id,
                 error_message,
                 reply_markup=keyboard.as_markup(),
-                message_id=last_message_id,
+                message_id=None,  # Не редактируем, а отправляем новое сообщение
                 parse_mode='HTML',
                 image_url=image_url,
                 media_type=None,
@@ -214,6 +228,7 @@ async def process_long_message_active(
                 await state.update_data(
                     last_message_id=sent_message.message_id,
                     previous_message_type=current_message_type,
+                    previous_message_length=current_message_length,
                     limit_exceeded=True,
                     last_message_time=current_time
                 )
@@ -223,24 +238,32 @@ async def process_long_message_active(
     total_length += current_length
 
     if total_length > max_length or not combined_current_message or total_length > MAX_CAPTION_LENGTH:
+        # Удаляем предыдущее сообщение бота, если оно существует
+        if last_message_id:
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить предыдущее сообщение бота {last_message_id}: {str(e)}")
+
         await state.update_data(
             user_messages=user_messages,
             current_message_parts=current_message_parts,
             limit_exceeded=True,
-            last_message_time=current_time
+            last_message_time=current_time,
+            previous_message_length=current_message_length
         )
 
         error_message = (
-            f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов). Общая длина: {total_length}\nОтправьте новое {field_translations[field].lower()}.\n{formatting_guide}"
+            f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит ({max_length} символов). Текущая длина: {total_length}\n{formatting_guide}"
             if total_length > max_length or not combined_current_message
-            else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Общая длина: {total_length}\nОтправьте новое {field_translations[field].lower()}.\n{formatting_guide}"
+            else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> {field_translations[field]} превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов). Текущая длина: {total_length}\n{formatting_guide}"
         )
         sent_message = await send_message_auto(
             bot,
             message.chat.id,
             error_message,
             reply_markup=keyboard.as_markup(),
-            message_id=last_message_id,
+            message_id=None,  # Не редактируем, а отправляем новое сообщение
             parse_mode='HTML',
             image_url=image_url,
             media_type=None,
@@ -249,12 +272,12 @@ async def process_long_message_active(
         if sent_message:
             await state.update_data(
                 last_message_id=sent_message.message_id,
-                previous_message_type=current_message_type
+                previous_message_type=current_message_type,
+                previous_message_length=current_message_length
             )
         return
 
     try:
-        # Strip formatting for button and name fields
         text_to_save = strip_formatting(combined_current_message) if field in ['button', 'name'] else combined_current_message
         cursor.execute(
             f"UPDATE giveaways SET {field} = %s WHERE id = %s",
@@ -270,12 +293,13 @@ async def process_long_message_active(
         await state.update_data(
             user_messages=[],
             current_message_parts=[],
-            last_message_time=None
+            last_message_time=None,
+            previous_message_length=current_message_length
         )
 
         cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
         giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
-        await update_published_posts_active(giveaway_id, giveaway)
+        await update_published_posts_active(giveaway_id, giveaway, state)
 
         await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id, state)
         await state.clear()
@@ -300,7 +324,8 @@ async def process_long_message_active(
         if sent_message:
             await state.update_data(
                 last_message_id=sent_message.message_id,
-                previous_message_type='photo'
+                previous_message_type='photo',
+                previous_message_length='short'
             )
 
 def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
@@ -324,7 +349,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
             new_post_text = f"{formatted_description}"
             new_post_length = count_length_with_custom_emoji(new_post_text)
-            current_message_type = 'photo' if new_post_length <= 800 else 'image'
+            current_message_type = 'photo' if new_post_length <= 1024 else 'image'
+            current_message_length = 'long' if new_post_length > 1024 else 'short'
 
             keyboard = InlineKeyboardBuilder()
             button_text = giveaway.get('button', '🎉 Участвовать')
@@ -334,14 +360,14 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
 
             image_url = None
-            media_type = None
-            if giveaway['media_type'] and giveaway['media_file_id']:
+            media_type = giveaway.get('media_type')
+            if media_type and giveaway['media_file_id']:
                 image_url = giveaway['media_file_id']
-                media_type = giveaway['media_type']
                 if not image_url.startswith('http'):
                     image_url = await get_file_url(bot, giveaway['media_file_id'])
             else:
                 image_url = DEFAULT_IMAGE_URL
+                media_type = None
 
             updated_published_messages = []
 
@@ -349,15 +375,18 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             data = await state.get_data() if state else {}
             previous_message_length = data.get('previous_message_length', 'short')
 
+            logger.info(
+                f"Updating published posts: giveaway_id={giveaway_id}, new_post_length={new_post_length}, current_message_length={current_message_length}, previous_message_length={previous_message_length}")
+
             for message in published_messages:
                 chat_id = message['chat_id']
                 message_id = message['message_id']
 
                 try:
                     sent_message = await send_message_auto(
-                        bot,
-                        chat_id,
-                        new_post_text,
+                        bot=bot,
+                        chat_id=chat_id,
+                        text=new_post_text,
                         reply_markup=keyboard.as_markup(),
                         message_id=message_id,
                         parse_mode='HTML',
@@ -373,6 +402,13 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                             'message_type': current_message_type
                         })
                         logger.info(f"Обновлено сообщение {sent_message.message_id} в чате {chat_id}")
+                        # Обновляем состояние для следующего сообщения
+                        if state:
+                            await state.update_data(
+                                previous_message_length=current_message_length
+                            )
+                            logger.info(
+                                f"Updated state in update_published_posts: previous_message_length={current_message_length}")
                     else:
                         updated_published_messages.append(message)
                         logger.info(f"Сообщение {message_id} в чате {chat_id} не обновлено")
@@ -415,7 +451,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if sent_message and state:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type='photo'
+                    previous_message_type='photo',
+                    previous_message_length='short'  # Короткое сообщение
                 )
             return
 
@@ -475,8 +512,12 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         data = await state.get_data() if state else {}
         previous_message_length = data.get('previous_message_length', 'short')
-        current_message_type = media_type or (
-            'image' if count_length_with_custom_emoji(giveaway_info) > 800 else 'photo')
+        message_length = count_length_with_custom_emoji(giveaway_info)
+        current_message_length = 'long' if message_length > 1024 else 'short'
+        current_message_type = media_type or ('image' if message_length > 1024 else 'photo')
+
+        logger.info(
+            f"Showing edit menu: giveaway_id={giveaway_id}, message_length={message_length}, current_message_length={current_message_length}, previous_message_length={previous_message_length}")
 
         try:
             sent_message = await send_message_auto(
@@ -494,8 +535,11 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if state and sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type=current_message_type
+                    previous_message_type=current_message_type,
+                    previous_message_length=current_message_length  # Всегда обновляем длину
                 )
+                logger.info(
+                    f"Updated state: last_message_id={sent_message.message_id}, previous_message_length={current_message_length}")
         except Exception as e:
             logger.error(f"🚫 Ошибка: {str(e)}")
             sent_message = await send_message_auto(
@@ -512,7 +556,8 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             if state and sent_message:
                 await state.update_data(
                     last_message_id=sent_message.message_id,
-                    previous_message_type='photo'
+                    previous_message_type='photo',
+                    previous_message_length='short'
                 )
 
     @dp.callback_query(lambda c: c.data == "ignore")
@@ -943,6 +988,7 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway_id = data.get('giveaway_id')
         last_message_id = data.get('last_message_id')
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
+
         await process_long_message_active(
             message=message,
             state=state,
@@ -1017,6 +1063,13 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         giveaway_id = data.get('giveaway_id')
         last_message_id = data.get('last_message_id')
         image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_opis2.jpg'
+
+        # Вычисляем длину текущего сообщения
+        message_length = count_length_with_custom_emoji(message.html_text if message.text else "")
+        current_message_length = 'long' if message_length > 1024 else 'short'
+        logger.info(
+            f"Processing new description: giveaway_id={giveaway_id}, message_length={message_length}, current_message_length={current_message_length}")
+
         await process_long_message_active(
             message=message,
             state=state,
@@ -1032,6 +1085,13 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             update_published_posts_active=update_published_posts_active,
             _show_edit_menu_active=_show_edit_menu_active
         )
+
+        # Обновляем previous_message_length после обработки
+        if state:
+            await state.update_data(
+                previous_message_length=current_message_length
+            )
+            logger.info(f"Updated state after processing description: previous_message_length={current_message_length}")
 
     @dp.callback_query(lambda c: c.data.startswith('edit_button_active:'))
     async def process_edit_button_active(callback_query: CallbackQuery, state: FSMContext):
@@ -1096,7 +1156,17 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if not giveaway_id:
             logger.error("No giveaway_id in state data")
-            await message.reply("Ошибка: не найден идентификатор розыгрыша 😔")
+            sent_message = await send_message_auto(
+                bot,
+                message.chat.id,
+                "Ошибка: не найден идентификатор розыгрыша 😔",
+                reply_markup=None,
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_length=data.get('previous_message_length', 'short')
+            )
             await state.clear()
             return
 
@@ -1106,12 +1176,26 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
 
         if current_length > 50:
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-            await message.reply(
+            keyboard.button(text="◶️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            # Удаляем предыдущее сообщение бота
+            if last_message_id:
+                try:
+                    await bot.delete_message(chat_id=message.chat.id, message_id=last_message_id)
+                except Exception as e:
+                    logger.warning(f"Не удалось удалить предыдущее сообщение бота {last_message_id}: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                message.chat.id,
                 f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Текст кнопки превышает лимит (50 символов). Текущая длина: {current_length}",
                 reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
+                message_id=None,  # Отправляем новое сообщение
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_length=data.get('previous_message_length', 'short')
             )
+            if sent_message:
+                await state.update_data(last_message_id=sent_message.message_id)
             return
 
         try:
@@ -1122,23 +1206,39 @@ def register_active_giveaways_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             conn.commit()
             logger.info(f"Button updated for giveaway {giveaway_id}")
 
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
             giveaway = dict(zip([desc[0] for desc in cursor.description], cursor.fetchone()))
             await update_published_posts_active(giveaway_id, giveaway)
 
-            await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
-            await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id)
+            await _show_edit_menu_active(message.from_user.id, giveaway_id, last_message_id, state)
             await state.clear()
         except Exception as e:
             logger.error(f"Error updating button: {str(e)}")
             conn.rollback()
             keyboard = InlineKeyboardBuilder()
-            keyboard.button(text="◀️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
-            await message.reply(
+            keyboard.button(text="◶️ Назад", callback_data=f"edit_active_post:{giveaway_id}")
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception as e:
+                logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+            sent_message = await send_message_auto(
+                bot,
+                message.chat.id,
                 "<tg-emoji emoji-id='5210952531676504517'>❌</tg-emoji> Не удалось обновить текст кнопки 😔",
                 reply_markup=keyboard.as_markup(),
-                parse_mode='HTML'
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url=image_url,
+                media_type=None,
+                previous_message_length=data.get('previous_message_length', 'short')
             )
+            if sent_message:
+                await state.update_data(last_message_id=sent_message.message_id)
 
     @dp.callback_query(lambda c: c.data.startswith('edit_winner_count_active:'))
     async def process_edit_winner_count_active(callback_query: CallbackQuery, state: FSMContext):
