@@ -1,3 +1,4 @@
+import re
 from aiogram import Dispatcher, Bot, types
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -16,6 +17,18 @@ from typing import Optional
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Новая функция для проверки <tg-emoji> тегов
+def validate_tg_emoji(text: str) -> bool:
+    """Проверяет, что все <tg-emoji> теги содержат валидный emoji-id."""
+    pattern = r'<tg-emoji[^>]*>'
+    matches = re.finditer(pattern, text)
+    for match in matches:
+        tag = match.group(0)
+        if not re.search(r'emoji-id="\d+"', tag):
+            logger.warning(f"Некорректный тег tg-emoji: {tag}")
+            return False
+    return True
 
 # Состояния FSM
 class GiveawayStates(StatesGroup):
@@ -462,12 +475,43 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
         # Получаем форматированный текст
         formatted_text = None
         if message.text:
-            formatted_text = sanitize_html(message.html_text)
+            formatted_text = message.html_text
         elif message.caption:
-            formatted_text = sanitize_html(message.html_text)
+            formatted_text = message.html_text
 
         # Текущая временная метка
         current_time = datetime.now().timestamp()
+
+        # Проверяем валидность <tg-emoji> тегов
+        if formatted_text and not validate_tg_emoji(formatted_text):
+            try:
+                await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+            except Exception as delete_error:
+                logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(delete_error)}")
+            error_text = (
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Некорректный формат кастомных эмодзи. "
+                f"Убедитесь, что все эмодзи имеют валидный emoji-id, например: <tg-emoji emoji-id='5199885118214255386'>👋</tg-emoji>.\n\n"
+                f"{FORMATTING_GUIDE_UPDATE}"
+            )
+            keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
+            previous_message_length = data.get('previous_message_length', 'short')
+            sent_message = await send_message_auto(
+                bot=bot,
+                chat_id=message.chat.id,
+                text=error_text,
+                reply_markup=keyboard.as_markup(),
+                message_id=last_message_id,
+                parse_mode='HTML',
+                image_url=data.get('media_url', placeholder_url),
+                media_type=None,
+                previous_message_length=previous_message_length
+            )
+            if sent_message:
+                await state.update_data(
+                    last_message_id=sent_message.message_id,
+                    previous_message_length=previous_message_length
+                )
+            return
 
         # Проверяем, является ли сообщение частью длинного сообщения (интервал 2 секунды)
         if formatted_text and last_message_time is not None and (current_time - last_message_time) <= 2:
@@ -561,12 +605,9 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 )
             return
 
-        # Подсчет общей длины всех сообщений
-        total_length = sum(count_length_with_custom_emoji(msg) for msg in user_messages if msg)
-
         # Проверяем превышение лимита для текста
         if formatted_text and (
-                total_length > MAX_DESCRIPTION_LENGTH or not combined_current_message or total_length > MAX_CAPTION_LENGTH):
+                current_length > MAX_DESCRIPTION_LENGTH or not combined_current_message or current_length > MAX_CAPTION_LENGTH):
             # Удаляем предыдущее сообщение бота, если оно существует
             if last_message_id:
                 try:
@@ -583,9 +624,9 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             )
 
             error_message = (
-                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит ({MAX_DESCRIPTION_LENGTH} символов).\nОбщая длина: {total_length}\n\n{FORMATTING_GUIDE_UPDATE}"
-                if total_length > MAX_DESCRIPTION_LENGTH or not combined_current_message
-                else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов).\nОбщая длина: {total_length}\n\n{FORMATTING_GUIDE_UPDATE}"
+                f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит ({MAX_DESCRIPTION_LENGTH} символов).\nОбщая длина: {current_length}\n\n{FORMATTING_GUIDE_UPDATE}"
+                if current_length > MAX_DESCRIPTION_LENGTH or not combined_current_message
+                else f"<tg-emoji emoji-id='5447644880824181073'>⚠️</tg-emoji> Описание превышает лимит Telegram ({MAX_CAPTION_LENGTH} символов).\nОбщая длина: {current_length}\n\n{FORMATTING_GUIDE_UPDATE}"
             )
             keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_description_and_media)
             previous_message_length = data.get('previous_message_length', 'short')
@@ -611,7 +652,7 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                 logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(delete_error)}")
             return
 
-        if formatted_text and total_length <= MAX_DESCRIPTION_LENGTH and total_length <= MAX_CAPTION_LENGTH:
+        if formatted_text and current_length <= MAX_DESCRIPTION_LENGTH and current_length <= MAX_CAPTION_LENGTH:
             try:
                 await state.update_data(
                     description=combined_current_message,
@@ -1284,7 +1325,8 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
                     previous_message_length=previous_message_length
                 )
 
-    async def display_giveaway(bot: Bot, chat_id: int, giveaway_id: str, conn, cursor, message_id: int = None, state: Optional[FSMContext] = None):
+    async def display_giveaway(bot: Bot, chat_id: int, giveaway_id: str, conn, cursor, message_id: int = None,
+                               state: Optional[FSMContext] = None):
         try:
             cursor.execute("SELECT * FROM giveaways WHERE id = %s", (giveaway_id,))
             columns = [desc[0] for desc in cursor.description]
@@ -1307,7 +1349,10 @@ def register_create_giveaway_handlers(dp: Dispatcher, bot: Bot, conn, cursor):
             winner_count = str(giveaway['winner_count'])
             end_time = giveaway['end_time'].strftime('%d.%m.%Y %H:%M (МСК)') if giveaway['end_time'] else "Не указано"
             formatted_description = description.replace('{win}', winner_count).replace('{data}', end_time)
-            formatted_description = sanitize_html(formatted_description)
+
+            # Проверка валидности <tg-emoji> тегов
+            if not validate_tg_emoji(formatted_description):
+                raise Exception("Некорректный формат кастомных эмодзи в описании")
 
             # Определяем image_url и media_type
             image_url = None
