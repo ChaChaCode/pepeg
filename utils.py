@@ -208,24 +208,12 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
     link_preview_options = LinkPreviewOptions(show_above_text=True)
     current_message_length = 'long' if count_length_with_custom_emoji(text) > 1024 else 'short'
 
+    logger.info(f"send_message_with_image: message_id={message_id}, image_url={image_url}, previous_message_length={previous_message_length}, current_message_length={current_message_length}")
+
     try:
-        if message_id and previous_message_length == 'short' and current_message_length == 'long':
-            logger.info(f"Длина сообщения изменилась с короткого на длинное, удаляем сообщение {message_id} и отправляем новое")
+        if message_id:
             try:
-                await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                logger.info(f"Сообщение {message_id} удалено перед отправкой нового")
-            except Exception as delete_error:
-                logger.warning(f"Не удалось удалить сообщение {message_id}: {str(delete_error)}")
-            return await bot.send_message(
-                chat_id=chat_id,
-                text=full_text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode,
-                entities=entities,
-                link_preview_options=link_preview_options
-            )
-        elif message_id:
-            try:
+                # Пробуем редактировать сообщение
                 return await bot.edit_message_text(
                     chat_id=chat_id,
                     message_id=message_id,
@@ -238,14 +226,6 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
             except aiogram.exceptions.TelegramBadRequest as e:
                 if "message to edit not found" in str(e).lower():
                     logger.warning(f"Сообщение {message_id} не найдено для редактирования, отправляем новое")
-                    return await bot.send_message(
-                        chat_id=chat_id,
-                        text=full_text,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode,
-                        entities=entities,
-                        link_preview_options=link_preview_options
-                    )
                 elif "there is no text in the message to edit" in str(e).lower():
                     logger.info(f"Сообщение {message_id} содержит медиа, удаляем и отправляем новое")
                     try:
@@ -253,19 +233,19 @@ async def send_message_with_image(bot: Bot, chat_id: int, text: str, reply_marku
                         logger.info(f"Сообщение {message_id} удалено перед отправкой нового")
                     except Exception as delete_error:
                         logger.warning(f"Не удалось удалить сообщение {message_id}: {str(delete_error)}")
-                    return await bot.send_message(
-                        chat_id=chat_id,
-                        text=full_text,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode,
-                        entities=entities,
-                        link_preview_options=link_preview_options
-                    )
                 elif "can't parse entities" in str(e).lower():
                     logger.error(f"HTML parsing error in message: {full_text}")
                     raise
                 else:
                     raise
+                return await bot.send_message(
+                    chat_id=chat_id,
+                    text=full_text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode,
+                    entities=entities,
+                    link_preview_options=link_preview_options
+                )
         else:
             return await bot.send_message(
                 chat_id=chat_id,
@@ -285,22 +265,10 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
     image_url = image_url or 'https://storage.yandexcloud.net/raffle/snapi/snapi2.jpg'
     current_message_length = 'long' if count_length_with_custom_emoji(text) > 1024 else 'short'
 
+    logger.info(f"send_message_with_photo: message_id={message_id}, image_url={image_url}, previous_message_length={previous_message_length}, current_message_length={current_message_length}")
+
     try:
-        if message_id and previous_message_length == 'short' and current_message_length == 'long':
-            logger.info(f"Длина сообщения изменилась с короткого на длинное, удаляем сообщение {message_id} и отправляем новое")
-            try:
-                await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                logger.info(f"Сообщение {message_id} удалено перед отправкой нового")
-            except Exception as delete_error:
-                logger.warning(f"Не удалось удалить сообщение {message_id}: {str(delete_error)}")
-            return await bot.send_photo(
-                chat_id=chat_id,
-                photo=image_url,
-                caption=text,
-                reply_markup=reply_markup,
-                parse_mode=parse_mode
-            )
-        elif message_id:
+        if message_id:
             try:
                 return await bot.edit_message_media(
                     chat_id=chat_id,
@@ -315,13 +283,6 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
             except aiogram.exceptions.TelegramBadRequest as e:
                 if "message to edit not found" in str(e).lower():
                     logger.warning(f"Сообщение {message_id} не найдено для редактирования, отправляем новое")
-                    return await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=image_url,
-                        caption=text,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode
-                    )
                 elif "message is not modified" in str(e).lower():
                     logger.info(f"Сообщение {message_id} не изменено, пропускаем")
                     return None
@@ -332,27 +293,15 @@ async def send_message_with_photo(bot: Bot, chat_id: int, text: str, reply_marku
                         logger.info(f"Сообщение {message_id} удалено перед отправкой нового")
                     except Exception as delete_error:
                         logger.warning(f"Не удалось удалить сообщение {message_id}: {str(delete_error)}")
-                    return await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=image_url,
-                        caption=text,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode
-                    )
                 else:
                     logger.error(f"Ошибка редактирования сообщения {message_id}: {str(e)}")
-                    try:
-                        await bot.delete_message(chat_id=chat_id, message_id=message_id)
-                        logger.info(f"Сообщение {message_id} удалено перед отправкой нового")
-                    except Exception as delete_error:
-                        logger.warning(f"Не удалось удалить сообщение {message_id}: {str(delete_error)}")
-                    return await bot.send_photo(
-                        chat_id=chat_id,
-                        photo=image_url,
-                        caption=text,
-                        reply_markup=reply_markup,
-                        parse_mode=parse_mode
-                    )
+                return await bot.send_photo(
+                    chat_id=chat_id,
+                    photo=image_url,
+                    caption=text,
+                    reply_markup=reply_markup,
+                    parse_mode=parse_mode
+                )
         else:
             return await bot.send_photo(
                 chat_id=chat_id,
@@ -551,10 +500,13 @@ async def send_message_auto(
 ) -> Message | None:
     message_length = count_length_with_custom_emoji(text)
     caption_limit = 1024
-    max_image_length = 2500
+    max_image_length = 4000
 
     # Map 'gif' to 'animation' for consistency
     normalized_media_type = 'animation' if media_type == 'gif' else media_type
+
+    # Determine current message length
+    current_message_length = 'long' if message_length > caption_limit else 'short'
 
     # Determine message type
     if normalized_media_type in ['photo', 'video', 'animation'] and message_length > caption_limit and message_length <= max_image_length:
@@ -563,7 +515,7 @@ async def send_message_auto(
     else:
         current_message_type = normalized_media_type or ('photo' if message_length <= caption_limit else 'image')
 
-    logger.info(f"send_message_auto: chat_id={chat_id}, message_id={message_id}, image_url={image_url}, type={current_message_type}, previous_length={previous_message_length}")
+    logger.info(f"send_message_auto: chat_id={chat_id}, message_id={message_id}, image_url={image_url}, type={current_message_type}, previous_length={previous_message_length}, current_length={current_message_length}")
 
     # Try to edit if message_id is provided
     if message_id:
@@ -620,7 +572,6 @@ async def send_message_auto(
                 logger.info(f"Удалено сообщение {message_id} из-за невозможности редактирования")
             except Exception as delete_error:
                 logger.warning(f"Не удалось удалить сообщение {message_id}: {str(delete_error)}")
-            # Сбрасываем message_id для отправки нового сообщения
             message_id = None
 
     # Send new message if no message_id or editing failed
@@ -635,7 +586,7 @@ async def send_message_auto(
                     message_id=None,
                     parse_mode=parse_mode,
                     image_url=image_url,
-                    previous_message_length=previous_message_length
+                    previous_message_length=current_message_length
                 )
             elif current_message_type == 'video':
                 return await send_message_with_video(
@@ -646,7 +597,7 @@ async def send_message_auto(
                     message_id=None,
                     parse_mode=parse_mode,
                     video_url=image_url,
-                    previous_message_length=previous_message_length
+                    previous_message_length=current_message_length
                 )
             elif current_message_type == 'animation':
                 return await send_message_with_animation(
@@ -657,7 +608,7 @@ async def send_message_auto(
                     message_id=None,
                     parse_mode=parse_mode,
                     animation_url=image_url,
-                    previous_message_length=previous_message_length
+                    previous_message_length=current_message_length
                 )
             elif current_message_type == 'image':
                 return await send_message_with_image(
@@ -669,7 +620,7 @@ async def send_message_auto(
                     parse_mode=parse_mode,
                     entities=entities,
                     image_url=image_url,
-                    previous_message_length=previous_message_length
+                    previous_message_length=current_message_length
                 )
         else:
             return await bot.send_message(
