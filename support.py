@@ -156,11 +156,11 @@ def register_support_handlers(dp: Dispatcher, bot: Bot):
         )
         try:
             await bot.send_message(
-                chat_id=-4643439715,
+                chat_id=-4638816277,
                 text=support_message,
                 parse_mode="HTML"
             )
-            logger.info(f"Сообщение от @{username} отправлено в группу поддержки (-4643439715)")
+            logger.info(f"Сообщение от @{username} отправлено в группу поддержки (-4638816277)")
         except Exception as e:
             logger.error(f"Ошибка при отправке сообщения в группу поддержки: {str(e)}")
 
