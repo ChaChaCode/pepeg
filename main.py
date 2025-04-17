@@ -13,16 +13,18 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.dispatcher.middlewares.base import BaseMiddleware
 
-from utils import check_and_end_giveaways, check_usernames, send_message_auto, count_length_with_custom_emoji
+from utils import check_and_end_giveaways, check_usernames, send_message_auto, count_length_with_custom_emoji, \
+    MAX_NAME_LENGTH
 from history_practical import register_history_handlers
 from active_giveaways import register_active_giveaways_handlers
-from create_giveaway import register_create_giveaway_handlers
+from create_giveaway import register_create_giveaway_handlers, GiveawayStates, build_navigation_keyboard
 from database import conn, cursor
 from created_giveaways import register_created_giveaways_handlers
 from my_participations import register_my_participations_handlers
 from congratulations_messages import register_congratulations_messages
 from congratulations_messages_active import register_congratulations_messages_active
 from new_public import register_new_public
+from support import register_support_handlers
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +97,47 @@ class SpamProtectionMiddleware(BaseMiddleware):
                 return
 
         return await handler(event, data)
+
+@dp.message(Command("create"))
+async def cmd_create(message: types.Message, state: FSMContext):
+    try:
+        await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
+    except Exception as e:
+        logger.warning(f"Не удалось удалить сообщение пользователя {message.message_id}: {str(e)}")
+
+    # Вызов логики из process_create_giveaway
+    message_text = f"<tg-emoji emoji-id='5395444784611480792'>✏️</tg-emoji> Давайте придумаем название розыгрыша (до {MAX_NAME_LENGTH} символов):"
+    image_url = 'https://storage.yandexcloud.net/raffle/snapi/snapi_name2.jpg'
+    data = await state.get_data() if state else {}
+    previous_message_length = data.get('previous_message_length', 'short')
+
+    await state.update_data(
+        user_messages=[],
+        current_message_parts=[],
+        limit_exceeded=False,
+        last_message_time=None,
+        last_message_id=message.message_id,
+        previous_message_length=previous_message_length
+    )
+    await state.set_state(GiveawayStates.waiting_for_name)
+    keyboard = await build_navigation_keyboard(state, GiveawayStates.waiting_for_name)
+
+    sent_message = await send_message_auto(
+        bot,
+        chat_id=message.from_user.id,
+        text=message_text,
+        reply_markup=keyboard.as_markup(),
+        message_id=message.message_id,
+        parse_mode='HTML',
+        image_url=image_url,
+        media_type=None,
+        previous_message_length=previous_message_length
+    )
+    if sent_message:
+        await state.update_data(
+            last_message_id=sent_message.message_id,
+            previous_message_length=previous_message_length
+        )
 
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
@@ -310,6 +353,7 @@ register_my_participations_handlers(dp, bot, conn, cursor)
 register_congratulations_messages(dp, bot, conn, cursor)
 register_congratulations_messages_active(dp, bot, conn, cursor)
 register_new_public(dp, bot, conn, cursor)
+register_support_handlers(dp, bot)
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message, state: FSMContext):
