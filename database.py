@@ -6,7 +6,7 @@ db_config = {
     "host": "91.84.97.19",
     "port": 5432,
     "database": "snapidb",
-    "user": "postgres",
+    "user": "moxy",
     "password": "moxy1337"
 }
 
