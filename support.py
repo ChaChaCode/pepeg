@@ -13,7 +13,7 @@ class SupportStates(StatesGroup):
     sending_messages = State()
 
 def register_support_handlers(dp: Dispatcher, bot: Bot):
-    @dp.message(Command("support"))
+    @dp.message(Command("feedback"))
     async def cmd_support(message: types.Message, state: FSMContext):
         try:
             await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
